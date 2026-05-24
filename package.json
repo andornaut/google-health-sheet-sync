@@ -7,9 +7,11 @@
     "push": "clasp push",
     "pull": "clasp pull",
     "open": "clasp open",
-    "test": "node test/run.js"
+    "test": "node test/run.js",
+    "lint": "markdownlint README.md AGENTS.md"
   },
   "devDependencies": {
-    "@google/clasp": "^3.3.0"
+    "@google/clasp": "^3.3.0",
+    "markdownlint-cli": "^0.48.0"
   }
 }
