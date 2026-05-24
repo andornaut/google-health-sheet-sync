@@ -1,0 +1,15 @@
+{
+  "name": "google-health-spreadsheet",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "login": "clasp login",
+    "push": "clasp push",
+    "pull": "clasp pull",
+    "open": "clasp open",
+    "test": "node test/run.js"
+  },
+  "devDependencies": {
+    "@google/clasp": "^3.3.0"
+  }
+}

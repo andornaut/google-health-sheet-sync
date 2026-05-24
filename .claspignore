@@ -1,0 +1,16 @@
+# Local-only files that should never be pushed to Apps Script.
+# Anything matched here stays in the repo but is not uploaded by `clasp push`.
+
+**/node_modules/**
+**/.git/**
+.clasp.json
+.clasp.json.example
+.claspignore
+.gitignore
+package.json
+package-lock.json
+README.md
+
+# Local Node test runner — uses CommonJS `require` which Apps Script's
+# V8 runtime does not define. If pushed, the project fails to load.
+test/run.js
