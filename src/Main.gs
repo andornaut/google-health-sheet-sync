@@ -141,9 +141,12 @@ function syncDirtyRows() {
     Object.keys(byDate).forEach(dateKey => {
       const dateRows = byDate[dateKey];
       dateRows.sort((a, b) => a.rowNum - b.rowNum);
+      const allRowsForDate = rows.filter(row => ymd(row.date) === dateKey);
+      allRowsForDate.sort((a, b) => a.rowNum - b.rowNum);
       for (let i = 0; i < dateRows.length; i++) {
         done++;
-        if (syncOneRow_(dateRows[i], i, syncedAtCol, healthIdsCol, done, dirty.length)) ok++;
+        const ordinal = allRowsForDate.indexOf(dateRows[i]);
+        if (syncOneRow_(dateRows[i], ordinal, syncedAtCol, healthIdsCol, done, dirty.length)) ok++;
         else errors++;
       }
     });

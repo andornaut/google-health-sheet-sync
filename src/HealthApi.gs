@@ -17,17 +17,22 @@ function httpJson_(method, url, payload) {
   const maxAttempts = 4;
   let lastErr;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const resp = UrlFetchApp.fetch(url, options);
-    const code = resp.getResponseCode();
-    const body = resp.getContentText();
-    if (code >= 200 && code < 300) {
-      return body ? JSON.parse(body) : {};
+    try {
+      const resp = UrlFetchApp.fetch(url, options);
+      const code = resp.getResponseCode();
+      const body = resp.getContentText();
+      if (code >= 200 && code < 300) {
+        return body ? JSON.parse(body) : {};
+      }
+      lastErr = new Error('Health API ' + method + ' ' + url + ' -> ' + code + ': ' + body);
+      const transient = code === 429 || (code >= 500 && code < 600);
+      if (!transient || attempt === maxAttempts - 1) throw lastErr;
+    } catch (err) {
+      lastErr = err;
+      if (attempt === maxAttempts - 1) throw lastErr;
     }
-    lastErr = new Error('Health API ' + method + ' ' + url + ' -> ' + code + ': ' + body);
-    const transient = code === 429 || (code >= 500 && code < 600);
-    if (!transient || attempt === maxAttempts - 1) throw lastErr;
     const backoffMs = 500 * Math.pow(2, attempt);
-    console.warn('Health API ' + method + ' -> ' + code + '; retry ' + (attempt + 1) + '/' + (maxAttempts - 1) + ' in ' + backoffMs + 'ms');
+    console.warn('Health API ' + method + ' -> failed; retry ' + (attempt + 1) + '/' + (maxAttempts - 1) + ' in ' + backoffMs + 'ms. Error: ' + lastErr);
     Utilities.sleep(backoffMs);
   }
   throw lastErr;
@@ -74,18 +79,30 @@ function listExercisesOnDate(date) {
   return sessions;
 }
 
+function getTzOffsetSeconds_(tz, date) {
+  const offsetStr = Utilities.formatDate(date, tz, 'Z');
+  const sign = offsetStr.startsWith('-') ? -1 : 1;
+  const hours = Number(offsetStr.slice(1, 3));
+  const mins = Number(offsetStr.slice(3, 5));
+  return sign * (hours * 3600 + mins * 60);
+}
+
 function buildSampleTime_(date, hour) {
-  const local = new Date(date.getFullYear(), date.getMonth(), date.getDate(), hour, 0, 0);
-  const physicalTime = Utilities.formatDate(local, 'GMT', "yyyy-MM-dd'T'HH:mm:ss'Z'");
-  const offsetSeconds = -local.getTimezoneOffset() * 60;
+  const tz = Session.getScriptTimeZone();
+  const year = Number(Utilities.formatDate(date, tz, 'yyyy'));
+  const month = Number(Utilities.formatDate(date, tz, 'MM'));
+  const day = Number(Utilities.formatDate(date, tz, 'dd'));
+  const offsetSeconds = getTzOffsetSeconds_(tz, date);
+  const sampleUtcMs = Date.UTC(year, month - 1, day, hour, 0, 0) - (offsetSeconds * 1000);
+  const physicalTime = Utilities.formatDate(new Date(sampleUtcMs), 'GMT', "yyyy-MM-dd'T'HH:mm:ss'Z'");
   return {
     physicalTime: physicalTime,
     utcOffset: offsetSeconds + 's',
     civilTime: {
       date: {
-        year: date.getFullYear(),
-        month: date.getMonth() + 1,
-        day: date.getDate()
+        year: year,
+        month: month,
+        day: day
       },
       time: { hours: hour }
     }
@@ -93,13 +110,17 @@ function buildSampleTime_(date, hour) {
 }
 
 function buildInterval_(date, startHour, endHour) {
-  const startLocal = new Date(date.getFullYear(), date.getMonth(), date.getDate(), startHour, 0, 0);
-  const endLocal = new Date(date.getFullYear(), date.getMonth(), date.getDate(), endHour, 0, 0);
-  const offsetSeconds = -startLocal.getTimezoneOffset() * 60;
+  const tz = Session.getScriptTimeZone();
+  const year = Number(Utilities.formatDate(date, tz, 'yyyy'));
+  const month = Number(Utilities.formatDate(date, tz, 'MM'));
+  const day = Number(Utilities.formatDate(date, tz, 'dd'));
+  const offsetSeconds = getTzOffsetSeconds_(tz, date);
+  const startUtcMs = Date.UTC(year, month - 1, day, startHour, 0, 0) - (offsetSeconds * 1000);
+  const endUtcMs = Date.UTC(year, month - 1, day, endHour, 0, 0) - (offsetSeconds * 1000);
   return {
-    startTime: Utilities.formatDate(startLocal, 'GMT', "yyyy-MM-dd'T'HH:mm:ss'Z'"),
+    startTime: Utilities.formatDate(new Date(startUtcMs), 'GMT', "yyyy-MM-dd'T'HH:mm:ss'Z'"),
     startUtcOffset: offsetSeconds + 's',
-    endTime: Utilities.formatDate(endLocal, 'GMT', "yyyy-MM-dd'T'HH:mm:ss'Z'"),
+    endTime: Utilities.formatDate(new Date(endUtcMs), 'GMT', "yyyy-MM-dd'T'HH:mm:ss'Z'"),
     endUtcOffset: offsetSeconds + 's'
   };
 }

@@ -14,12 +14,13 @@ function getHeaderMap_(sheet) {
 
 function ensureManagedColumns() {
   const sheet = getSheet_();
+  const { map } = getHeaderMap_(sheet);
   MANAGED_COLUMN_HEADERS.forEach(header => {
-    const { map } = getHeaderMap_(sheet);
     let col = map[header];
     if (!col) {
       col = sheet.getLastColumn() + 1;
       sheet.getRange(1, col).setValue(header);
+      map[header] = col;
     }
     sheet.hideColumns(col);
   });
@@ -144,6 +145,15 @@ function onEditMarkDirty(e) {
   if (onlyManaged) return;
 
   const numRows = lastRow - firstRow + 1;
-  const blanks = new Array(numRows).fill(['']);
-  sheet.getRange(firstRow, syncedAtCol, numRows, 1).setValues(blanks);
+  const range = sheet.getRange(firstRow, syncedAtCol, numRows, 1);
+  const currentValues = range.getValues();
+  let needsClear = false;
+  const blanks = [];
+  for (let i = 0; i < numRows; i++) {
+    if (currentValues[i][0] !== '') needsClear = true;
+    blanks.push(['']);
+  }
+  if (needsClear) {
+    range.setValues(blanks);
+  }
 }
