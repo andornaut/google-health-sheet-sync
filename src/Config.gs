@@ -4,7 +4,14 @@ const DATE_COLUMN_HEADER = 'Date';
 const WEIGHT_COLUMN_HEADER = 'Weight';
 const SYNCED_AT_COLUMN_HEADER = 'Synced At';
 const HEALTH_IDS_COLUMN_HEADER = 'Health IDs';
-const MANAGED_COLUMN_HEADERS = [SYNCED_AT_COLUMN_HEADER, HEALTH_IDS_COLUMN_HEADER];
+const FIRST_EDITED_AT_COLUMN_HEADER = 'First Edited At';
+const LAST_EDITED_AT_COLUMN_HEADER = 'Last Edited At';
+const MANAGED_COLUMN_HEADERS = [
+  SYNCED_AT_COLUMN_HEADER,
+  HEALTH_IDS_COLUMN_HEADER,
+  FIRST_EDITED_AT_COLUMN_HEADER,
+  LAST_EDITED_AT_COLUMN_HEADER
+];
 
 const DEBOUNCE_MS = 60 * 1000;
 const DEBOUNCE_CHECK_INTERVAL_MIN = 1;
@@ -12,6 +19,11 @@ const BACKSTOP_INTERVAL_HOURS = 1;
 
 const SYNTHETIC_START_HOUR = 12;
 const SYNTHETIC_DURATION_HOURS = 1;
+
+// When using edit-derived session timing, defer creating the exercise
+// session until this many ms have passed since the row's first edit. Avoids
+// publishing an end time while a workout is still in progress.
+const EDIT_DERIVED_DEFER_MS = 3 * 60 * 60 * 1000;
 
 // Toggle which data types this script writes to the Google Health API.
 // Both default to true; flip off to debug or to disable a category temporarily.
