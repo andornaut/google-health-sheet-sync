@@ -1,4 +1,4 @@
-# google-health-spreadsheet
+# Google Health Sheet Sync
 
 Apps Script that syncs strength-training data from a Google Sheet into the **Google Health app** (Pixel Watch and other Wear OS / connected devices that report through Google Health) via the **Google Health API v4**.
 
