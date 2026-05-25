@@ -13,8 +13,20 @@ const MANAGED_COLUMN_HEADERS = [
   LAST_EDITED_AT_COLUMN_HEADER
 ];
 
-const DEBOUNCE_CHECK_INTERVAL_MIN = 1;
+// How often the polling trigger fires to check for ready-to-sync rows.
+// Apps Script has no setTimeout; deferred work happens via periodic triggers.
+const POLL_INTERVAL_MIN = 5;
 const BACKSTOP_INTERVAL_HOURS = 1;
+
+// How long manual sync entry points (Run now, force-resync) wait to acquire
+// the script lock before giving up. Automatic triggers pass 0.
+const LOCK_WAIT_MS = 30 * 1000;
+
+// Script-properties key. Set to '1' whenever a non-managed edit happens or a
+// force-resync path clears Synced At; cleared by syncDirtyRows when it finds
+// no dirty rows. flushIfPending short-circuits when this is unset so most
+// poll ticks are just a property read.
+const PENDING_DIRTY_KEY = 'pendingDirty';
 
 // Synthetic timing is the fallback when a row has no First/Last Edited At
 // timestamps (e.g. rows that pre-date this feature, or rows imported in bulk).

@@ -128,11 +128,6 @@ function ymd(date) {
   return Utilities.formatDate(date, tz, 'yyyy-MM-dd');
 }
 
-function ymdCompact(date) {
-  const tz = Session.getScriptTimeZone();
-  return Utilities.formatDate(date, tz, 'yyyyMMdd');
-}
-
 function markRowSynced(rowNum, syncedAtCol, isoTimestamp) {
   const sheet = getSheet_();
   sheet.getRange(rowNum, syncedAtCol).setValue(isoTimestamp);
@@ -166,6 +161,15 @@ function onEditMarkDirty(e) {
   const onlyManaged = editedCols.every(c => managedCols.indexOf(c) !== -1);
   if (onlyManaged) return;
 
+  PropertiesService.getScriptProperties().setProperty(PENDING_DIRTY_KEY, '1');
+  // No lock: these are single-cell writes that race safely with an in-flight
+  // sync. syncOneRow_ re-reads Last Edited At right before stamping Synced At;
+  // if our update landed during its processing of this row, the stamp is
+  // skipped and the row stays dirty for the next pass.
+  writeEditMarkers_(sheet, firstRow, lastRow, syncedAtCol, firstEditedAtCol, lastEditedAtCol);
+}
+
+function writeEditMarkers_(sheet, firstRow, lastRow, syncedAtCol, firstEditedAtCol, lastEditedAtCol) {
   const numRows = lastRow - firstRow + 1;
   const nowIso = new Date().toISOString();
 
