@@ -1,8 +1,16 @@
+// Cached for the duration of one Apps Script execution. The OAuth2 token is
+// valid for ~1 hour and Apps Script caps executions at 6 minutes, so the
+// cached header cannot outlive the token. Reset between executions because
+// each invocation gets a fresh V8 context.
+let cachedAuthHeaders_ = null;
+
 function authHeaders_() {
-  return {
+  if (cachedAuthHeaders_) return cachedAuthHeaders_;
+  cachedAuthHeaders_ = {
     Authorization: 'Bearer ' + getHealthAccessToken_(),
     Accept: 'application/json'
   };
+  return cachedAuthHeaders_;
 }
 
 function httpJson_(method, url, payload) {
@@ -93,6 +101,19 @@ function getTzOffsetSeconds_(tz, date) {
   return sign * (hours * 3600 + mins * 60);
 }
 
+// One formatDate call instead of six. Caller picks the fields it needs.
+function civilDateParts_(tz, date) {
+  const parts = Utilities.formatDate(date, tz, 'yyyy MM dd HH mm ss').split(' ');
+  return {
+    year: Number(parts[0]),
+    month: Number(parts[1]),
+    day: Number(parts[2]),
+    hours: Number(parts[3]),
+    minutes: Number(parts[4]),
+    seconds: Number(parts[5])
+  };
+}
+
 // Resolve a local civil time (in script tz) to UTC ms and the offset that
 // actually applies at that instant. The naive "subtract midnight offset"
 // approach is wrong on DST-transition days because the offset at, say, noon
@@ -120,20 +141,14 @@ function buildIntervalFromUtc_(startUtcMs, startOffsetSeconds, endUtcMs, endOffs
 }
 
 function buildSampleTimeFromUtc_(utcMs, offsetSeconds) {
-  const tz = Session.getScriptTimeZone();
   const civil = new Date(utcMs);
-  const year = Number(Utilities.formatDate(civil, tz, 'yyyy'));
-  const month = Number(Utilities.formatDate(civil, tz, 'MM'));
-  const day = Number(Utilities.formatDate(civil, tz, 'dd'));
-  const hours = Number(Utilities.formatDate(civil, tz, 'HH'));
-  const minutes = Number(Utilities.formatDate(civil, tz, 'mm'));
-  const seconds = Number(Utilities.formatDate(civil, tz, 'ss'));
+  const p = civilDateParts_(getTz_(), civil);
   return {
     physicalTime: Utilities.formatDate(civil, 'GMT', "yyyy-MM-dd'T'HH:mm:ss'Z'"),
     utcOffset: offsetSeconds + 's',
     civilTime: {
-      date: { year: year, month: month, day: day },
-      time: { hours: hours, minutes: minutes, seconds: seconds }
+      date: { year: p.year, month: p.month, day: p.day },
+      time: { hours: p.hours, minutes: p.minutes, seconds: p.seconds }
     }
   };
 }
@@ -150,12 +165,10 @@ function syntheticExerciseInterval_(date, ordinal) {
       + SYNTHETIC_START_HOUR + ', SYNTHETIC_DURATION_HOURS='
       + SYNTHETIC_DURATION_HOURS + ').');
   }
-  const tz = Session.getScriptTimeZone();
-  const year = Number(Utilities.formatDate(date, tz, 'yyyy'));
-  const month = Number(Utilities.formatDate(date, tz, 'MM'));
-  const day = Number(Utilities.formatDate(date, tz, 'dd'));
-  const start = localCivilToUtcMs_(tz, year, month, day, startHour, 0);
-  const end = localCivilToUtcMs_(tz, year, month, day, endHour, 0);
+  const tz = getTz_();
+  const p = civilDateParts_(tz, date);
+  const start = localCivilToUtcMs_(tz, p.year, p.month, p.day, startHour, 0);
+  const end = localCivilToUtcMs_(tz, p.year, p.month, p.day, endHour, 0);
   return {
     startUtcMs: start.utcMs,
     startOffsetSeconds: start.offsetSeconds,
@@ -165,11 +178,9 @@ function syntheticExerciseInterval_(date, ordinal) {
 }
 
 function syntheticWeightSample_(date) {
-  const tz = Session.getScriptTimeZone();
-  const year = Number(Utilities.formatDate(date, tz, 'yyyy'));
-  const month = Number(Utilities.formatDate(date, tz, 'MM'));
-  const day = Number(Utilities.formatDate(date, tz, 'dd'));
-  const sample = localCivilToUtcMs_(tz, year, month, day, 12, 0);
+  const tz = getTz_();
+  const p = civilDateParts_(tz, date);
+  const sample = localCivilToUtcMs_(tz, p.year, p.month, p.day, 12, 0);
   return { utcMs: sample.utcMs, offsetSeconds: sample.offsetSeconds };
 }
 
@@ -250,12 +261,10 @@ function createWeightAt(sampleUtcMs, sampleOffsetSeconds, lbs) {
 // points (civil_time.date is rejected). Convert the script-tz day boundaries
 // to UTC instants.
 function listWeightsOnDate(date) {
-  const tz = Session.getScriptTimeZone();
-  const year = Number(Utilities.formatDate(date, tz, 'yyyy'));
-  const month = Number(Utilities.formatDate(date, tz, 'MM'));
-  const day = Number(Utilities.formatDate(date, tz, 'dd'));
-  const start = localCivilToUtcMs_(tz, year, month, day, 0, 0);
-  const end = localCivilToUtcMs_(tz, year, month, day + 1, 0, 0);
+  const tz = getTz_();
+  const p = civilDateParts_(tz, date);
+  const start = localCivilToUtcMs_(tz, p.year, p.month, p.day, 0, 0);
+  const end = localCivilToUtcMs_(tz, p.year, p.month, p.day + 1, 0, 0);
   const startIso = Utilities.formatDate(new Date(start.utcMs), 'GMT', "yyyy-MM-dd'T'HH:mm:ss'Z'");
   const endIso = Utilities.formatDate(new Date(end.utcMs), 'GMT', "yyyy-MM-dd'T'HH:mm:ss'Z'");
 
