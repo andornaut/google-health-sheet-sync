@@ -57,26 +57,12 @@ function installTriggers() {
 function onEditTrigger(e) {
   try {
     onEditMarkDirty(e);
-    PropertiesService.getScriptProperties().setProperty(LAST_EDIT_MS_KEY, String(Date.now()));
   } catch (err) {
     console.error('onEditTrigger error: ' + err);
   }
 }
 
 function debounceFlush() {
-  const props = PropertiesService.getScriptProperties();
-  const lastEditMs = Number(props.getProperty(LAST_EDIT_MS_KEY) || 0);
-  if (!lastEditMs) {
-    console.info('debounceFlush: no pending edits; skipping.');
-    return;
-  }
-  const sinceMs = Date.now() - lastEditMs;
-  if (sinceMs < DEBOUNCE_MS) {
-    console.info('debounceFlush: last edit ' + sinceMs + 'ms ago (< ' + DEBOUNCE_MS + 'ms); waiting.');
-    return;
-  }
-  console.info('debounceFlush: last edit ' + sinceMs + 'ms ago; flushing.');
-  props.deleteProperty(LAST_EDIT_MS_KEY);
   syncDirtyRows();
 }
 
@@ -129,10 +115,32 @@ function syncDirtyRows() {
     const dirty = rows.filter(r => !r.syncedAt);
     if (dirty.length === 0) return { ok: 0, errors: 0 };
 
-    console.info('syncDirtyRows: ' + dirty.length + ' dirty row(s)');
+    const now = Date.now();
+    const ready = [];
+    const waiting = [];
+    dirty.forEach(r => {
+      if (!r.lastEditedAt) {
+        ready.push(r);
+        return;
+      }
+      const sinceMs = now - r.lastEditedAt.getTime();
+      if (sinceMs >= LAST_EDIT_QUIESCE_MS) ready.push(r);
+      else waiting.push({ row: r, sinceMs: sinceMs });
+    });
+
+    if (waiting.length > 0) {
+      console.info('syncDirtyRows: ' + waiting.length + ' row(s) still in quiesce window (need '
+        + LAST_EDIT_QUIESCE_MS + 'ms since lastEditedAt); will retry next pass.');
+    }
+    if (ready.length === 0) {
+      console.info('syncDirtyRows: no rows ready to sync.');
+      return { ok: 0, errors: 0 };
+    }
+
+    console.info('syncDirtyRows: ' + ready.length + ' ready row(s)');
 
     const byDate = {};
-    dirty.forEach(r => {
+    ready.forEach(r => {
       const key = ymd(r.date);
       (byDate[key] = byDate[key] || []).push(r);
     });
@@ -146,7 +154,7 @@ function syncDirtyRows() {
       for (let i = 0; i < dateRows.length; i++) {
         done++;
         const ordinal = allRowsForDate.indexOf(dateRows[i]);
-        if (syncOneRow_(dateRows[i], ordinal, syncedAtCol, healthIdsCol, done, dirty.length)) ok++;
+        if (syncOneRow_(dateRows[i], ordinal, syncedAtCol, healthIdsCol, done, ready.length)) ok++;
         else errors++;
       }
     });
@@ -154,6 +162,32 @@ function syncDirtyRows() {
     lock.releaseLock();
   }
   return { ok: ok, errors: errors };
+}
+
+// Resolve the exercise interval (and weight sampleTime) for a row.
+// Prefers edit-derived timing when First/Last Edited At are both present.
+// Falls back to synthetic noon-ordinal otherwise.
+function resolveRowTiming_(row, ordinal) {
+  if (row.firstEditedAt && row.lastEditedAt) {
+    const startMs = row.firstEditedAt.getTime();
+    const endMs = row.lastEditedAt.getTime();
+    const tz = Session.getScriptTimeZone();
+    const startOffset = getTzOffsetSeconds_(tz, row.firstEditedAt);
+    const endOffset = getTzOffsetSeconds_(tz, row.lastEditedAt);
+    return {
+      source: 'edit',
+      exercise: {
+        startUtcMs: startMs,
+        startOffsetSeconds: startOffset,
+        endUtcMs: endMs,
+        endOffsetSeconds: endOffset
+      },
+      weight: { utcMs: startMs, offsetSeconds: startOffset }
+    };
+  }
+  const ex = syntheticExerciseInterval_(row.date, ordinal);
+  const wt = syntheticWeightSample_(row.date);
+  return { source: 'synthetic', exercise: ex, weight: wt };
 }
 
 function syncOneRow_(row, ordinal, syncedAtCol, healthIdsCol, doneIdx, total) {
@@ -168,29 +202,60 @@ function syncOneRow_(row, ordinal, syncedAtCol, healthIdsCol, doneIdx, total) {
     deleteDataPointsByName(row.healthIds);
   }
 
+  let timing;
+  try {
+    timing = resolveRowTiming_(row, ordinal);
+  } catch (err) {
+    console.error(tag + ': resolveRowTiming_ failed: ' + err);
+    return false;
+  }
+  console.info(tag + ': timing source=' + timing.source);
+
   const newIds = [];
   let failed = false;
 
   if (SYNC_EXERCISES && row.exercises.length > 0) {
+    let ex = timing.exercise;
+    if (timing.source === 'edit') {
+      try {
+        const matches = findForeignOverlappingExercises(ex.startUtcMs, ex.endUtcMs);
+        if (matches.length > 0) {
+          const m = matches[0];
+          console.info(tag + ': adopting foreign exercise ' + m.name
+            + ' (overlap=' + m.overlapMs + 'ms); deleting and recreating with our content');
+          deleteDataPointsByName([m.name]);
+          ex = {
+            startUtcMs: m.startUtcMs,
+            startOffsetSeconds: m.startUtcOffsetSeconds,
+            endUtcMs: m.endUtcMs,
+            endOffsetSeconds: m.endUtcOffsetSeconds
+          };
+        }
+      } catch (err) {
+        console.warn(tag + ': foreign-match lookup failed; using edit-derived times. ' + err);
+      }
+    }
     try {
       const notes = buildNotes(row.exercises);
       const displayName = buildDisplayName(row.exercises);
-      const name = createExercise(row.date, ordinal, notes, displayName);
+      const name = createExerciseAt(ex.startUtcMs, ex.startOffsetSeconds,
+        ex.endUtcMs, ex.endOffsetSeconds, notes, displayName);
       if (name) newIds.push(name);
-      console.info(tag + ': createExercise -> ' + (name || '<no name>'));
+      console.info(tag + ': createExerciseAt -> ' + (name || '<no name>'));
     } catch (err) {
-      console.error(tag + ': createExercise failed: ' + err);
+      console.error(tag + ': createExerciseAt failed: ' + err);
       failed = true;
     }
   }
 
   if (SYNC_WEIGHT && row.bodyweight !== null) {
     try {
-      const name = createWeight(row.date, row.bodyweight);
+      const wt = timing.weight;
+      const name = createWeightAt(wt.utcMs, wt.offsetSeconds, row.bodyweight);
       if (name) newIds.push(name);
-      console.info(tag + ': createWeight(' + row.bodyweight + ' lb) -> ' + (name || '<no name>'));
+      console.info(tag + ': createWeightAt(' + row.bodyweight + ' lb) -> ' + (name || '<no name>'));
     } catch (err) {
-      console.error(tag + ': createWeight failed: ' + err);
+      console.error(tag + ': createWeightAt failed: ' + err);
       failed = true;
     }
   }
