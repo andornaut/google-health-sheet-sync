@@ -84,8 +84,16 @@ Choose one option:
 
 ### 5. Initialize & Authorize
 
-1. Open `src/Main.gs` in the editor, select the `setup` function, and click **Run** (authorizes sheet access and configures triggers).
+1. Open `src/Main.gs` in the editor, select the `setup` function, and click **Run**. This authorizes sheet access, installs triggers (`onEditTrigger`, `debounceFlush`, `backstop`), and appends the managed columns (`Synced At`, `Health IDs`, `First Edited At`, `Last Edited At`) to the sheet.
 2. Refresh your spreadsheet, then select **Sync ▸ Authorize Health API** from the menu. Complete the OAuth consent flow.
+
+The **Sync** menu also exposes:
+
+- **Run now**: flush dirty rows immediately.
+- **Force resync current row**: clears `Synced At` on the active row and resyncs.
+- **Revoke Health API authorization**: clears the stored token.
+- **Re-install triggers**: rebuild triggers after editing timing constants.
+- **Run tests**: execute the local parser tests inside Apps Script.
 
 ---
 
@@ -93,11 +101,13 @@ Choose one option:
 
 Edit [Config.gs](file:///home/andornaut/src/github.com/andornaut/google-health-sheet-sync/src/Config.gs) to customize:
 
-- `SYNTHETIC_START_HOUR` / `SYNTHETIC_END_HOUR` (default `12` / `13`)
-- `DEBOUNCE_MS` (sync delay after last edit, default 60s)
-- `EXERCISE_ABBREVIATIONS` (cosmetic mapping)
+- `SYNTHETIC_START_HOUR` / `SYNTHETIC_DURATION_HOURS` (default `12` / `1`): synthetic session start hour and duration when edit-derived timing is unavailable.
+- `EDIT_DERIVED_DEFER_MS` (default 3h): wait this long after a row's first edit before publishing an edit-derived session, so an in-progress workout isn't closed early.
+- `DEBOUNCE_MS` (sync delay after last edit, default 60s).
+- `SYNC_EXERCISES` / `SYNC_WEIGHT` (default `true`): toggle which datapoint types are written.
+- `EXERCISE_ABBREVIATIONS` (cosmetic mapping).
 
-*Note: Run **Sync ▸ Re-install triggers** after editing timing configurations.*
+Run **Sync ▸ Re-install triggers** after editing timing configurations.
 
 ---
 

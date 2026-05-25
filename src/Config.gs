@@ -13,24 +13,38 @@ const MANAGED_COLUMN_HEADERS = [
   LAST_EDITED_AT_COLUMN_HEADER
 ];
 
-const DEBOUNCE_MS = 60 * 1000;
 const DEBOUNCE_CHECK_INTERVAL_MIN = 1;
 const BACKSTOP_INTERVAL_HOURS = 1;
 
+// Synthetic timing is the fallback when a row has no First/Last Edited At
+// timestamps (e.g. rows that pre-date this feature, or rows imported in bulk).
+// Each row on a given date gets startHour = SYNTHETIC_START_HOUR + ordinal,
+// endHour = startHour + SYNTHETIC_DURATION_HOURS, so the second strength row
+// on the same date starts an hour after the first, and so on.
 const SYNTHETIC_START_HOUR = 12;
 const SYNTHETIC_DURATION_HOURS = 1;
 
-// When using edit-derived session timing, defer creating the exercise
-// session until this many ms have passed since the row's first edit. Avoids
-// publishing an end time while a workout is still in progress.
-const EDIT_DERIVED_DEFER_MS = 3 * 60 * 60 * 1000;
+// Per-row quiet period. A dirty row is held back from syncing until this many
+// ms have passed since its Last Edited At. The goal: stamp the activity's
+// end time with roughly when the workout actually finished, not when the
+// first sync trigger happened to fire. If you re-edit a synced row, this
+// re-applies (the row goes dirty again and waits another quiesce window).
+// Rows with no Last Edited At (legacy/backfill) bypass the wait and sync
+// immediately.
+const LAST_EDIT_QUIESCE_MS = 60 * 60 * 1000;
+
+// When matching foreign Google Health activities (ones this script didn't
+// create) to a row's edit window, treat datapoints whose interval overlaps
+// [firstEdit - buffer, lastEdit + buffer] as candidates. Picks up watch- or
+// app-logged workouts that are slightly offset from the spreadsheet edit
+// window so we can adopt their real start/end times instead of inventing
+// our own.
+const FOREIGN_MATCH_BUFFER_MS = 30 * 60 * 1000;
 
 // Toggle which data types this script writes to the Google Health API.
 // Both default to true; flip off to debug or to disable a category temporarily.
 const SYNC_EXERCISES = true;
 const SYNC_WEIGHT = true;
-
-const LAST_EDIT_MS_KEY = 'lastEditMs';
 
 const HEALTH_OAUTH_CLIENT_ID_KEY = 'HEALTH_OAUTH_CLIENT_ID';
 const HEALTH_OAUTH_CLIENT_SECRET_KEY = 'HEALTH_OAUTH_CLIENT_SECRET';

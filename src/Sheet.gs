@@ -34,6 +34,8 @@ function readRows() {
 
   const syncedAtCol = map[SYNCED_AT_COLUMN_HEADER] || null;
   const healthIdsCol = map[HEALTH_IDS_COLUMN_HEADER] || null;
+  const firstEditedAtCol = map[FIRST_EDITED_AT_COLUMN_HEADER] || null;
+  const lastEditedAtCol = map[LAST_EDITED_AT_COLUMN_HEADER] || null;
   const dateCol = map[DATE_COLUMN_HEADER];
   const weightCol = map[WEIGHT_COLUMN_HEADER];
 
@@ -47,7 +49,15 @@ function readRows() {
   });
 
   const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return { rows: [], syncedAtCol: syncedAtCol, healthIdsCol: healthIdsCol };
+  if (lastRow < 2) {
+    return {
+      rows: [],
+      syncedAtCol: syncedAtCol,
+      healthIdsCol: healthIdsCol,
+      firstEditedAtCol: firstEditedAtCol,
+      lastEditedAtCol: lastEditedAtCol
+    };
+  }
 
   const width = sheet.getLastColumn();
   const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
@@ -67,16 +77,26 @@ function readRows() {
     const bodyweight = parseBodyweight(row[weightCol - 1]);
     const syncedAt = syncedAtCol ? row[syncedAtCol - 1] : '';
     const healthIds = healthIdsCol ? parseHealthIds_(row[healthIdsCol - 1]) : [];
+    const firstEditedAt = firstEditedAtCol ? toDate_(row[firstEditedAtCol - 1]) : null;
+    const lastEditedAt = lastEditedAtCol ? toDate_(row[lastEditedAtCol - 1]) : null;
     rows.push({
       rowNum: rowNum,
       date: date,
       exercises: exercises,
       bodyweight: bodyweight,
       syncedAt: syncedAt ? String(syncedAt).trim() : '',
-      healthIds: healthIds
+      healthIds: healthIds,
+      firstEditedAt: firstEditedAt,
+      lastEditedAt: lastEditedAt
     });
   });
-  return { rows: rows, syncedAtCol: syncedAtCol, healthIdsCol: healthIdsCol };
+  return {
+    rows: rows,
+    syncedAtCol: syncedAtCol,
+    healthIdsCol: healthIdsCol,
+    firstEditedAtCol: firstEditedAtCol,
+    lastEditedAtCol: lastEditedAtCol
+  };
 }
 
 function parseHealthIds_(raw) {
@@ -137,6 +157,8 @@ function onEditMarkDirty(e) {
   const { map } = getHeaderMap_(sheet);
   const syncedAtCol = map[SYNCED_AT_COLUMN_HEADER];
   if (!syncedAtCol) return;
+  const firstEditedAtCol = map[FIRST_EDITED_AT_COLUMN_HEADER] || null;
+  const lastEditedAtCol = map[LAST_EDITED_AT_COLUMN_HEADER] || null;
 
   const managedCols = MANAGED_COLUMN_HEADERS.map(h => map[h]).filter(c => c);
   const editedCols = [];
@@ -145,15 +167,38 @@ function onEditMarkDirty(e) {
   if (onlyManaged) return;
 
   const numRows = lastRow - firstRow + 1;
-  const range = sheet.getRange(firstRow, syncedAtCol, numRows, 1);
-  const currentValues = range.getValues();
+  const nowIso = new Date().toISOString();
+
+  const syncedRange = sheet.getRange(firstRow, syncedAtCol, numRows, 1);
+  const syncedValues = syncedRange.getValues();
   let needsClear = false;
   const blanks = [];
   for (let i = 0; i < numRows; i++) {
-    if (currentValues[i][0] !== '') needsClear = true;
+    if (syncedValues[i][0] !== '') needsClear = true;
     blanks.push(['']);
   }
-  if (needsClear) {
-    range.setValues(blanks);
+  if (needsClear) syncedRange.setValues(blanks);
+
+  if (firstEditedAtCol) {
+    const firstRange = sheet.getRange(firstRow, firstEditedAtCol, numRows, 1);
+    const firstValues = firstRange.getValues();
+    let needsWrite = false;
+    const writes = [];
+    for (let i = 0; i < numRows; i++) {
+      if (firstValues[i][0] === '' || firstValues[i][0] === null) {
+        writes.push([nowIso]);
+        needsWrite = true;
+      } else {
+        writes.push([firstValues[i][0]]);
+      }
+    }
+    if (needsWrite) firstRange.setValues(writes);
+  }
+
+  if (lastEditedAtCol) {
+    const lastRange = sheet.getRange(firstRow, lastEditedAtCol, numRows, 1);
+    const stamps = [];
+    for (let i = 0; i < numRows; i++) stamps.push([nowIso]);
+    lastRange.setValues(stamps);
   }
 }
