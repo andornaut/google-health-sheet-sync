@@ -26,6 +26,11 @@ const BACKSTOP_INTERVAL_HOURS = 1;
 // the script lock before giving up. Automatic triggers pass 0.
 const LOCK_WAIT_MS = 30 * 1000;
 
+// Cap rows processed per sync pass to stay under Apps Script's 6-minute
+// execution limit. At ~3.3s/row observed, 75 rows leaves a comfortable margin.
+// Remaining dirty rows are deferred to the next pass via PENDING_DIRTY_KEY.
+const MAX_ROWS_PER_SYNC = 75;
+
 // Script-properties key. Set to '1' whenever a non-managed edit happens or a
 // force-resync path clears Synced At; cleared by syncDirtyRows when it finds
 // no dirty rows. flushIfPending short-circuits when this is unset so most

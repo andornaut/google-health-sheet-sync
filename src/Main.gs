@@ -103,7 +103,6 @@ function forceResyncCurrentRow() {
 }
 
 function forceResyncAllRows() {
-  const ui = SpreadsheetApp.getUi();
   const sheet = getSheet_();
   const { map } = getHeaderMap_(sheet);
   const col = map[SYNCED_AT_COLUMN_HEADER];
@@ -117,13 +116,6 @@ function forceResyncAllRows() {
     return;
   }
   const dataRowCount = lastRow - 1;
-  const confirm = ui.alert(
-    'Force resync ALL rows?',
-    'This will clear "Synced At" for ' + dataRowCount + ' row(s) and re-upload every row to Google Health '
-      + '(delete + recreate). The quiesce window is bypassed, so rows edited recently will resync too. Continue?',
-    ui.ButtonSet.YES_NO
-  );
-  if (confirm !== ui.Button.YES) return;
 
   const blanks = [];
   for (let i = 0; i < dataRowCount; i++) blanks.push(['']);
@@ -139,6 +131,7 @@ function formatSyncResult_(result, verb) {
   if (!result) return 'Sync skipped (another run holds the lock). Try again shortly.';
   let msg = verb + ' ' + result.ok + ' row(s)';
   if (result.errors > 0) msg += ', ' + result.errors + ' error(s)';
+  if (result.deferred > 0) msg += ', ' + result.deferred + ' deferred';
   msg += '.';
   if (result.errors > 0) msg += '\n\nSee Executions for details.';
   return msg;
@@ -171,6 +164,7 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
   let ok = 0;
   let errors = 0;
   let waitingCount = 0;
+  let deferredCount = 0;
   try {
     // Clear early so any onEditMarkDirty that fires during this pass can
     // re-set the flag and be picked up by the next poll without ambiguity.
@@ -211,9 +205,22 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
     }
     if (bypassQuiesce) console.info('syncDirtyRows: bypassQuiesce=true');
 
-    console.info('syncDirtyRows: ' + ready.length + ' ready row(s)');
+    // Newest-first so recent edits land in Health quickly when the cap defers
+    // some of the backlog. Tie-break by rowNum descending for stable ordering
+    // within a single date.
+    ready.sort((a, b) => {
+      const dateDiff = b.date.getTime() - a.date.getTime();
+      return dateDiff !== 0 ? dateDiff : b.rowNum - a.rowNum;
+    });
+    if (ready.length > MAX_ROWS_PER_SYNC) {
+      deferredCount = ready.length - MAX_ROWS_PER_SYNC;
+      console.info('syncDirtyRows: ' + ready.length + ' ready row(s); capping at '
+        + MAX_ROWS_PER_SYNC + ', deferring ' + deferredCount + ' to next pass');
+      ready.length = MAX_ROWS_PER_SYNC;
+    } else {
+      console.info('syncDirtyRows: ' + ready.length + ' ready row(s)');
+    }
 
-    ready.sort((a, b) => a.rowNum - b.rowNum);
     const matchPlan = resolveForeignMatches_(rows, ready);
     for (let i = 0; i < ready.length; i++) {
       const r = ready[i];
@@ -227,12 +234,12 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
     // pick them up, and failed rows should be retried promptly. (syncOneRow_
     // also sets the flag itself when it defers a row due to a concurrent
     // edit, so even rows counted as ok can leave the flag set.)
-    if (waitingCount > 0 || errors > 0) {
+    if (waitingCount > 0 || errors > 0 || deferredCount > 0) {
       props.setProperty(PENDING_DIRTY_KEY, '1');
     }
     lock.releaseLock();
   }
-  return { ok: ok, errors: errors };
+  return { ok: ok, errors: errors, deferred: deferredCount };
 }
 
 // Returns rowNum -> foreign Strength Training session for ready rows whose

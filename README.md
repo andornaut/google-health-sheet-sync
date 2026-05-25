@@ -10,6 +10,7 @@ Google Apps Script to sync strength-training and bodyweight data from Google She
 - **Edit-derived timing**: The activity's start/end times are taken from when you first/last edited the row, so the Google Health session reflects when you actually did the workout. Rows without edit timestamps (e.g. backfill) fall back to a synthetic noon-ordinal slot.
 - **Foreign-activity matching**: If a Strength Training session you logged on a watch or in another app already covers the same workout (overlapping edit window, or 1:1 by ordinal when the row has no edit timestamps), the script skips writing its own duplicate exercise datapoint and records the matched session in the row's `Matched Health Session` column. The foreign datapoint is left untouched — its calories, heart rate, and recording method are preserved. Bodyweight still syncs as normal.
 - **Automated**: Polls every 5 minutes for rows whose last edit was at least 45 minutes ago, with an hourly backstop trigger as a safety net. Re-editing a synced row clears `Synced At` and restarts the quiesce window so the next sync reflects the updated content.
+- **Per-pass cap**: Each sync processes up to 75 rows (newest dates first) to stay under Apps Script's 6-minute execution limit. Remaining rows are picked up on the next poll.
 
 > [!NOTE]
 > The Google Health API enforces strict ownership. Datapoints logged by this script live side-by-side with sessions recorded by your watch (e.g., Pixel Watch, Fitbit).
@@ -108,7 +109,7 @@ The **Sync** menu also exposes:
 
 - **Run now**: sync dirty rows immediately, bypassing the quiesce window.
 - **Force resync current row**: clears `Synced At` on the active row and resyncs (bypasses quiesce).
-- **Force resync ALL rows**: clears `Synced At` for every row and re-uploads everything to Google Health (bypasses quiesce). Confirms first.
+- **Force resync ALL rows**: clears `Synced At` for every row and re-uploads everything to Google Health (bypasses quiesce). Runs immediately with no confirmation. If the row count exceeds the per-pass cap, the remainder is deferred to the next poll.
 - **Revoke Health API authorization**: clears the stored token.
 - **Re-install triggers**: rebuild triggers after editing timing constants.
 - **Run tests**: execute the parser tests inside Apps Script.
@@ -123,6 +124,7 @@ Edit [Config.gs](src/Config.gs) to customize:
 - `LAST_EDIT_QUIESCE_MS` (default 45 min): how long a row must sit idle after its last edit before it's eligible to sync. Lets the activity's end time reflect when the workout actually finished.
 - `FOREIGN_MATCH_BUFFER_MS` (default 30 min): when checking whether a non-sync-created Strength Training activity matches a row's edit window, allow this much slack on either side. If a foreign activity overlaps, the row is treated as already represented in Health (no own exercise written) and the foreign datapoint's resource name is recorded in the `Matched Health Session` column.
 - `POLL_INTERVAL_MIN` (default 5) and `BACKSTOP_INTERVAL_HOURS` (default 1): trigger cadence.
+- `MAX_ROWS_PER_SYNC` (default 75): maximum rows processed per sync pass. Rows are processed newest-first; anything over the cap is deferred to the next poll. At ~3.3s/row this leaves comfortable margin under Apps Script's 6-minute execution limit.
 - `SYNC_EXERCISES` / `SYNC_WEIGHT` (default `true`): toggle which datapoint types are written.
 - `EXERCISE_ABBREVIATIONS` (cosmetic mapping).
 
