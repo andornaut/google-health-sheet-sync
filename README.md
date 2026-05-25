@@ -7,7 +7,9 @@ Google Apps Script to sync strength-training and bodyweight data from Google She
 - **Strength Exercises**: Parses lifts (e.g., `135x5x3`, `*135x5x3` for assisted) and logs them as `STRENGTH_TRAINING` sessions.
 - **Bodyweight**: Logs weight data points.
 - **Idempotent Sync**: Deletes previous sync data before creating new entries to prevent duplicates.
-- **Automated**: Runs ~1 minute after editing (debounced) with an hourly backstop trigger.
+- **Edit-derived timing**: The activity's start/end times are taken from when you first/last edited the row, so the Google Health session reflects when you actually did the workout. Rows without edit timestamps (e.g. backfill) fall back to a synthetic noon-ordinal slot.
+- **Foreign-activity matching**: If a workout you logged on a watch or in another app overlaps the edit window, its time bounds are adopted and the foreign datapoint is replaced with the spreadsheet-driven one.
+- **Automated**: Polls every 5 minutes for rows whose last edit was at least 1 hour ago, with an hourly backstop trigger as a safety net.
 
 > [!NOTE]
 > The Google Health API enforces strict ownership. Datapoints logged by this script live side-by-side with sessions recorded by your watch (e.g., Pixel Watch, Fitbit).
@@ -84,13 +86,14 @@ Choose one option:
 
 ### 5. Initialize & Authorize
 
-1. Open `src/Main.gs` in the editor, select the `setup` function, and click **Run**. This authorizes sheet access, installs triggers (`onEditTrigger`, `debounceFlush`, `backstop`), and appends the managed columns (`Synced At`, `Health IDs`, `First Edited At`, `Last Edited At`) to the sheet.
+1. Open `src/Main.gs` in the editor, select the `setup` function, and click **Run**. This authorizes sheet access, installs triggers (`onEditTrigger`, `flushIfPending`, `backstop`), and appends the managed columns (`Synced At`, `Health IDs`, `First Edited At`, `Last Edited At`) to the sheet.
 2. Refresh your spreadsheet, then select **Sync ▸ Authorize Health API** from the menu. Complete the OAuth consent flow.
 
 The **Sync** menu also exposes:
 
-- **Run now**: flush dirty rows immediately.
-- **Force resync current row**: clears `Synced At` on the active row and resyncs.
+- **Run now**: sync dirty rows immediately, bypassing the quiesce window.
+- **Force resync current row**: clears `Synced At` on the active row and resyncs (bypasses quiesce).
+- **Force resync ALL rows**: clears `Synced At` for every row and re-uploads everything to Google Health (bypasses quiesce). Confirms first.
 - **Revoke Health API authorization**: clears the stored token.
 - **Re-install triggers**: rebuild triggers after editing timing constants.
 - **Run tests**: execute the local parser tests inside Apps Script.
@@ -101,9 +104,10 @@ The **Sync** menu also exposes:
 
 Edit [Config.gs](file:///home/andornaut/src/github.com/andornaut/google-health-sheet-sync/src/Config.gs) to customize:
 
-- `SYNTHETIC_START_HOUR` / `SYNTHETIC_DURATION_HOURS` (default `12` / `1`): synthetic session start hour and duration when edit-derived timing is unavailable.
-- `EDIT_DERIVED_DEFER_MS` (default 3h): wait this long after a row's first edit before publishing an edit-derived session, so an in-progress workout isn't closed early.
-- `DEBOUNCE_MS` (sync delay after last edit, default 60s).
+- `SYNTHETIC_START_HOUR` / `SYNTHETIC_DURATION_HOURS` (default `12` / `1`): synthetic session start hour and duration when edit-derived timing is unavailable (legacy/backfill rows).
+- `LAST_EDIT_QUIESCE_MS` (default 1h): how long a row must sit idle after its last edit before it's eligible to sync. Lets the activity's end time reflect when the workout actually finished.
+- `FOREIGN_MATCH_BUFFER_MS` (default 30 min): when matching a non-sync-created Google Health activity to a row's edit window, allow this much slack on either side. If a foreign activity overlaps, it's adopted (its start/end times are reused, content is replaced by ours).
+- `POLL_INTERVAL_MIN` (default 5) and `BACKSTOP_INTERVAL_HOURS` (default 1): trigger cadence.
 - `SYNC_EXERCISES` / `SYNC_WEIGHT` (default `true`): toggle which datapoint types are written.
 - `EXERCISE_ABBREVIATIONS` (cosmetic mapping).
 

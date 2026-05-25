@@ -48,8 +48,9 @@ function extractDataPointName_(createResponse) {
   return null;
 }
 
-// Listing kept for diagnostic / future-correlation use, even though the
-// sync path no longer needs it.
+// Lists exercise datapoints whose civil start time falls on `date` in the
+// script's time zone. Used by findForeignOverlappingExercises to discover
+// non-sync-created activities to adopt, and by Debug.gs introspection.
 function listExercisesOnDate(date) {
   const startDay = ymd(date);
   const nextDay = ymd(new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1));
