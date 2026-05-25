@@ -134,6 +134,14 @@ function runParserTests() {
     formatSyncResult_({ ok: 0, errors: 4 }, 'Synced'),
     'Synced 0 row(s), 4 error(s).\n\nSee Executions for details.'
   ));
+  t('formatSyncResult_ ok + deferred', () => eq(
+    formatSyncResult_({ ok: 75, errors: 0, deferred: 25 }, 'Synced'),
+    'Synced 75 row(s), 25 deferred.'
+  ));
+  t('formatSyncResult_ ok + errors + deferred', () => eq(
+    formatSyncResult_({ ok: 70, errors: 5, deferred: 25 }, 'Synced'),
+    'Synced 70 row(s), 5 error(s), 25 deferred.\n\nSee Executions for details.'
+  ));
 
   t('toDate_ passes Date through', () => {
     const d = new Date('2026-01-15T12:00:00Z');
