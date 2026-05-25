@@ -3,7 +3,7 @@ const path = require('path');
 const vm = require('vm');
 
 const root = path.resolve(__dirname, '..');
-const srcFiles = ['Config.gs', 'Parser.gs', 'Format.gs'];
+const srcFiles = ['Config.gs', 'Parser.gs', 'Format.gs', 'Sheet.gs', 'HealthApi.gs', 'Main.gs'];
 const testFiles = ['Parser.test.gs'];
 
 const sandbox = {
