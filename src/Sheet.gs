@@ -36,17 +36,30 @@ function readRows() {
   const healthIdsCol = map[HEALTH_IDS_COLUMN_HEADER] || null;
   const firstEditedAtCol = map[FIRST_EDITED_AT_COLUMN_HEADER] || null;
   const lastEditedAtCol = map[LAST_EDITED_AT_COLUMN_HEADER] || null;
+  const matchedHealthSessionCol = map[MATCHED_HEALTH_SESSION_COLUMN_HEADER] || null;
   const dateCol = map[DATE_COLUMN_HEADER];
   const weightCol = map[WEIGHT_COLUMN_HEADER];
 
   const exerciseCols = [];
+  const seenExerciseNames = {};
+  const duplicateExerciseNames = {};
   headers.forEach((h, i) => {
     const name = String(h).trim();
     if (!name) return;
     if (name === DATE_COLUMN_HEADER || name === WEIGHT_COLUMN_HEADER) return;
     if (MANAGED_COLUMN_HEADERS.indexOf(name) !== -1) return;
+    if (seenExerciseNames[name]) {
+      duplicateExerciseNames[name] = true;
+      return;
+    }
+    seenExerciseNames[name] = true;
     exerciseCols.push({ name: name, col: i + 1 });
   });
+  const duplicates = Object.keys(duplicateExerciseNames);
+  if (duplicates.length > 0) {
+    throw new Error('Duplicate exercise column header(s): ' + duplicates.sort().join(', ')
+      + '. Each exercise column header must be unique.');
+  }
 
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) {
@@ -55,7 +68,8 @@ function readRows() {
       syncedAtCol: syncedAtCol,
       healthIdsCol: healthIdsCol,
       firstEditedAtCol: firstEditedAtCol,
-      lastEditedAtCol: lastEditedAtCol
+      lastEditedAtCol: lastEditedAtCol,
+      matchedHealthSessionCol: matchedHealthSessionCol
     };
   }
 
@@ -79,6 +93,9 @@ function readRows() {
     const healthIds = healthIdsCol ? parseHealthIds_(row[healthIdsCol - 1]) : [];
     const firstEditedAt = firstEditedAtCol ? toDate_(row[firstEditedAtCol - 1]) : null;
     const lastEditedAt = lastEditedAtCol ? toDate_(row[lastEditedAtCol - 1]) : null;
+    const matchedHealthSession = matchedHealthSessionCol
+      ? String(row[matchedHealthSessionCol - 1] || '').trim()
+      : '';
     rows.push({
       rowNum: rowNum,
       date: date,
@@ -87,7 +104,8 @@ function readRows() {
       syncedAt: syncedAt ? String(syncedAt).trim() : '',
       healthIds: healthIds,
       firstEditedAt: firstEditedAt,
-      lastEditedAt: lastEditedAt
+      lastEditedAt: lastEditedAt,
+      matchedHealthSession: matchedHealthSession
     });
   });
   return {
@@ -95,8 +113,15 @@ function readRows() {
     syncedAtCol: syncedAtCol,
     healthIdsCol: healthIdsCol,
     firstEditedAtCol: firstEditedAtCol,
-    lastEditedAtCol: lastEditedAtCol
+    lastEditedAtCol: lastEditedAtCol,
+    matchedHealthSessionCol: matchedHealthSessionCol
   };
+}
+
+function writeMatchedHealthSession(rowNum, matchedHealthSessionCol, name) {
+  if (!matchedHealthSessionCol) return;
+  const sheet = getSheet_();
+  sheet.getRange(rowNum, matchedHealthSessionCol).setValue(name || '');
 }
 
 function parseHealthIds_(raw) {

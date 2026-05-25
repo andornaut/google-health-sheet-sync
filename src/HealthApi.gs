@@ -17,20 +17,25 @@ function httpJson_(method, url, payload) {
   const maxAttempts = 4;
   let lastErr;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let resp;
     try {
-      const resp = UrlFetchApp.fetch(url, options);
-      const code = resp.getResponseCode();
-      const body = resp.getContentText();
-      if (code >= 200 && code < 300) {
-        return body ? JSON.parse(body) : {};
-      }
-      lastErr = new Error('Health API ' + method + ' ' + url + ' -> ' + code + ': ' + body);
-      const transient = code === 429 || (code >= 500 && code < 600);
-      if (!transient || attempt === maxAttempts - 1) throw lastErr;
+      resp = UrlFetchApp.fetch(url, options);
     } catch (err) {
       lastErr = err;
       if (attempt === maxAttempts - 1) throw lastErr;
+      const backoffMs = 500 * Math.pow(2, attempt);
+      console.warn('Health API ' + method + ' -> failed; retry ' + (attempt + 1) + '/' + (maxAttempts - 1) + ' in ' + backoffMs + 'ms. Error: ' + lastErr);
+      Utilities.sleep(backoffMs);
+      continue;
     }
+    const code = resp.getResponseCode();
+    const body = resp.getContentText();
+    if (code >= 200 && code < 300) {
+      return body ? JSON.parse(body) : {};
+    }
+    lastErr = new Error('Health API ' + method + ' ' + url + ' -> ' + code + ': ' + body);
+    const transient = code === 429 || (code >= 500 && code < 600);
+    if (!transient || attempt === maxAttempts - 1) throw lastErr;
     const backoffMs = 500 * Math.pow(2, attempt);
     console.warn('Health API ' + method + ' -> failed; retry ' + (attempt + 1) + '/' + (maxAttempts - 1) + ' in ' + backoffMs + 'ms. Error: ' + lastErr);
     Utilities.sleep(backoffMs);
@@ -49,8 +54,8 @@ function extractDataPointName_(createResponse) {
 }
 
 // Lists exercise datapoints whose civil start time falls on `date` in the
-// script's time zone. Used by findForeignOverlappingExercises to discover
-// non-sync-created activities to adopt, and by Debug.gs introspection.
+// script's time zone. Used by listForeignStrengthOnDate to discover
+// non-sync-created activities to match against, and by Debug.gs introspection.
 function listExercisesOnDate(date) {
   const startDay = ymd(date);
   const nextDay = ymd(new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1));
@@ -168,48 +173,34 @@ function syntheticWeightSample_(date) {
   return { utcMs: sample.utcMs, offsetSeconds: sample.offsetSeconds };
 }
 
-// Find non-sync-created exercise datapoints whose interval overlaps
-// [startMs - FOREIGN_MATCH_BUFFER_MS, endMs + FOREIGN_MATCH_BUFFER_MS] on
-// the civil date(s) spanned by [startMs, endMs]. Excludes anything whose
-// notes carry SYNC_MARKER (those are ours and are deleted via healthIds).
-function findForeignOverlappingExercises(startMs, endMs) {
-  const bufferMs = FOREIGN_MATCH_BUFFER_MS;
-  const windowStart = startMs - bufferMs;
-  const windowEnd = endMs + bufferMs;
-  const dates = [new Date(windowStart)];
-  const startDay = ymd(new Date(windowStart));
-  const endDay = ymd(new Date(windowEnd));
-  if (endDay !== startDay) dates.push(new Date(windowEnd));
-
-  const seen = {};
-  const candidates = [];
-  for (const d of dates) {
-    const points = listExercisesOnDate(d);
-    for (const p of points) {
-      if (!p || !p.name || seen[p.name]) continue;
-      seen[p.name] = true;
-      const interval = p.exercise && p.exercise.interval;
-      if (!interval || !interval.startTime || !interval.endTime) continue;
-      const pStartMs = new Date(interval.startTime).getTime();
-      const pEndMs = new Date(interval.endTime).getTime();
-      if (isNaN(pStartMs) || isNaN(pEndMs)) continue;
-      const overlapStart = Math.max(pStartMs, windowStart);
-      const overlapEnd = Math.min(pEndMs, windowEnd);
-      if (overlapEnd <= overlapStart) continue;
-      const notes = (p.exercise && p.exercise.notes) || '';
-      if (notes.indexOf(SYNC_MARKER) !== -1) continue;
-      candidates.push({
-        name: p.name,
-        startUtcMs: pStartMs,
-        endUtcMs: pEndMs,
-        startUtcOffsetSeconds: parseOffsetSeconds_(interval.startUtcOffset),
-        endUtcOffsetSeconds: parseOffsetSeconds_(interval.endUtcOffset),
-        overlapMs: overlapEnd - overlapStart
-      });
-    }
+// List foreign Strength Training datapoints whose civil start time falls on
+// `date`. "Foreign" = exerciseType STRENGTH_TRAINING and notes free of
+// SYNC_MARKER (i.e., not created by this script). Returned candidates are
+// sorted ascending by startUtcMs.
+function listForeignStrengthOnDate(date) {
+  const points = listExercisesOnDate(date);
+  const out = [];
+  for (const p of points) {
+    if (!p || !p.name) continue;
+    const exType = p.exercise && p.exercise.exerciseType;
+    if (exType !== 'STRENGTH_TRAINING') continue;
+    const interval = p.exercise && p.exercise.interval;
+    if (!interval || !interval.startTime || !interval.endTime) continue;
+    const pStartMs = new Date(interval.startTime).getTime();
+    const pEndMs = new Date(interval.endTime).getTime();
+    if (isNaN(pStartMs) || isNaN(pEndMs)) continue;
+    const notes = (p.exercise && p.exercise.notes) || '';
+    if (notes.indexOf(SYNC_MARKER) !== -1) continue;
+    out.push({
+      name: p.name,
+      startUtcMs: pStartMs,
+      endUtcMs: pEndMs,
+      startUtcOffsetSeconds: parseOffsetSeconds_(interval.startUtcOffset),
+      endUtcOffsetSeconds: parseOffsetSeconds_(interval.endUtcOffset)
+    });
   }
-  candidates.sort((a, b) => b.overlapMs - a.overlapMs);
-  return candidates;
+  out.sort((a, b) => a.startUtcMs - b.startUtcMs);
+  return out;
 }
 
 function parseOffsetSeconds_(raw) {
