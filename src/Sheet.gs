@@ -1,8 +1,22 @@
+// Module-level caches reset on every Apps Script execution (each invocation
+// gets a fresh V8 context), so they amortize repeated lookups within one
+// sync pass without leaking state across passes.
+let cachedSheet_ = null;
+let cachedTz_ = null;
+
 function getSheet_() {
+  if (cachedSheet_) return cachedSheet_;
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(SHEET_NAME) || ss.getActiveSheet();
   if (!sheet) throw new Error('Sheet not found: ' + SHEET_NAME);
+  cachedSheet_ = sheet;
   return sheet;
+}
+
+function getTz_() {
+  if (cachedTz_) return cachedTz_;
+  cachedTz_ = Session.getScriptTimeZone();
+  return cachedTz_;
 }
 
 function getHeaderMap_(sheet) {
@@ -149,8 +163,7 @@ function toDate_(value) {
 }
 
 function ymd(date) {
-  const tz = Session.getScriptTimeZone();
-  return Utilities.formatDate(date, tz, 'yyyy-MM-dd');
+  return Utilities.formatDate(date, getTz_(), 'yyyy-MM-dd');
 }
 
 function markRowSynced(rowNum, syncedAtCol, isoTimestamp) {

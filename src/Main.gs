@@ -343,7 +343,7 @@ function resolveRowTiming_(row, ordinal) {
   if (row.firstEditedAt && row.lastEditedAt) {
     const startMs = row.firstEditedAt.getTime();
     const endMs = row.lastEditedAt.getTime();
-    const tz = Session.getScriptTimeZone();
+    const tz = getTz_();
     const startOffset = getTzOffsetSeconds_(tz, row.firstEditedAt);
     const endOffset = getTzOffsetSeconds_(tz, row.lastEditedAt);
     return {
