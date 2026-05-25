@@ -66,8 +66,10 @@ function onEditTrigger(e) {
 function flushIfPending() {
   const props = PropertiesService.getScriptProperties();
   if (props.getProperty(PENDING_DIRTY_KEY) !== '1') {
+    console.info('flushIfPending: no pending edits, skipping');
     return;
   }
+  console.info('flushIfPending: pending edits detected, syncing');
   syncDirtyRows(false, 0);
 }
 
@@ -163,7 +165,7 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
     // re-set the flag and be picked up by the next poll without ambiguity.
     props.deleteProperty(PENDING_DIRTY_KEY);
 
-    const { rows, syncedAtCol, healthIdsCol, lastEditedAtCol } = readRows();
+    const { rows, syncedAtCol, healthIdsCol, lastEditedAtCol, matchedHealthSessionCol } = readRows();
     if (!syncedAtCol || !healthIdsCol) {
       console.error('syncDirtyRows: managed columns missing; run setup().');
       errors = 1;
@@ -201,10 +203,12 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
     console.info('syncDirtyRows: ' + ready.length + ' ready row(s)');
 
     ready.sort((a, b) => a.rowNum - b.rowNum);
+    const matchPlan = resolveForeignMatches_(rows, ready);
     for (let i = 0; i < ready.length; i++) {
       const r = ready[i];
       const ordinal = ordinalByRowNum[r.rowNum];
-      if (syncOneRow_(r, ordinal, syncedAtCol, healthIdsCol, lastEditedAtCol, i + 1, ready.length)) ok++;
+      const match = matchPlan[r.rowNum] || null;
+      if (syncOneRow_(r, ordinal, match, syncedAtCol, healthIdsCol, lastEditedAtCol, matchedHealthSessionCol, i + 1, ready.length)) ok++;
       else errors++;
     }
   } finally {
@@ -220,15 +224,98 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
   return { ok: ok, errors: errors };
 }
 
-// Group all rows by their civil date and assign each row an ordinal equal to
-// its rank (by rowNum) within that date. Used by the synthetic-timing fallback
-// to give each row on the same date a distinct startHour offset.
-function buildOrdinalMap_(rows) {
+// Returns rowNum -> foreign Strength Training session for ready rows whose
+// lifting content is already covered by a non-sync-created Health datapoint.
+// Two-phase per date: time-range overlap (rows with edit timestamps) then
+// 1:1 ordinal pairing (rows without). Candidates already claimed by other
+// synced rows are excluded first so incremental syncs can't double-claim.
+function resolveForeignMatches_(allRows, readyRows) {
+  const plan = {};
+  const readyRowNums = {};
+  readyRows.forEach(r => { readyRowNums[r.rowNum] = true; });
+  const claimedByOthers = {};
+  allRows.forEach(r => {
+    if (readyRowNums[r.rowNum]) return;
+    if (!r.matchedHealthSession) return;
+    const key = ymd(r.date);
+    (claimedByOthers[key] = claimedByOthers[key] || {})[r.matchedHealthSession] = true;
+  });
+  const byDate = groupRowsByDate_(readyRows.filter(r => r.exercises.length > 0));
+  Object.keys(byDate).forEach(dateKey => {
+    const dayRows = byDate[dateKey];
+    let candidates;
+    try {
+      candidates = listForeignStrengthOnDate(dayRows[0].date);
+    } catch (err) {
+      console.warn('resolveForeignMatches_: list failed for ' + dateKey + ': ' + err);
+      return;
+    }
+    const claimed = claimedByOthers[dateKey];
+    if (claimed) {
+      const before = candidates.length;
+      candidates = candidates.filter(c => !claimed[c.name]);
+      const removed = before - candidates.length;
+      if (removed > 0) {
+        console.info('resolveForeignMatches_: ' + dateKey + ' excluded ' + removed
+          + ' candidate(s) already claimed by other sheet row(s)');
+      }
+    }
+    if (candidates.length === 0) return;
+
+    const timeRangeRows = dayRows.filter(r => r.firstEditedAt && r.lastEditedAt);
+    const ordinalRows = dayRows.filter(r => !(r.firstEditedAt && r.lastEditedAt));
+
+    timeRangeRows.forEach(r => {
+      const windowStart = r.firstEditedAt.getTime() - FOREIGN_MATCH_BUFFER_MS;
+      const windowEnd = r.lastEditedAt.getTime() + FOREIGN_MATCH_BUFFER_MS;
+      let bestIdx = -1;
+      let bestOverlap = 0;
+      candidates.forEach((c, i) => {
+        const overlap = Math.min(c.endUtcMs, windowEnd) - Math.max(c.startUtcMs, windowStart);
+        if (overlap > bestOverlap) {
+          bestIdx = i;
+          bestOverlap = overlap;
+        }
+      });
+      if (bestIdx >= 0) {
+        plan[r.rowNum] = candidates[bestIdx];
+        console.info('resolveForeignMatches_: ' + dateKey + ' row ' + r.rowNum
+          + ' time-range matches ' + candidates[bestIdx].name + ' (overlap=' + bestOverlap + 'ms)');
+        candidates.splice(bestIdx, 1);
+      }
+    });
+
+    if (ordinalRows.length === 0 || candidates.length === 0) return;
+    if (ordinalRows.length !== candidates.length) {
+      console.info('resolveForeignMatches_: ' + dateKey + ' has ' + ordinalRows.length
+        + ' no-edit-time row(s) and ' + candidates.length
+        + ' remaining foreign session(s); counts disagree, skipping ordinal pairing.');
+      return;
+    }
+    ordinalRows.sort((a, b) => a.rowNum - b.rowNum);
+    candidates.sort((a, b) => a.startUtcMs - b.startUtcMs);
+    ordinalRows.forEach((r, i) => {
+      plan[r.rowNum] = candidates[i];
+      console.info('resolveForeignMatches_: ' + dateKey + ' row ' + r.rowNum
+        + ' ordinal[' + i + '] matches ' + candidates[i].name);
+    });
+  });
+  return plan;
+}
+
+function groupRowsByDate_(rows) {
   const byDate = {};
   rows.forEach(r => {
     const key = ymd(r.date);
     (byDate[key] = byDate[key] || []).push(r);
   });
+  return byDate;
+}
+
+// Each row's rank (by rowNum) within its civil date. Used by the synthetic-
+// timing fallback to give same-date rows distinct startHour offsets.
+function buildOrdinalMap_(rows) {
+  const byDate = groupRowsByDate_(rows);
   const ordinalByRowNum = {};
   Object.keys(byDate).forEach(dateKey => {
     const dateRows = byDate[dateKey];
@@ -264,12 +351,13 @@ function resolveRowTiming_(row, ordinal) {
   return { source: 'synthetic', exercise: ex, weight: wt };
 }
 
-function syncOneRow_(row, ordinal, syncedAtCol, healthIdsCol, lastEditedAtCol, doneIdx, total) {
+function syncOneRow_(row, ordinal, match, syncedAtCol, healthIdsCol, lastEditedAtCol, matchedHealthSessionCol, doneIdx, total) {
   const dateKey = ymd(row.date);
   const tag = '[' + doneIdx + '/' + total + '] ' + dateKey + ' row ' + row.rowNum;
   console.info(tag + ': starting (exercises=' + row.exercises.length
     + ', bodyweight=' + (row.bodyweight === null ? 'none' : row.bodyweight)
-    + ', oldIds=' + row.healthIds.length + ')');
+    + ', oldIds=' + row.healthIds.length
+    + (match ? ', match=' + match.name : '') + ')');
 
   if (row.healthIds.length > 0) {
     console.info(tag + ': deleting ' + row.healthIds.length + ' previous datapoint(s)');
@@ -289,36 +377,21 @@ function syncOneRow_(row, ordinal, syncedAtCol, healthIdsCol, lastEditedAtCol, d
   let failed = false;
 
   if (SYNC_EXERCISES && row.exercises.length > 0) {
-    let ex = timing.exercise;
-    if (timing.source === 'edit') {
+    if (match) {
+      console.info(tag + ': skipping exercise create; matched foreign ' + match.name);
+    } else {
       try {
-        const matches = findForeignOverlappingExercises(ex.startUtcMs, ex.endUtcMs);
-        if (matches.length > 0) {
-          const m = matches[0];
-          console.info(tag + ': adopting foreign exercise ' + m.name
-            + ' (overlap=' + m.overlapMs + 'ms); deleting and recreating with our content');
-          deleteDataPointsByName([m.name]);
-          ex = {
-            startUtcMs: m.startUtcMs,
-            startOffsetSeconds: m.startUtcOffsetSeconds,
-            endUtcMs: m.endUtcMs,
-            endOffsetSeconds: m.endUtcOffsetSeconds
-          };
-        }
+        const ex = timing.exercise;
+        const notes = buildNotes(row.exercises);
+        const displayName = buildDisplayName(row.exercises);
+        const name = createExerciseAt(ex.startUtcMs, ex.startOffsetSeconds,
+          ex.endUtcMs, ex.endOffsetSeconds, notes, displayName);
+        if (name) newIds.push(name);
+        console.info(tag + ': createExerciseAt -> ' + (name || '<no name>'));
       } catch (err) {
-        console.warn(tag + ': foreign-match lookup failed; using edit-derived times. ' + err);
+        console.error(tag + ': createExerciseAt failed: ' + err);
+        failed = true;
       }
-    }
-    try {
-      const notes = buildNotes(row.exercises);
-      const displayName = buildDisplayName(row.exercises);
-      const name = createExerciseAt(ex.startUtcMs, ex.startOffsetSeconds,
-        ex.endUtcMs, ex.endOffsetSeconds, notes, displayName);
-      if (name) newIds.push(name);
-      console.info(tag + ': createExerciseAt -> ' + (name || '<no name>'));
-    } catch (err) {
-      console.error(tag + ': createExerciseAt failed: ' + err);
-      failed = true;
     }
   }
 
@@ -335,6 +408,7 @@ function syncOneRow_(row, ordinal, syncedAtCol, healthIdsCol, lastEditedAtCol, d
   }
 
   writeHealthIds(row.rowNum, healthIdsCol, newIds);
+  writeMatchedHealthSession(row.rowNum, matchedHealthSessionCol, match ? match.name : '');
   if (failed) {
     console.warn(tag + ': FAILED (partial); will retry on next sync.');
     return false;

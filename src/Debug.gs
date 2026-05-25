@@ -80,6 +80,7 @@ function showRowSyncState(rowNum) {
   console.log('Row ' + target.rowNum + '  date: ' + ymd(target.date));
   console.log('  bodyweight: ' + (target.bodyweight === null ? '<none>' : target.bodyweight + ' lb'));
   console.log('  syncedAt: ' + (target.syncedAt || '<dirty>'));
+  console.log('  matchedHealthSession: ' + (target.matchedHealthSession || '<none>'));
   console.log('  healthIds (' + target.healthIds.length + '):');
   target.healthIds.forEach(n => console.log('    ' + n));
   console.log('  exercises (' + target.exercises.length + '):');

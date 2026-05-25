@@ -6,11 +6,17 @@ const SYNCED_AT_COLUMN_HEADER = 'Synced At';
 const HEALTH_IDS_COLUMN_HEADER = 'Health IDs';
 const FIRST_EDITED_AT_COLUMN_HEADER = 'First Edited At';
 const LAST_EDITED_AT_COLUMN_HEADER = 'Last Edited At';
+// Resource name of the foreign STRENGTH_TRAINING datapoint a row was matched
+// to. Recomputed every sync. Also consulted by resolveForeignMatches_ to
+// avoid two sheet rows claiming the same foreign session across incremental
+// runs (the dirty row excludes candidates already held by synced rows).
+const MATCHED_HEALTH_SESSION_COLUMN_HEADER = 'Matched Health Session';
 const MANAGED_COLUMN_HEADERS = [
   SYNCED_AT_COLUMN_HEADER,
   HEALTH_IDS_COLUMN_HEADER,
   FIRST_EDITED_AT_COLUMN_HEADER,
-  LAST_EDITED_AT_COLUMN_HEADER
+  LAST_EDITED_AT_COLUMN_HEADER,
+  MATCHED_HEALTH_SESSION_COLUMN_HEADER
 ];
 
 // How often the polling trigger fires to check for ready-to-sync rows.
@@ -43,14 +49,14 @@ const SYNTHETIC_DURATION_HOURS = 1;
 // re-applies (the row goes dirty again and waits another quiesce window).
 // Rows with no Last Edited At (legacy/backfill) bypass the wait and sync
 // immediately.
-const LAST_EDIT_QUIESCE_MS = 60 * 60 * 1000;
+const LAST_EDIT_QUIESCE_MS = 45 * 60 * 1000;
 
 // When matching foreign Google Health activities (ones this script didn't
-// create) to a row's edit window, treat datapoints whose interval overlaps
-// [firstEdit - buffer, lastEdit + buffer] as candidates. Picks up watch- or
-// app-logged workouts that are slightly offset from the spreadsheet edit
-// window so we can adopt their real start/end times instead of inventing
-// our own.
+// create) to a row's edit window, treat STRENGTH_TRAINING datapoints whose
+// interval overlaps [firstEdit - buffer, lastEdit + buffer] as candidates.
+// Picks up watch- or app-logged workouts whose recorded start/end is slightly
+// offset from the spreadsheet edit window so we can recognize them as the
+// same workout and skip writing our own duplicate exercise datapoint.
 const FOREIGN_MATCH_BUFFER_MS = 30 * 60 * 1000;
 
 // Toggle which data types this script writes to the Google Health API.
