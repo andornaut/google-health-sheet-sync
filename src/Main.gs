@@ -19,11 +19,11 @@ function authorizeHealthApi() {
   try {
     service = getHealthService();
   } catch (err) {
-    ui.alert('Setup needed', String(err.message || err), ui.ButtonSet.OK);
+    toast_('Setup needed: ' + String(err.message || err), 30);
     return;
   }
   if (service.hasAccess()) {
-    ui.alert('Already authorized', 'Google Health API access is active. Use "Revoke" first if you want to re-authorize.', ui.ButtonSet.OK);
+    toast_('Already authorized. Use "Revoke" first if you want to re-authorize.', 10);
     return;
   }
   const url = service.getAuthorizationUrl();
@@ -35,7 +35,7 @@ function authorizeHealthApi() {
 
 function revokeHealthApi() {
   resetHealthAuth();
-  SpreadsheetApp.getUi().alert('Google Health authorization cleared. Use "Authorize Health API" to grant again.');
+  toast_('Google Health authorization cleared. Use "Authorize Health API" to grant again.', 10);
 }
 
 function setup() {
@@ -82,25 +82,24 @@ function backstop() {
 // dirty again and the next sync replaces the Health datapoint.
 function runSyncNow() {
   const result = syncDirtyRows(true, LOCK_WAIT_MS);
-  SpreadsheetApp.getUi().alert(formatSyncResult_(result, 'Synced'));
+  toastSyncResult_(result, 'Synced');
 }
 
 function forceResyncCurrentRow() {
   const sheet = getSheet_();
   const row = sheet.getActiveCell().getRow();
   if (row < 2) return;
-  const ui = SpreadsheetApp.getUi();
   const { map } = getHeaderMap_(sheet);
   const col = map[SYNCED_AT_COLUMN_HEADER];
   if (!col) {
-    ui.alert('Synced At column missing. Run setup.');
+    toast_('Synced At column missing. Run setup.', 30);
     return;
   }
   clearRowSynced(row, col);
   SpreadsheetApp.flush();
   PropertiesService.getScriptProperties().setProperty(PENDING_DIRTY_KEY, '1');
   const result = syncDirtyRows(true, LOCK_WAIT_MS);
-  ui.alert(formatSyncResult_(result, 'Resynced'));
+  toastSyncResult_(result, 'Resynced');
 }
 
 function forceResyncAllRows() {
@@ -109,12 +108,12 @@ function forceResyncAllRows() {
   const { map } = getHeaderMap_(sheet);
   const col = map[SYNCED_AT_COLUMN_HEADER];
   if (!col) {
-    ui.alert('Synced At column missing. Run setup.');
+    toast_('Synced At column missing. Run setup.', 30);
     return;
   }
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) {
-    ui.alert('No data rows.');
+    toast_('No data rows.', 10);
     return;
   }
   const dataRowCount = lastRow - 1;
@@ -133,7 +132,7 @@ function forceResyncAllRows() {
   PropertiesService.getScriptProperties().setProperty(PENDING_DIRTY_KEY, '1');
 
   const result = syncDirtyRows(true, LOCK_WAIT_MS);
-  ui.alert(formatSyncResult_(result, 'Resynced'));
+  toastSyncResult_(result, 'Resynced');
 }
 
 function formatSyncResult_(result, verb) {
@@ -143,6 +142,18 @@ function formatSyncResult_(result, verb) {
   msg += '.';
   if (result.errors > 0) msg += '\n\nSee Executions for details.';
   return msg;
+}
+
+// Non-blocking status notification. Apps Script's ui.alert() is modal and
+// counts against the 6-minute execution budget, which caused timeouts on
+// large resyncs. Toasts auto-dismiss and don't block the script.
+function toast_(msg, seconds) {
+  SpreadsheetApp.getActiveSpreadsheet().toast(msg, 'Sync', seconds);
+}
+
+function toastSyncResult_(result, verb) {
+  const seconds = (result && result.errors > 0) ? 30 : 10;
+  toast_(formatSyncResult_(result, verb), seconds);
 }
 
 function syncDirtyRows(bypassQuiesce, lockWaitMs) {
