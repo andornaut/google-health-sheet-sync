@@ -6,11 +6,8 @@ let cachedTz_ = null;
 
 function getSheet_() {
   if (cachedSheet_) return cachedSheet_;
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(SHEET_NAME) || ss.getActiveSheet();
-  if (!sheet) throw new Error('Sheet not found: ' + SHEET_NAME);
-  cachedSheet_ = sheet;
-  return sheet;
+  cachedSheet_ = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+  return cachedSheet_;
 }
 
 function getTz_() {
