@@ -22,7 +22,7 @@ function httpJson_(method, url, payload) {
   };
   if (payload !== undefined) options.payload = JSON.stringify(payload);
 
-  const maxAttempts = 4;
+  const maxAttempts = 6;
   let lastErr;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     let resp;
