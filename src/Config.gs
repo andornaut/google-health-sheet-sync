@@ -1,5 +1,3 @@
-const SHEET_NAME = 'Sheet1';
-
 const DATE_COLUMN_HEADER = 'Date';
 const WEIGHT_COLUMN_HEADER = 'Weight';
 const SYNCED_AT_COLUMN_HEADER = 'Synced At';

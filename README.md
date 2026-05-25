@@ -9,7 +9,7 @@ Google Apps Script to sync strength-training and bodyweight data from Google She
 - **Idempotent Sync**: Deletes previous sync data before creating new entries to prevent duplicates.
 - **Edit-derived timing**: The activity's start/end times are taken from when you first/last edited the row, so the Google Health session reflects when you actually did the workout. Rows without edit timestamps (e.g. backfill) fall back to a synthetic noon-ordinal slot.
 - **Foreign-activity matching**: If a Strength Training session you logged on a watch or in another app already covers the same workout (overlapping edit window, or 1:1 by ordinal when the row has no edit timestamps), the script skips writing its own duplicate exercise datapoint and records the matched session in the row's `Matched Health Session` column. The foreign datapoint is left untouched — its calories, heart rate, and recording method are preserved. Bodyweight still syncs as normal.
-- **Automated**: Polls every 5 minutes for rows whose last edit was at least 45 minutes ago, with an hourly backstop trigger as a safety net.
+- **Automated**: Polls every 5 minutes for rows whose last edit was at least 45 minutes ago, with an hourly backstop trigger as a safety net. Re-editing a synced row clears `Synced At` and restarts the quiesce window so the next sync reflects the updated content.
 
 > [!NOTE]
 > The Google Health API enforces strict ownership. Datapoints logged by this script live side-by-side with sessions recorded by your watch (e.g., Pixel Watch, Fitbit).
@@ -18,11 +18,11 @@ Google Apps Script to sync strength-training and bodyweight data from Google She
 
 ## Spreadsheet Layout
 
-Columns are auto-detected by header name. Required layout:
+The script always operates on the first tab of the spreadsheet (leftmost; name doesn't matter). Columns are auto-detected by header name and position doesn't matter — any header that isn't `Date`, `Weight`, or a managed column is treated as an exercise. Recommended layout:
 
-- **`Date`** (Column 1)
-- **Exercise Columns** (Middle columns; headers are used as exercise names)
-- **`Weight`** (Last column; bodyweight in lb)
+- **`Date`** (leftmost)
+- **Exercise Columns** (middle; headers are used as exercise names)
+- **`Weight`** (rightmost; bodyweight in lb)
 
 ### Grammar for Exercise Cells
 
@@ -35,6 +35,21 @@ One entry per line (newline, comma, or semicolon separated):
 | `135x5x3` | 5 reps × 3 sets at 135 lb |
 | `*135x5x3` | Assisted reps |
 | `135x5x3, 145x3x2` | Multiple distinct sets/exercises in one cell |
+
+### Example
+
+Trimmed to a few exercise columns and the most relevant managed columns. Health resource names abbreviated as `ex/NNN` / `wt/NNN`; the remaining managed columns `First Edited At` and `Last Edited At` are omitted here:
+
+| Date         | Bench press | Deadlift         | Weight | Synced At            | Health IDs       | Matched Health Session |
+| ------------ | ----------- | ---------------- | ------ | -------------------- | ---------------- | ---------------------- |
+| Jan 2, 2026  | 210         |                  | 190.0  | 2026-01-02T18:30:00Z | [ex/001, wt/002] |                        |
+| Jan 15, 2026 | 215x4       |                  |        | 2026-01-15T20:00:00Z | [ex/004]         |                        |
+| Jan 18, 2026 |             | 295x4x6          | 187.5  | 2026-01-18T17:45:00Z | [ex/005, wt/006] |                        |
+| Jan 24, 2026 | *225        |                  |        | 2026-01-24T18:00:00Z | [ex/007]         |                        |
+| Apr 25, 2026 |             | 325x5x3, 335x5x2 |        | 2026-04-25T19:30:00Z | [ex/008]         |                        |
+| May 24, 2026 |             | 335x5x5          | 182.4  | 2026-05-24T18:00:00Z | [wt/009]         | ex/010                 |
+
+The last row's strength session was logged on a watch first; the script skipped writing its own exercise datapoint and recorded the foreign session in `Matched Health Session`. Only the bodyweight was written by the script (see `Health IDs`).
 
 ---
 
@@ -71,22 +86,22 @@ One entry per line (newline, comma, or semicolon separated):
 
 ### 4. Deploy Code
 
-Choose one option:
+Enable the Apps Script API at [Script Settings](https://script.google.com/home/usersettings), then run:
 
-- **Option A (clasp)**: Enable the Apps Script API at [Script Settings](https://script.google.com/home/usersettings). Then run:
+```bash
+npm install
+npm run login
+cp .clasp.json.example .clasp.json # Paste your Script ID under "scriptId"
+npm run push
+```
 
-  ```bash
-  npm install
-  npm run login
-  cp .clasp.json.example .clasp.json # Paste your Script ID under "scriptId"
-  npm run push
-  ```
+### 5. Set Timezone
 
-- **Option B (manual)**: Copy files from `src/` and `test/` into the Apps Script editor.
+In Apps Script **Project Settings (⚙)**, set the project time zone to your local zone. Civil-date filters and synthetic timestamps use this zone. The default in `appsscript.json` is `America/Toronto`.
 
-### 5. Initialize & Authorize
+### 6. Initialize & Authorize
 
-1. Open `src/Main.gs` in the editor, select the `setup` function, and click **Run**. This authorizes sheet access, installs triggers (`onEditTrigger`, `flushIfPending`, `backstop`), and appends the managed columns (`Synced At`, `Health IDs`, `First Edited At`, `Last Edited At`, `Matched Health Session`) to the sheet.
+1. Open `src/Main.gs` in the editor, select the `setup` function, and click **Run**. The first run prompts for sheet access; approve it. `setup` installs triggers (`onEditTrigger`, `flushIfPending`, `backstop`) and appends the managed columns (`Synced At`, `Health IDs`, `First Edited At`, `Last Edited At`, `Matched Health Session`) to the first tab.
 2. Refresh your spreadsheet, then select **Sync ▸ Authorize Health API** from the menu. Complete the OAuth consent flow.
 
 The **Sync** menu also exposes:
@@ -102,7 +117,7 @@ The **Sync** menu also exposes:
 
 ## Configuration & Tuning
 
-Edit [Config.gs](file:///home/andornaut/src/github.com/andornaut/google-health-sheet-sync/src/Config.gs) to customize:
+Edit [Config.gs](src/Config.gs) to customize:
 
 - `SYNTHETIC_START_HOUR` / `SYNTHETIC_DURATION_HOURS` (default `12` / `1`): synthetic session start hour and duration when edit-derived timing is unavailable (legacy/backfill rows).
 - `LAST_EDIT_QUIESCE_MS` (default 45 min): how long a row must sit idle after its last edit before it's eligible to sync. Lets the activity's end time reflect when the workout actually finished.
@@ -115,10 +130,18 @@ Run **Sync ▸ Re-install triggers** after editing timing configurations.
 
 ---
 
+## Development
+
+- **Run tests locally**: `npm test` (Node.js runner that simulates the Apps Script globals; fast iteration on parser/formatter changes).
+- **Run tests in Apps Script**: **Sync ▸ Run tests** (executes the same suite against the deployed code).
+- **Lint markdown**: `npm run lint`.
+- **Push changes**: `npm run push`. Pull remote edits back with `npm run pull`.
+
+---
+
 ## Troubleshooting
 
 - **403: access_denied / unverified app**: Your email is missing from the GCP OAuth consent screen's **Test Users** list.
 - **403: Could not mint UberMint from GaiaMint**: The token contains mixed scopes. Re-run **Sync ▸ Authorize Health API** using the menu.
 - **`Health OAuth not configured`**: Ensure `HEALTH_OAUTH_CLIENT_ID` and `HEALTH_OAUTH_CLIENT_SECRET` are set in Apps Script Properties.
 - **Redirect URI Mismatch**: Verify the redirect URL in GCP credentials matches your Script ID.
-- **Tests**: Run unit tests from the sheet menu (**Sync ▸ Run tests**).
