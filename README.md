@@ -111,7 +111,7 @@ The **Sync** menu also exposes:
 - **Force resync ALL rows**: clears `Synced At` for every row and re-uploads everything to Google Health (bypasses quiesce). Confirms first.
 - **Revoke Health API authorization**: clears the stored token.
 - **Re-install triggers**: rebuild triggers after editing timing constants.
-- **Run tests**: execute the local parser tests inside Apps Script.
+- **Run tests**: execute the parser tests inside Apps Script.
 
 ---
 
