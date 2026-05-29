@@ -3,11 +3,12 @@ const path = require('path');
 const vm = require('vm');
 
 const root = path.resolve(__dirname, '..');
-const srcFiles = ['Config.gs', 'Parser.gs', 'Format.gs', 'Sheet.gs', 'HealthApi.gs', 'Main.gs'];
+const srcFiles = ['Config.gs', 'Parser.gs', 'Format.gs', 'Sheet.gs', 'HealthApi.gs', 'Main.gs', 'Debug.gs'];
 const testFiles = ['Parser.test.gs'];
 
+const quietConsole = Object.assign({}, console, { warn: () => {} });
 const sandbox = {
-  console,
+  console: quietConsole,
   SpreadsheetApp: { getUi: () => { throw new Error('no UI'); } }
 };
 vm.createContext(sandbox);
