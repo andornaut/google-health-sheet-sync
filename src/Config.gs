@@ -1,6 +1,11 @@
 const DATE_COLUMN_HEADER = 'Date';
 const WEIGHT_COLUMN_HEADER = 'Weight';
-const SYNCED_AT_COLUMN_HEADER = 'Synced At';
+// Weight syncs immediately on edit (no quiesce), exercises wait for the
+// quiesce window. Each content type has its own stamp so a row with both can
+// record weight progress without losing track that exercise is still pending.
+// Both cleared on edit.
+const EXERCISE_SYNCED_AT_COLUMN_HEADER = 'Exercise Synced At';
+const WEIGHT_SYNCED_AT_COLUMN_HEADER = 'Weight Synced At';
 const HEALTH_IDS_COLUMN_HEADER = 'Health IDs';
 const FIRST_EDITED_AT_COLUMN_HEADER = 'First Edited At';
 const LAST_EDITED_AT_COLUMN_HEADER = 'Last Edited At';
@@ -10,7 +15,8 @@ const LAST_EDITED_AT_COLUMN_HEADER = 'Last Edited At';
 // runs (the dirty row excludes candidates already held by synced rows).
 const MATCHED_HEALTH_SESSION_COLUMN_HEADER = 'Matched Health Session';
 const MANAGED_COLUMN_HEADERS = [
-  SYNCED_AT_COLUMN_HEADER,
+  EXERCISE_SYNCED_AT_COLUMN_HEADER,
+  WEIGHT_SYNCED_AT_COLUMN_HEADER,
   HEALTH_IDS_COLUMN_HEADER,
   FIRST_EDITED_AT_COLUMN_HEADER,
   LAST_EDITED_AT_COLUMN_HEADER,
@@ -32,9 +38,9 @@ const LOCK_WAIT_MS = 30 * 1000;
 const MAX_ROWS_PER_SYNC = 75;
 
 // Script-properties key. Set to '1' whenever a non-managed edit happens or a
-// force-resync path clears Synced At; cleared by syncDirtyRows when it finds
-// no dirty rows. flushIfPending short-circuits when this is unset so most
-// poll ticks are just a property read.
+// force-resync path clears the synced-at stamps; cleared by syncDirtyRows
+// when it finds no dirty rows. flushIfPending short-circuits when this is
+// unset so most poll ticks are just a property read.
 const PENDING_DIRTY_KEY = 'pendingDirty';
 
 // Synthetic timing is the fallback when a row has no First/Last Edited At
@@ -44,6 +50,13 @@ const PENDING_DIRTY_KEY = 'pendingDirty';
 // on the same date starts an hour after the first, and so on.
 const SYNTHETIC_START_HOUR = 12;
 const SYNTHETIC_DURATION_HOURS = 1;
+
+// Bounds for edit-derived exercise interval duration. A row edited just once
+// produces a zero-span interval that the Health API 500s on; a row edited
+// across days (or weeks) produces a multi-hour "workout" that's wrong on the
+// other end. Clamp to [min, max] so the duration stays plausible.
+const MIN_EXERCISE_DURATION_MS = 20 * 60 * 1000;
+const MAX_EXERCISE_DURATION_MS = 120 * 60 * 1000;
 
 // Per-row quiet period. A dirty row is held back from syncing until this many
 // ms have passed since its Last Edited At. The goal: stamp the activity's
@@ -71,8 +84,10 @@ const HEALTH_OAUTH_CLIENT_ID_KEY = 'HEALTH_OAUTH_CLIENT_ID';
 const HEALTH_OAUTH_CLIENT_SECRET_KEY = 'HEALTH_OAUTH_CLIENT_SECRET';
 const HEALTH_SERVICE_NAME = 'googlehealth';
 const HEALTH_OAUTH_SCOPES = [
-  'https://www.googleapis.com/auth/googlehealth.activity_and_fitness',
-  'https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements'
+  'https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly',
+  'https://www.googleapis.com/auth/googlehealth.activity_and_fitness.writeonly',
+  'https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly',
+  'https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.writeonly'
 ].join(' ');
 
 const HEALTH_API_BASE = 'https://health.googleapis.com/v4';

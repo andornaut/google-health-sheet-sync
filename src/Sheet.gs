@@ -43,7 +43,8 @@ function readRows() {
   if (!map[DATE_COLUMN_HEADER]) throw new Error('Missing column: ' + DATE_COLUMN_HEADER);
   if (!map[WEIGHT_COLUMN_HEADER]) throw new Error('Missing column: ' + WEIGHT_COLUMN_HEADER);
 
-  const syncedAtCol = map[SYNCED_AT_COLUMN_HEADER] || null;
+  const exerciseSyncedAtCol = map[EXERCISE_SYNCED_AT_COLUMN_HEADER] || null;
+  const weightSyncedAtCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER] || null;
   const healthIdsCol = map[HEALTH_IDS_COLUMN_HEADER] || null;
   const firstEditedAtCol = map[FIRST_EDITED_AT_COLUMN_HEADER] || null;
   const lastEditedAtCol = map[LAST_EDITED_AT_COLUMN_HEADER] || null;
@@ -76,7 +77,8 @@ function readRows() {
   if (lastRow < 2) {
     return {
       rows: [],
-      syncedAtCol: syncedAtCol,
+      exerciseSyncedAtCol: exerciseSyncedAtCol,
+      weightSyncedAtCol: weightSyncedAtCol,
       healthIdsCol: healthIdsCol,
       firstEditedAtCol: firstEditedAtCol,
       lastEditedAtCol: lastEditedAtCol,
@@ -100,7 +102,8 @@ function readRows() {
       if (entries.length > 0) exercises.push({ name: c.name, entries: entries });
     });
     const bodyweight = parseBodyweight(row[weightCol - 1]);
-    const syncedAt = syncedAtCol ? row[syncedAtCol - 1] : '';
+    const exerciseSyncedAt = exerciseSyncedAtCol ? row[exerciseSyncedAtCol - 1] : '';
+    const weightSyncedAt = weightSyncedAtCol ? row[weightSyncedAtCol - 1] : '';
     const healthIds = healthIdsCol ? parseHealthIds_(row[healthIdsCol - 1]) : [];
     const firstEditedAt = firstEditedAtCol ? toDate_(row[firstEditedAtCol - 1]) : null;
     const lastEditedAt = lastEditedAtCol ? toDate_(row[lastEditedAtCol - 1]) : null;
@@ -112,7 +115,8 @@ function readRows() {
       date: date,
       exercises: exercises,
       bodyweight: bodyweight,
-      syncedAt: syncedAt ? String(syncedAt).trim() : '',
+      exerciseSyncedAt: exerciseSyncedAt ? String(exerciseSyncedAt).trim() : '',
+      weightSyncedAt: weightSyncedAt ? String(weightSyncedAt).trim() : '',
       healthIds: healthIds,
       firstEditedAt: firstEditedAt,
       lastEditedAt: lastEditedAt,
@@ -121,7 +125,8 @@ function readRows() {
   });
   return {
     rows: rows,
-    syncedAtCol: syncedAtCol,
+    exerciseSyncedAtCol: exerciseSyncedAtCol,
+    weightSyncedAtCol: weightSyncedAtCol,
     healthIdsCol: healthIdsCol,
     firstEditedAtCol: firstEditedAtCol,
     lastEditedAtCol: lastEditedAtCol,
@@ -163,14 +168,28 @@ function ymd(date) {
   return Utilities.formatDate(date, getTz_(), 'yyyy-MM-dd');
 }
 
-function markRowSynced(rowNum, syncedAtCol, isoTimestamp) {
+function markRowExerciseSynced(rowNum, exerciseSyncedAtCol, isoTimestamp) {
+  if (!exerciseSyncedAtCol) return;
   const sheet = getSheet_();
-  sheet.getRange(rowNum, syncedAtCol).setValue(isoTimestamp);
+  sheet.getRange(rowNum, exerciseSyncedAtCol).setValue(isoTimestamp);
 }
 
-function clearRowSynced(rowNum, syncedAtCol) {
+function clearRowExerciseSynced(rowNum, exerciseSyncedAtCol) {
+  if (!exerciseSyncedAtCol) return;
   const sheet = getSheet_();
-  sheet.getRange(rowNum, syncedAtCol).setValue('');
+  sheet.getRange(rowNum, exerciseSyncedAtCol).setValue('');
+}
+
+function markRowWeightSynced(rowNum, weightSyncedAtCol, isoTimestamp) {
+  if (!weightSyncedAtCol) return;
+  const sheet = getSheet_();
+  sheet.getRange(rowNum, weightSyncedAtCol).setValue(isoTimestamp);
+}
+
+function clearRowWeightSynced(rowNum, weightSyncedAtCol) {
+  if (!weightSyncedAtCol) return;
+  const sheet = getSheet_();
+  sheet.getRange(rowNum, weightSyncedAtCol).setValue('');
 }
 
 function onEditMarkDirty(e) {
@@ -185,8 +204,9 @@ function onEditMarkDirty(e) {
   const lastCol = e.range.getLastColumn();
 
   const { map } = getHeaderMap_(sheet);
-  const syncedAtCol = map[SYNCED_AT_COLUMN_HEADER];
-  if (!syncedAtCol) return;
+  const exerciseSyncedAtCol = map[EXERCISE_SYNCED_AT_COLUMN_HEADER];
+  if (!exerciseSyncedAtCol) return;
+  const weightSyncedAtCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER] || null;
   const firstEditedAtCol = map[FIRST_EDITED_AT_COLUMN_HEADER] || null;
   const lastEditedAtCol = map[LAST_EDITED_AT_COLUMN_HEADER] || null;
 
@@ -198,25 +218,31 @@ function onEditMarkDirty(e) {
 
   PropertiesService.getScriptProperties().setProperty(PENDING_DIRTY_KEY, '1');
   // No lock: these are single-cell writes that race safely with an in-flight
-  // sync. syncOneRow_ re-reads Last Edited At right before stamping Synced At;
-  // if our update landed during its processing of this row, the stamp is
-  // skipped and the row stays dirty for the next pass.
-  writeEditMarkers_(sheet, firstRow, lastRow, syncedAtCol, firstEditedAtCol, lastEditedAtCol);
+  // sync. syncOneRow_ re-reads Last Edited At right before stamping the
+  // per-phase synced-at columns; if our update landed during its processing
+  // of this row, the stamps are skipped and the row stays dirty for the
+  // next pass.
+  writeEditMarkers_(sheet, firstRow, lastRow, exerciseSyncedAtCol, weightSyncedAtCol, firstEditedAtCol, lastEditedAtCol);
 }
 
-function writeEditMarkers_(sheet, firstRow, lastRow, syncedAtCol, firstEditedAtCol, lastEditedAtCol) {
-  const numRows = lastRow - firstRow + 1;
-  const nowIso = new Date().toISOString();
-
-  const syncedRange = sheet.getRange(firstRow, syncedAtCol, numRows, 1);
-  const syncedValues = syncedRange.getValues();
+function clearStampColumn_(sheet, firstRow, numRows, col) {
+  const range = sheet.getRange(firstRow, col, numRows, 1);
+  const values = range.getValues();
   let needsClear = false;
   const blanks = [];
   for (let i = 0; i < numRows; i++) {
-    if (syncedValues[i][0] !== '') needsClear = true;
+    if (values[i][0] !== '') needsClear = true;
     blanks.push(['']);
   }
-  if (needsClear) syncedRange.setValues(blanks);
+  if (needsClear) range.setValues(blanks);
+}
+
+function writeEditMarkers_(sheet, firstRow, lastRow, exerciseSyncedAtCol, weightSyncedAtCol, firstEditedAtCol, lastEditedAtCol) {
+  const numRows = lastRow - firstRow + 1;
+  const nowIso = new Date().toISOString();
+
+  clearStampColumn_(sheet, firstRow, numRows, exerciseSyncedAtCol);
+  if (weightSyncedAtCol) clearStampColumn_(sheet, firstRow, numRows, weightSyncedAtCol);
 
   if (firstEditedAtCol) {
     const firstRange = sheet.getRange(firstRow, firstEditedAtCol, numRows, 1);
