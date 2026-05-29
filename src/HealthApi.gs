@@ -30,9 +30,12 @@ function httpJson_(method, url, payload) {
       resp = UrlFetchApp.fetch(url, options);
     } catch (err) {
       lastErr = err;
-      if (attempt === maxAttempts - 1) throw lastErr;
+      if (attempt === maxAttempts - 1) {
+        console.warn('Health API ' + method + ' attempt ' + (attempt + 1) + '/' + maxAttempts + ' failed; giving up. Error: ' + lastErr);
+        throw lastErr;
+      }
       const backoffMs = 500 * Math.pow(2, attempt);
-      console.warn('Health API ' + method + ' -> failed; retry ' + (attempt + 1) + '/' + (maxAttempts - 1) + ' in ' + backoffMs + 'ms. Error: ' + lastErr);
+      console.warn('Health API ' + method + ' attempt ' + (attempt + 1) + '/' + maxAttempts + ' failed; retrying in ' + backoffMs + 'ms. Error: ' + lastErr);
       Utilities.sleep(backoffMs);
       continue;
     }
@@ -43,9 +46,12 @@ function httpJson_(method, url, payload) {
     }
     lastErr = new Error('Health API ' + method + ' ' + url + ' -> ' + code + ': ' + body);
     const transient = code === 429 || (code >= 500 && code < 600);
-    if (!transient || attempt === maxAttempts - 1) throw lastErr;
+    if (!transient || attempt === maxAttempts - 1) {
+      if (transient) console.warn('Health API ' + method + ' attempt ' + (attempt + 1) + '/' + maxAttempts + ' failed; giving up. Error: ' + lastErr);
+      throw lastErr;
+    }
     const backoffMs = 500 * Math.pow(2, attempt);
-    console.warn('Health API ' + method + ' -> failed; retry ' + (attempt + 1) + '/' + (maxAttempts - 1) + ' in ' + backoffMs + 'ms. Error: ' + lastErr);
+    console.warn('Health API ' + method + ' attempt ' + (attempt + 1) + '/' + maxAttempts + ' failed; retrying in ' + backoffMs + 'ms. Error: ' + lastErr);
     Utilities.sleep(backoffMs);
   }
   throw lastErr;
@@ -211,6 +217,25 @@ function listForeignStrengthOnDate(date) {
     });
   }
   out.sort((a, b) => a.startUtcMs - b.startUtcMs);
+  return out;
+}
+
+// Sort Health datapoint resource names into per-data-type buckets so the
+// weight and exercise sync phases can manage their IDs independently.
+// Any name that doesn't match a known type goes into `other` and is left
+// untouched by both phases.
+function splitHealthIdsByType_(names) {
+  const out = { weight: [], exercise: [], other: [] };
+  (names || []).forEach(n => {
+    const m = /^users\/[^/]+\/dataTypes\/([^/]+)\/dataPoints\/[^/]+$/.exec(n);
+    if (!m) {
+      out.other.push(n);
+      return;
+    }
+    if (m[1] === 'weight') out.weight.push(n);
+    else if (m[1] === 'exercise') out.exercise.push(n);
+    else out.other.push(n);
+  });
   return out;
 }
 
