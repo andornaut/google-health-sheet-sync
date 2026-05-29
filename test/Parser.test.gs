@@ -42,16 +42,32 @@ function runParserTests() {
   t('negative weight rejected', () => eq(parseExerciseCell('-5'), []));
   t('decimal weight allowed "22.5"', () => eq(parseExerciseCell('22.5'),
     [{ weight: 22.5, reps: 1, sets: 1, assisted: false }]));
+  t('decimal reps rejected "135x5.5"', () => eq(parseExerciseCell('135x5.5'), []));
+  t('too many x segments rejected "135x5x3x2"', () => eq(parseExerciseCell('135x5x3x2'), []));
+  t('semicolon-separated cell "95x5x2;85x5x5"', () => eq(parseExerciseCell('95x5x2;85x5x5'), [
+    { weight: 95, reps: 5, sets: 2, assisted: false },
+    { weight: 85, reps: 5, sets: 5, assisted: false }
+  ]));
 
   t('bodyweight parse "185"', () => eq(parseBodyweight('185'), 185));
   t('bodyweight parse "185.4"', () => eq(parseBodyweight('185.4'), 185.4));
   t('bodyweight empty -> null', () => eq(parseBodyweight(''), null));
   t('bodyweight junk -> null', () => eq(parseBodyweight('heavy'), null));
+  t('bodyweight zero -> null', () => eq(parseBodyweight('0'), null));
 
   t('formatEntry single weight', () => eq(formatEntry({ weight: 135, reps: 1, sets: 1, assisted: false }), '135'));
   t('formatEntry weight x reps', () => eq(formatEntry({ weight: 135, reps: 5, sets: 1, assisted: false }), '135x5'));
   t('formatEntry weight x reps x sets', () => eq(formatEntry({ weight: 135, reps: 5, sets: 3, assisted: false }), '135x5x3'));
   t('formatEntry assisted preserved', () => eq(formatEntry({ weight: 135, reps: 5, sets: 3, assisted: true }), '*135x5x3'));
+
+  t('formatExerciseLine multi-entry joins with comma', () => eq(
+    formatExerciseLine('Bench press', [
+      { weight: 135, reps: 5, sets: 3, assisted: false },
+      { weight: 145, reps: 3, sets: 2, assisted: false },
+      { weight: 155, reps: 1, sets: 1, assisted: true }
+    ]),
+    'Bench press: 135x5x3, 145x3x2, *155'
+  ));
 
   t('buildNotes structure', () => {
     const notes = buildNotes([
@@ -156,6 +172,53 @@ function runParserTests() {
   t('toDate_ invalid -> null', () => {
     eq(toDate_('not a date'), null);
     eq(toDate_(''), null);
+  });
+
+  t('splitHealthIdsByType_ empty/null', () => {
+    eq(splitHealthIdsByType_(null), { weight: [], exercise: [], other: [] });
+    eq(splitHealthIdsByType_([]), { weight: [], exercise: [], other: [] });
+  });
+  t('splitHealthIdsByType_ buckets weight vs exercise', () => eq(
+    splitHealthIdsByType_([
+      'users/me/dataTypes/weight/dataPoints/w1',
+      'users/me/dataTypes/exercise/dataPoints/e1',
+      'users/me/dataTypes/weight/dataPoints/w2'
+    ]),
+    {
+      weight: ['users/me/dataTypes/weight/dataPoints/w1', 'users/me/dataTypes/weight/dataPoints/w2'],
+      exercise: ['users/me/dataTypes/exercise/dataPoints/e1'],
+      other: []
+    }
+  ));
+  t('splitHealthIdsByType_ unknown type -> other', () => eq(
+    splitHealthIdsByType_(['users/me/dataTypes/sleep/dataPoints/s1']),
+    { weight: [], exercise: [], other: ['users/me/dataTypes/sleep/dataPoints/s1'] }
+  ));
+  t('splitHealthIdsByType_ malformed name -> other', () => eq(
+    splitHealthIdsByType_(['not-a-resource-name', 'users/me/dataTypes/weight/dataPoints/ok']),
+    {
+      weight: ['users/me/dataTypes/weight/dataPoints/ok'],
+      exercise: [],
+      other: ['not-a-resource-name']
+    }
+  ));
+
+  t('parseYmd_ dashed "2026-05-29"', () => {
+    const d = parseYmd_('2026-05-29');
+    if (d.getFullYear() !== 2026 || d.getMonth() !== 4 || d.getDate() !== 29) {
+      throw new Error('expected 2026-05-29, got ' + d);
+    }
+  });
+  t('parseYmd_ compact "20260529"', () => {
+    const d = parseYmd_('20260529');
+    if (d.getFullYear() !== 2026 || d.getMonth() !== 4 || d.getDate() !== 29) {
+      throw new Error('expected 2026-05-29, got ' + d);
+    }
+  });
+  t('parseYmd_ bad format throws', () => {
+    let threw = false;
+    try { parseYmd_('not-a-date'); } catch (e) { threw = true; }
+    if (!threw) throw new Error('expected throw');
   });
 
   const msg = results.join('\n');
