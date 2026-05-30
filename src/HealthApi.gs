@@ -25,33 +25,31 @@ function httpJson_(method, url, payload) {
   const maxAttempts = 4;
   let lastErr;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    let resp;
+    let resp = null;
+    let transient;
     try {
       resp = UrlFetchApp.fetch(url, options);
     } catch (err) {
       lastErr = err;
-      if (attempt === maxAttempts - 1) {
-        console.warn('Health API ' + method + ' attempt ' + (attempt + 1) + '/' + maxAttempts + ' failed; giving up. Error: ' + lastErr);
-        throw lastErr;
+      transient = true;
+    }
+    if (resp) {
+      const code = resp.getResponseCode();
+      const body = resp.getContentText();
+      if (code >= 200 && code < 300) {
+        return body ? JSON.parse(body) : {};
       }
-      const backoffMs = 500 * Math.pow(2, attempt);
-      console.warn('Health API ' + method + ' attempt ' + (attempt + 1) + '/' + maxAttempts + ' failed; retrying in ' + humanizeMs_(backoffMs) + '. Error: ' + lastErr);
-      Utilities.sleep(backoffMs);
-      continue;
+      lastErr = new Error('Health API ' + method + ' ' + url + ' -> ' + code + ': ' + body);
+      transient = code === 429 || (code >= 500 && code < 600);
     }
-    const code = resp.getResponseCode();
-    const body = resp.getContentText();
-    if (code >= 200 && code < 300) {
-      return body ? JSON.parse(body) : {};
-    }
-    lastErr = new Error('Health API ' + method + ' ' + url + ' -> ' + code + ': ' + body);
-    const transient = code === 429 || (code >= 500 && code < 600);
-    if (!transient || attempt === maxAttempts - 1) {
-      if (transient) console.warn('Health API ' + method + ' attempt ' + (attempt + 1) + '/' + maxAttempts + ' failed; giving up. Error: ' + lastErr);
+    const isLastAttempt = attempt === maxAttempts - 1;
+    const prefix = 'Health API ' + method + ' attempt ' + (attempt + 1) + '/' + maxAttempts + ' failed';
+    if (!transient || isLastAttempt) {
+      if (transient) console.warn(prefix + '; giving up. Error: ' + lastErr);
       throw lastErr;
     }
     const backoffMs = 500 * Math.pow(2, attempt);
-    console.warn('Health API ' + method + ' attempt ' + (attempt + 1) + '/' + maxAttempts + ' failed; retrying in ' + humanizeMs_(backoffMs) + '. Error: ' + lastErr);
+    console.warn(prefix + '; retrying in ' + humanizeMs_(backoffMs) + '. Error: ' + lastErr);
     Utilities.sleep(backoffMs);
   }
   throw lastErr;
