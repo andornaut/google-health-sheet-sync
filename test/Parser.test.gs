@@ -11,10 +11,10 @@ function runParserTests() {
 
   t('empty cell -> []', () => eq(parseExerciseCell(''), []));
   t('null cell -> []', () => eq(parseExerciseCell(null), []));
-  t('single weight "135"', () => eq(parseExerciseCell('135'),
-    [{ weight: 135, reps: 1, sets: 1, assisted: false }]));
-  t('weight x reps "135x5"', () => eq(parseExerciseCell('135x5'),
-    [{ weight: 135, reps: 5, sets: 1, assisted: false }]));
+  t('single weight "135" (reps/sets unknown)', () => eq(parseExerciseCell('135'),
+    [{ weight: 135, reps: null, sets: null, assisted: false }]));
+  t('weight x reps "135x5" (sets unknown)', () => eq(parseExerciseCell('135x5'),
+    [{ weight: 135, reps: 5, sets: null, assisted: false }]));
   t('weight x reps x sets "135x5x3"', () => eq(parseExerciseCell('135x5x3'),
     [{ weight: 135, reps: 5, sets: 3, assisted: false }]));
   t('assisted prefix "*135x5x3"', () => eq(parseExerciseCell('*135x5x3'),
@@ -30,18 +30,18 @@ function runParserTests() {
   t('mixed comma + newline', () => eq(parseExerciseCell('135x5x3, 145x3x2\n*155x1'), [
     { weight: 135, reps: 5, sets: 3, assisted: false },
     { weight: 145, reps: 3, sets: 2, assisted: false },
-    { weight: 155, reps: 1, sets: 1, assisted: true }
+    { weight: 155, reps: 1, sets: null, assisted: true }
   ]));
   t('whitespace tolerance "  135 x 5 x 3  "', () => eq(parseExerciseCell('  135 x 5 x 3  '),
     [{ weight: 135, reps: 5, sets: 3, assisted: false }]));
   t('uppercase X "135X5X3"', () => eq(parseExerciseCell('135X5X3'),
     [{ weight: 135, reps: 5, sets: 3, assisted: false }]));
   t('junk line skipped', () => eq(parseExerciseCell('garbage\n135x5'),
-    [{ weight: 135, reps: 5, sets: 1, assisted: false }]));
+    [{ weight: 135, reps: 5, sets: null, assisted: false }]));
   t('zero reps rejected', () => eq(parseExerciseCell('135x0'), []));
   t('negative weight rejected', () => eq(parseExerciseCell('-5'), []));
-  t('decimal weight allowed "22.5"', () => eq(parseExerciseCell('22.5'),
-    [{ weight: 22.5, reps: 1, sets: 1, assisted: false }]));
+  t('decimal weight allowed "22.5" (reps/sets unknown)', () => eq(parseExerciseCell('22.5'),
+    [{ weight: 22.5, reps: null, sets: null, assisted: false }]));
   t('decimal reps rejected "135x5.5"', () => eq(parseExerciseCell('135x5.5'), []));
   t('too many x segments rejected "135x5x3x2"', () => eq(parseExerciseCell('135x5x3x2'), []));
   t('semicolon-separated cell "95x5x2;85x5x5"', () => eq(parseExerciseCell('95x5x2;85x5x5'), [
@@ -74,6 +74,22 @@ function runParserTests() {
   t('formatEntryNote_ decimal weight', () => eq(
     formatEntryNote_('Lateral raise', { weight: 22.5, reps: 10, sets: 3, assisted: false }),
     'Lateral raise, 22.5 lbs, 3 sets of 10'
+  ));
+  t('formatEntryNote_ weight only (reps/sets unknown)', () => eq(
+    formatEntryNote_('Bench press', { weight: 135, reps: null, sets: null, assisted: false }),
+    'Bench press, 135 lbs'
+  ));
+  t('formatEntryNote_ weight + reps (sets unknown)', () => eq(
+    formatEntryNote_('Bench press', { weight: 135, reps: 5, sets: null, assisted: false }),
+    'Bench press, 135 lbs, 5 reps'
+  ));
+  t('formatEntryNote_ weight + 1 rep (sets unknown)', () => eq(
+    formatEntryNote_('Bench press', { weight: 225, reps: 1, sets: null, assisted: false }),
+    'Bench press, 225 lbs, 1 rep'
+  ));
+  t('formatEntryNote_ weight only + assisted', () => eq(
+    formatEntryNote_('Pull up', { weight: 25, reps: null, sets: null, assisted: true }),
+    'Pull up, 25 lbs (assisted)'
   ));
 
   t('buildNotes one line per entry', () => {

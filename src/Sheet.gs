@@ -79,6 +79,7 @@ function readRows() {
       rows: [],
       exerciseSyncedAtCol: exerciseSyncedAtCol,
       weightSyncedAtCol: weightSyncedAtCol,
+      weightCol: weightCol,
       healthIdsCol: healthIdsCol,
       firstEditedAtCol: firstEditedAtCol,
       lastEditedAtCol: lastEditedAtCol,
@@ -127,6 +128,7 @@ function readRows() {
     rows: rows,
     exerciseSyncedAtCol: exerciseSyncedAtCol,
     weightSyncedAtCol: weightSyncedAtCol,
+    weightCol: weightCol,
     healthIdsCol: healthIdsCol,
     firstEditedAtCol: firstEditedAtCol,
     lastEditedAtCol: lastEditedAtCol,
@@ -209,12 +211,26 @@ function onEditMarkDirty(e) {
   const weightSyncedAtCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER] || null;
   const firstEditedAtCol = map[FIRST_EDITED_AT_COLUMN_HEADER] || null;
   const lastEditedAtCol = map[LAST_EDITED_AT_COLUMN_HEADER] || null;
+  const dateCol = map[DATE_COLUMN_HEADER] || null;
+  const weightCol = map[WEIGHT_COLUMN_HEADER] || null;
 
+  // Classify the edited columns per phase. Weight column edits affect only
+  // the weight datapoint and must NOT advance the row's edit timestamps —
+  // doing so would drag the exercise datapoint's endTime forward on every
+  // bodyweight change. Exercise columns (any non-managed column that isn't
+  // Date or Weight) advance the timestamps as before. The Date column is
+  // metadata that doesn't itself trigger a sync; typing a Date alone on a
+  // new row is a no-op until exercise or weight content lands.
   const managedCols = MANAGED_COLUMN_HEADERS.map(h => map[h]).filter(c => c);
-  const editedCols = [];
-  for (let c = firstCol; c <= lastCol; c++) editedCols.push(c);
-  const onlyManaged = editedCols.every(c => managedCols.indexOf(c) !== -1);
-  if (onlyManaged) return;
+  let exerciseRelevant = false;
+  let weightRelevant = false;
+  for (let c = firstCol; c <= lastCol; c++) {
+    if (managedCols.indexOf(c) !== -1) continue;
+    if (c === dateCol) continue;
+    if (c === weightCol) weightRelevant = true;
+    else exerciseRelevant = true;
+  }
+  if (!exerciseRelevant && !weightRelevant) return;
 
   // Skip when every edited cell is now empty (clearing already-blank cells,
   // pasting empty data). Deletions of real content are also skipped — use
@@ -231,11 +247,13 @@ function onEditMarkDirty(e) {
 
   PropertiesService.getScriptProperties().setProperty(PENDING_DIRTY_KEY, '1');
   // No lock: these are single-cell writes that race safely with an in-flight
-  // sync. syncOneRow_ re-reads Last Edited At right before stamping the
-  // per-phase synced-at columns; if our update landed during its processing
-  // of this row, the stamps are skipped and the row stays dirty for the
-  // next pass.
-  writeEditMarkers_(sheet, firstRow, lastRow, exerciseSyncedAtCol, weightSyncedAtCol, firstEditedAtCol, lastEditedAtCol);
+  // sync. syncOneRow_'s per-phase concurrent-edit guards re-check at stamp
+  // time and defer if our update landed during processing.
+  writeEditMarkers_(sheet, firstRow, lastRow,
+    exerciseRelevant ? exerciseSyncedAtCol : null,
+    weightRelevant ? weightSyncedAtCol : null,
+    exerciseRelevant ? firstEditedAtCol : null,
+    exerciseRelevant ? lastEditedAtCol : null);
 }
 
 function clearStampColumn_(sheet, firstRow, numRows, col) {
@@ -254,7 +272,7 @@ function writeEditMarkers_(sheet, firstRow, lastRow, exerciseSyncedAtCol, weight
   const numRows = lastRow - firstRow + 1;
   const nowIso = new Date().toISOString();
 
-  clearStampColumn_(sheet, firstRow, numRows, exerciseSyncedAtCol);
+  if (exerciseSyncedAtCol) clearStampColumn_(sheet, firstRow, numRows, exerciseSyncedAtCol);
   if (weightSyncedAtCol) clearStampColumn_(sheet, firstRow, numRows, weightSyncedAtCol);
 
   if (firstEditedAtCol) {

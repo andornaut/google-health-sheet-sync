@@ -2,6 +2,9 @@
   "name": "google-health-sheet-sync",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=24.13.1"
+  },
   "scripts": {
     "login": "clasp login",
     "push": "clasp push",

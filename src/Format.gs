@@ -15,7 +15,12 @@ function buildNotes(parsedExercises) {
 }
 
 function formatEntryNote_(exerciseName, entry) {
-  const setLabel = entry.sets === 1 ? '1 set' : entry.sets + ' sets';
-  const line = exerciseName + ', ' + entry.weight + ' lbs, ' + setLabel + ' of ' + entry.reps;
+  let line = exerciseName + ', ' + entry.weight + ' lbs';
+  if (entry.sets !== null && entry.reps !== null) {
+    const setLabel = entry.sets === 1 ? '1 set' : entry.sets + ' sets';
+    line += ', ' + setLabel + ' of ' + entry.reps;
+  } else if (entry.reps !== null) {
+    line += ', ' + entry.reps + (entry.reps === 1 ? ' rep' : ' reps');
+  }
   return entry.assisted ? line + ' (assisted)' : line;
 }
