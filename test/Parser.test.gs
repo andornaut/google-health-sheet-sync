@@ -544,15 +544,27 @@ function runParserTests() {
     });
   });
 
-  t('resolveForeignMatches_ ordinal counts disagree -> no pairing', () => {
+  t('resolveForeignMatches_ ordinal partial-pairs when rows > candidates (lowest rowNum wins)', () => {
     const rowA = fRow_({ rowNum: 5 });
     const rowB = fRow_({ rowNum: 10 });
     const cand = fCand_('foreign/A',
       Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
     withStubbedList(() => [cand], () => {
       const plan = resolveForeignMatches_([rowA, rowB], [rowA, rowB]);
-      eq(plan[5], undefined);
-      eq(plan[10], undefined);
+      eq(plan[5] && plan[5].name, 'foreign/A');
+      eq(plan[10], undefined);   // extra row goes unmatched, creates its own datapoint
+    });
+  });
+
+  t('resolveForeignMatches_ ordinal partial-pairs when candidates > rows (earliest cand wins)', () => {
+    const row = fRow_({ rowNum: 10 });
+    const candEarly = fCand_('foreign/early',
+      Date.UTC(2026, 0, 15, 15, 0, 0), Date.UTC(2026, 0, 15, 16, 0, 0));
+    const candLate = fCand_('foreign/late',
+      Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
+    withStubbedList(() => [candLate, candEarly], () => {
+      const plan = resolveForeignMatches_([row], [row]);
+      eq(plan[10] && plan[10].name, 'foreign/early');
     });
   });
 

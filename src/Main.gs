@@ -412,19 +412,26 @@ function resolveForeignMatches_(allRows, readyRows) {
     });
 
     if (ordinalRows.length === 0 || candidates.length === 0) return;
-    if (ordinalRows.length !== candidates.length) {
-      console.info('resolveForeignMatches_: ' + dateKey + ' has ' + ordinalRows.length
-        + ' no-edit-time row(s) and ' + candidates.length
-        + ' remaining foreign session(s); counts disagree, skipping ordinal pairing.');
-      return;
-    }
+    // Partial pairing: pair min(rows, candidates) by sorted order. Extras on
+    // either side go unmatched (extra rows create their own datapoints; extra
+    // candidates remain in Health as-is). Loose pairing is no worse than the
+    // pre-loose alternative — within a date bucket ordinal pairing is already
+    // a sort-and-zip heuristic, so refusing to pair on count mismatch just
+    // missed legitimate matches when one side had a stray row or candidate.
     ordinalRows.sort((a, b) => a.rowNum - b.rowNum);
     candidates.sort((a, b) => a.startUtcMs - b.startUtcMs);
-    ordinalRows.forEach((r, i) => {
+    const pairCount = Math.min(ordinalRows.length, candidates.length);
+    if (ordinalRows.length !== candidates.length) {
+      console.info('resolveForeignMatches_: ' + dateKey + ' has ' + ordinalRows.length
+        + ' ordinal row(s) and ' + candidates.length
+        + ' remaining foreign session(s); pairing ' + pairCount + '.');
+    }
+    for (let i = 0; i < pairCount; i++) {
+      const r = ordinalRows[i];
       plan[r.rowNum] = candidates[i];
       console.info('resolveForeignMatches_: ' + dateKey + ' row ' + r.rowNum
         + ' ordinal[' + i + '] matches ' + candidates[i].name);
-    });
+    }
   });
   return plan;
 }
