@@ -280,30 +280,6 @@ function createWeightAt(sampleUtcMs, sampleOffsetSeconds, lbs) {
   return extractDataPointName_(resp);
 }
 
-function getDataPointByName(name) {
-  return httpJson_('GET', HEALTH_API_BASE + '/' + name);
-}
-
-// Update the notes field on an existing exercise datapoint we created.
-// dataPoints.patch does not accept updateMask (the endpoint rejects it with
-// "Cannot bind query parameter"), so per AIP-134 the request body acts as a
-// full replacement. To avoid wiping interval/exerciseType/etc., GET the
-// current datapoint, swap exercise.notes, and PATCH the rest back as-is.
-// Server-managed exercise fields (createTime/updateTime) are stripped from
-// the round-trip body. Returns the LRO response.
-// Per the Go client library's test for dataPoints.patch, both the URL and
-// body must address the resource as users/me/... — not the numeric user id
-// the server returns in resource names. Same gotcha already documented for
-// batchDelete below. Body is a minimal partial update (name + the changed
-// subfield only); no surrounding dataSource wrapper.
-function patchExerciseNotes(name, notes) {
-  const meName = name.replace(/^users\/[^/]+\//, 'users/me/');
-  return httpJson_('PATCH', HEALTH_API_BASE + '/' + meName, {
-    name: meName,
-    exercise: { notes: notes }
-  });
-}
-
 // Delete previously-created datapoints. Groups by data type and calls
 // batchDelete per type. Throws on API failure so the caller can keep the
 // IDs in the sheet and retry next sync (otherwise we orphan datapoints in

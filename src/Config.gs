@@ -54,17 +54,20 @@ const SYNTHETIC_DURATION_HOURS = 1;
 // Bounds for edit-derived exercise interval duration. A row edited just once
 // produces a zero-span interval that the Health API 500s on; a row edited
 // across days (or weeks) produces a multi-hour "workout" that's wrong on the
-// other end. Clamp to [min, max] so the duration stays plausible.
-const MIN_EXERCISE_DURATION_MS = 20 * 60 * 1000;
+// other end. Clamp to [min, max] so the duration stays plausible. The floor
+// also gives a freshly-created row a sensible initial endTime on its first
+// sync, before subsequent edits push it forward.
+const MIN_EXERCISE_DURATION_MS = 5 * 60 * 1000;
 const MAX_EXERCISE_DURATION_MS = 120 * 60 * 1000;
 
-// Per-row quiet period. A dirty row is held back from syncing until this many
-// ms have passed since its Last Edited At. The goal: stamp the activity's
-// end time with roughly when the workout actually finished, not when the
-// first sync trigger happened to fire. If you re-edit a synced row, this
-// re-applies (the row goes dirty again and waits another quiesce window).
+// Per-row "still typing" guard. A dirty row whose Last Edited At is within
+// this window is skipped on the current poll and picked up by the next one.
+// Without it, a poll firing mid-edit would push out a half-typed row. Since
+// every sync delete+recreates with the row's current state, syncing more
+// often than necessary just churns the Health datapoint without changing
+// the eventual state — the guard avoids that churn during an edit burst.
 // Rows with no Last Edited At bypass the wait and sync immediately.
-const LAST_EDIT_QUIESCE_MS = 45 * 60 * 1000;
+const LAST_EDIT_QUIESCE_MS = 60 * 1000;
 
 // When matching foreign Google Health activities (ones this script didn't
 // create) to a row's edit window, treat STRENGTH_TRAINING datapoints whose
