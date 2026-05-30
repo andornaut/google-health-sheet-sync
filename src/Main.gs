@@ -158,6 +158,15 @@ function toastSyncResult_(result, verb) {
   toast_(formatSyncResult_(result, verb), seconds);
 }
 
+function humanizeMs_(ms) {
+  if (ms < 0) ms = 0;
+  const totalSec = Math.round(ms / 1000);
+  if (totalSec < 60) return totalSec + 's';
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return sec === 0 ? min + 'm' : min + 'm ' + sec + 's';
+}
+
 function syncDirtyRows(bypassQuiesce, lockWaitMs) {
   const lock = LockService.getScriptLock();
   const waitMs = (lockWaitMs === undefined || lockWaitMs === null) ? LOCK_WAIT_MS : lockWaitMs;
@@ -199,27 +208,32 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
     //     exercise content also pass instantly since there's nothing to time.
     const now = Date.now();
     const ready = [];
+    let maxRemainingMs = 0;
     dirty.forEach(r => {
       const weightReady = !r.weightSyncedAt;
       let exerciseReady = false;
+      let remainingMs = 0;
       if (!r.exerciseSyncedAt) {
         if (bypassQuiesce || !r.lastEditedAt || r.exercises.length === 0) {
           exerciseReady = true;
         } else {
           const sinceMs = now - r.lastEditedAt.getTime();
           exerciseReady = sinceMs >= LAST_EDIT_QUIESCE_MS;
+          remainingMs = LAST_EDIT_QUIESCE_MS - sinceMs;
         }
       }
       if (weightReady || exerciseReady) {
         ready.push({ row: r, weightReady: weightReady, exerciseReady: exerciseReady });
       } else {
         waitingCount++;
+        if (remainingMs > maxRemainingMs) maxRemainingMs = remainingMs;
       }
     });
 
     if (waitingCount > 0) {
-      console.info('syncDirtyRows: ' + waitingCount + ' row(s) still in quiesce window (need '
-        + LAST_EDIT_QUIESCE_MS + 'ms since lastEditedAt); will retry next pass.');
+      console.info('syncDirtyRows: ' + waitingCount + ' row(s) still in quiesce window ('
+        + humanizeMs_(maxRemainingMs) + ' remaining of ' + humanizeMs_(LAST_EDIT_QUIESCE_MS)
+        + '); will retry next pass.');
     }
     if (ready.length === 0) {
       console.info('syncDirtyRows: no rows ready to sync.');
