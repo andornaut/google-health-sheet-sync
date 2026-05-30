@@ -4,6 +4,7 @@ function setup() {
 }
 
 function onOpen() {
+  console.info('onOpen: installing Sync menu');
   SpreadsheetApp.getUi()
     .createMenu('Sync')
     .addItem('Run now', 'runSyncNow')
@@ -600,14 +601,16 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
   // GET and no timing label.
   const weightWillCreate = weightReady && SYNC_WEIGHT && row.bodyweight !== null && split.weight.length === 0;
 
-  // Fetch prior exercise datapoint so the timing resolver can preserve its
-  // interval verbatim. Only useful when the edit isn't on row.date
-  // (otherwise the live-workout endTime-advancement path takes over). A GET
-  // failure is non-fatal: timing falls through to edit/synthetic. Weight no
-  // longer needs a prior GET — the PATCH path preserves sampleTime
-  // server-side without one, and the POST path only runs when no prior
-  // exists.
+  // Fetch prior datapoints. Exercise: only when the edit isn't on row.date
+  // (otherwise the live-workout endTime-advancement path takes over) — the
+  // timing resolver reuses the prior interval verbatim. Weight: when we'll
+  // PATCH (i.e. prior weight ID exists AND bodyweight is set) — the PATCH
+  // body requires sampleTime, which is read from this GET. Exercise GET
+  // failure is non-fatal (timing falls through to edit/synthetic); weight
+  // GET failure forces the PATCH to fail and the row to retry next pass.
   let priorExercise = null;
+  let priorWeight = null;
+  let priorWeightFetchFailed = false;
   const exerciseEditOnRowDate = row.firstEditedAt && row.exercisesEditedAt
     && ymd(row.firstEditedAt) === ymd(row.date);
   if (exerciseWillCreate && !exerciseEditOnRowDate && split.exercise.length > 0) {
@@ -615,6 +618,15 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
       priorExercise = getDataPoint(split.exercise[0]);
     } catch (err) {
       console.warn(tag + ': GET prior exercise failed; will recompute timing: ' + err);
+    }
+  }
+  const weightWillPatch = weightReady && SYNC_WEIGHT && row.bodyweight !== null && split.weight.length > 0;
+  if (weightWillPatch) {
+    try {
+      priorWeight = getDataPoint(split.weight[0]);
+    } catch (err) {
+      console.warn(tag + ': GET prior weight failed; PATCH will fail and the row will retry: ' + err);
+      priorWeightFetchFailed = true;
     }
   }
 
@@ -640,14 +652,25 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
     weightAttempted = true;
     const hasBodyweight = SYNC_WEIGHT && row.bodyweight !== null;
     if (split.weight.length > 0 && hasBodyweight) {
-      // PATCH in place. Preserves sampleTime, createTime, dataSource — the
-      // resource name stays the same so Created Health IDs doesn't churn.
-      try {
-        patchWeight(split.weight[0], row.bodyweight);
-        console.info(tag + ': patchWeight(' + row.bodyweight + ' lb) -> ' + split.weight[0]);
-      } catch (err) {
-        console.error(tag + ': patchWeight failed: ' + err);
+      // PATCH in place. Preserves sampleTime (echoed back from the prior
+      // GET — the API rejects PATCH bodies without sampleTime), createTime,
+      // dataSource. Resource name stays the same so Created Health IDs
+      // doesn't churn.
+      const sampleTime = priorWeight && priorWeight.weight && priorWeight.weight.sampleTime;
+      if (!sampleTime) {
+        const reason = priorWeightFetchFailed
+          ? 'prior weight GET failed'
+          : 'prior datapoint missing sampleTime';
+        console.error(tag + ': patchWeight skipped (' + reason + '); will retry next sync.');
         weightFailed = true;
+      } else {
+        try {
+          patchWeight(split.weight[0], sampleTime, row.bodyweight);
+          console.info(tag + ': patchWeight(' + row.bodyweight + ' lb) -> ' + split.weight[0]);
+        } catch (err) {
+          console.error(tag + ': patchWeight failed: ' + err);
+          weightFailed = true;
+        }
       }
     } else if (split.weight.length > 0 && !hasBodyweight) {
       // Bodyweight cleared on a row that previously had one: delete.

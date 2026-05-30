@@ -260,7 +260,17 @@ function onEditMarkDirty(e) {
       else exerciseRelevant = true;
     }
   }
-  if (!exerciseRelevant && !weightRelevant) return;
+  const a1 = e.range.getA1Notation();
+  if (!exerciseRelevant && !weightRelevant) {
+    console.info('onEditTrigger: ' + a1 + ' no-op (date-only/empty)');
+    return;
+  }
+
+  const phases = [];
+  if (exerciseRelevant) phases.push('exercise');
+  if (weightRelevant) phases.push('weight');
+  const rowDesc = firstRow === lastRow ? 'row ' + firstRow : 'rows ' + firstRow + '-' + lastRow;
+  console.info('onEditTrigger: ' + a1 + ' ' + rowDesc + ' dirty=[' + phases.join(',') + ']');
 
   PropertiesService.getScriptProperties().setProperty(PENDING_DIRTY_KEY, '1');
   // No lock: these are single-cell writes that race safely with an in-flight
