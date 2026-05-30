@@ -23,19 +23,35 @@ function getHeaderMap_(sheet) {
   return { map: map, headers: headers };
 }
 
+// Format an edited range using column header names: `Header[row]` for one
+// cell, `H1,H2[row]` for multi-column, `Header[r1-r2]` for multi-row. Falls
+// back to the range's bounding box when no cells had content (all-empty
+// edits like clearing already-blank cells).
+function describeEditRange_(headers, touched, firstRow, lastRow, firstCol, lastCol) {
+  let cells = touched;
+  if (cells.length === 0) {
+    cells = [];
+    for (let r = firstRow; r <= lastRow; r++) {
+      for (let c = firstCol; c <= lastCol; c++) cells.push({ col: c, row: r });
+    }
+  }
+  const seen = {};
+  const headerList = [];
+  let minRow = Infinity, maxRow = -Infinity;
+  for (let i = 0; i < cells.length; i++) {
+    const { col, row } = cells[i];
+    const name = String(headers[col - 1] || '').trim() || 'col' + col;
+    if (!seen[name]) { seen[name] = true; headerList.push(name); }
+    if (row < minRow) minRow = row;
+    if (row > maxRow) maxRow = row;
+  }
+  const rowDesc = minRow === maxRow ? String(minRow) : minRow + '-' + maxRow;
+  return headerList.join(',') + '[' + rowDesc + ']';
+}
+
 function ensureManagedColumns() {
   const sheet = getSheet_();
   const { map } = getHeaderMap_(sheet);
-  // One-time migration: rename the legacy "Last Edited At" header to
-  // "Exercises Edited At" in place so stored timestamps are preserved.
-  // Runs once per sheet (only if the old header still exists and the new
-  // one doesn't); after that it's a no-op.
-  const legacyCol = map[LEGACY_LAST_EDITED_AT_COLUMN_HEADER];
-  if (legacyCol && !map[EXERCISES_EDITED_AT_COLUMN_HEADER]) {
-    sheet.getRange(1, legacyCol).setValue(EXERCISES_EDITED_AT_COLUMN_HEADER);
-    map[EXERCISES_EDITED_AT_COLUMN_HEADER] = legacyCol;
-    delete map[LEGACY_LAST_EDITED_AT_COLUMN_HEADER];
-  }
   MANAGED_COLUMN_HEADERS.forEach(header => {
     let col = map[header];
     if (!col) {
@@ -220,7 +236,7 @@ function onEditMarkDirty(e) {
   const firstCol = e.range.getColumn();
   const lastCol = e.range.getLastColumn();
 
-  const { map } = getHeaderMap_(sheet);
+  const { map, headers } = getHeaderMap_(sheet);
   const exerciseSyncedAtCol = map[EXERCISE_SYNCED_AT_COLUMN_HEADER];
   if (!exerciseSyncedAtCol) return;
   const weightSyncedAtCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER] || null;
@@ -249,28 +265,29 @@ function onEditMarkDirty(e) {
   const newValues = e.range.getValues();
   let exerciseRelevant = false;
   let weightRelevant = false;
+  const touched = [];
   for (let i = 0; i < newValues.length; i++) {
     for (let j = 0; j < newValues[i].length; j++) {
       const v = newValues[i][j];
       if (v === '' || v === null || v === undefined) continue;
       const c = firstCol + j;
+      touched.push({ col: c, row: firstRow + i });
       if (managedCols.indexOf(c) !== -1) continue;
       if (c === dateCol) continue;
       if (c === weightCol) weightRelevant = true;
       else exerciseRelevant = true;
     }
   }
-  const a1 = e.range.getA1Notation();
+  const desc = describeEditRange_(headers, touched, firstRow, lastRow, firstCol, lastCol);
   if (!exerciseRelevant && !weightRelevant) {
-    console.info('onEditTrigger: ' + a1 + ' no-op (date-only/empty)');
+    console.info('onEditTrigger: ' + desc + ' no-op (date-only/empty)');
     return;
   }
 
   const phases = [];
   if (exerciseRelevant) phases.push('exercise');
   if (weightRelevant) phases.push('weight');
-  const rowDesc = firstRow === lastRow ? 'row ' + firstRow : 'rows ' + firstRow + '-' + lastRow;
-  console.info('onEditTrigger: ' + a1 + ' ' + rowDesc + ' dirty=[' + phases.join(',') + ']');
+  console.info('onEditTrigger: ' + desc + ' dirty=[' + phases.join(',') + ']');
 
   markPendingDirty_();
   // No lock: these are single-cell writes that race safely with an in-flight

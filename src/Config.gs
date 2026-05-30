@@ -17,10 +17,6 @@ const EXERCISES_EDITED_AT_COLUMN_HEADER = 'Exercises Edited At';
 // the weight phase's concurrent-edit guard. Advances on every weight edit
 // so weight re-edits update the sample time accordingly.
 const WEIGHT_EDITED_AT_COLUMN_HEADER = 'Weight Edited At';
-// Legacy header from before the Exercises Edited At / Weight Edited At
-// split. ensureManagedColumns renames it to EXERCISES_EDITED_AT_COLUMN_HEADER
-// in place on the first run after upgrade, preserving the stored timestamps.
-const LEGACY_LAST_EDITED_AT_COLUMN_HEADER = 'Last Edited At';
 // Resource name of the foreign STRENGTH_TRAINING datapoint a row was matched
 // to. Recomputed every sync. Also consulted by resolveForeignMatches_ so
 // foreign sessions already matched to a non-ready row are accounted for and

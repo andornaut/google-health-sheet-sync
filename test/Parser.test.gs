@@ -315,7 +315,7 @@ function runParserTests() {
   t('resolveRowTiming_ edit source preserves interval within bounds', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
     const last = new Date(Date.UTC(2026, 0, 15, 18, 0, 0));
-    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: last, date: JAN_15_NOON_UTC }, 0, null, null);
+    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: last, date: JAN_15_NOON_UTC }, 0, null);
     eq(r.exerciseSource, 'edit');
     eq(r.weightSource, 'edit');
     eq(r.exercise.startUtcMs, first.getTime());
@@ -327,17 +327,17 @@ function runParserTests() {
   t('resolveRowTiming_ edit source clamps too-short duration to MIN (5 min)', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
     const last = new Date(first.getTime() + 60 * 1000);
-    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: last, date: JAN_15_NOON_UTC }, 0, null, null);
+    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: last, date: JAN_15_NOON_UTC }, 0, null);
     eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 5 * 60 * 1000);
   });
   t('resolveRowTiming_ edit source clamps too-long duration to MAX (120 min)', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
     const last = new Date(first.getTime() + 5 * 60 * 60 * 1000);
-    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: last, date: JAN_15_NOON_UTC }, 0, null, null);
+    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: last, date: JAN_15_NOON_UTC }, 0, null);
     eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 120 * 60 * 1000);
   });
   t('resolveRowTiming_ synthetic source when no edit timestamps', () => {
-    const r = resolveRowTiming_({ firstEditedAt: null, exercisesEditedAt: null, date: JAN_15_NOON_UTC }, 0, null, null);
+    const r = resolveRowTiming_({ firstEditedAt: null, exercisesEditedAt: null, date: JAN_15_NOON_UTC }, 0, null);
     eq(r.exerciseSource, 'synthetic');
     eq(r.weightSource, 'synthetic');
     eq(r.exercise.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
@@ -347,7 +347,7 @@ function runParserTests() {
     // 3pm EST = 20:00 UTC; distinct from synthetic-noon EST = 17:00 UTC so we
     // can verify which path each phase took.
     const first = new Date(Date.UTC(2026, 0, 15, 20, 0, 0));
-    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: null, weightEditedAt: null, date: JAN_15_NOON_UTC }, 0, null, null);
+    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: null, weightEditedAt: null, date: JAN_15_NOON_UTC }, 0, null);
     eq(r.exerciseSource, 'synthetic');
     eq(r.weightSource, 'edit');
     eq(r.exercise.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
@@ -357,12 +357,12 @@ function runParserTests() {
   t('resolveRowTiming_ weight uses weightEditedAt when set, takes priority over firstEditedAt', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 20, 0, 0));   // 3pm EST
     const wEdit = new Date(Date.UTC(2026, 0, 15, 22, 0, 0));   // 5pm EST
-    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: null, weightEditedAt: wEdit, date: JAN_15_NOON_UTC }, 0, null, null);
+    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: null, weightEditedAt: wEdit, date: JAN_15_NOON_UTC }, 0, null);
     eq(r.weight, { utcMs: wEdit.getTime(), offsetSeconds: EST });
   });
   t('resolveRowTiming_ weight uses weightEditedAt on weight-only row with no firstEditedAt', () => {
     const wEdit = new Date(Date.UTC(2026, 0, 15, 22, 0, 0));
-    const r = resolveRowTiming_({ firstEditedAt: null, exercisesEditedAt: null, weightEditedAt: wEdit, date: JAN_15_NOON_UTC }, 0, null, null);
+    const r = resolveRowTiming_({ firstEditedAt: null, exercisesEditedAt: null, weightEditedAt: wEdit, date: JAN_15_NOON_UTC }, 0, null);
     eq(r.exerciseSource, 'synthetic');
     eq(r.weightSource, 'edit');
     eq(r.weight, { utcMs: wEdit.getTime(), offsetSeconds: EST });
@@ -381,7 +381,7 @@ function runParserTests() {
       exercisesEditedAt: JAN_20_4PM_EST,
       weightEditedAt: JAN_20_3PM_EST,
       date: JAN_15_NOON_UTC
-    }, 0, null, null);
+    }, 0, null);
     eq(r.exerciseSource, 'synthetic');
     eq(r.weightSource, 'synthetic');
     eq(r.exercise.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));   // noon EST on row.date
@@ -405,7 +405,7 @@ function runParserTests() {
       firstEditedAt: JAN_20_3PM_EST,
       exercisesEditedAt: JAN_20_4PM_EST,
       date: JAN_15_NOON_UTC
-    }, 0, priorExercise, null);
+    }, 0, priorExercise);
     eq(r.exerciseSource, 'prior');
     eq(r.exercise.startUtcMs, priorStart);
     eq(r.exercise.endUtcMs, priorEnd);
@@ -430,27 +430,10 @@ function runParserTests() {
       firstEditedAt: first,
       exercisesEditedAt: last,
       date: JAN_15_NOON_UTC
-    }, 0, priorExercise, null);
+    }, 0, priorExercise);
     eq(r.exerciseSource, 'edit');
     eq(r.exercise.startUtcMs, first.getTime());
     eq(r.exercise.endUtcMs, last.getTime());
-  });
-
-  t('resolveRowTiming_ prior weight always wins on re-sync', () => {
-    const wEdit = new Date(Date.UTC(2026, 0, 15, 22, 0, 0));   // 5pm EST, on row.date
-    const priorWeight = {
-      weight: {
-        sampleTime: { physicalTime: '2026-01-15T15:00:00Z', utcOffset: '-18000s' }
-      }
-    };
-    const r = resolveRowTiming_({
-      firstEditedAt: null,
-      exercisesEditedAt: null,
-      weightEditedAt: wEdit,
-      date: JAN_15_NOON_UTC
-    }, 0, null, priorWeight);
-    eq(r.weightSource, 'prior');
-    eq(r.weight, { utcMs: Date.UTC(2026, 0, 15, 15, 0, 0), offsetSeconds: EST });
   });
 
   t('resolveRowTiming_ malformed prior exercise falls through to synthetic', () => {
@@ -458,7 +441,7 @@ function runParserTests() {
       firstEditedAt: JAN_20_3PM_EST,
       exercisesEditedAt: JAN_20_4PM_EST,
       date: JAN_15_NOON_UTC
-    }, 0, { exercise: {} }, null);
+    }, 0, { exercise: {} });
     eq(r.exerciseSource, 'synthetic');
     eq(r.exercise.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
   });

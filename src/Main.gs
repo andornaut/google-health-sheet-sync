@@ -45,9 +45,7 @@ function revokeHealthApi() {
 }
 
 function installTriggers() {
-  // 'backstop' is no longer installed but kept in the cleanup set so the
-  // hourly trigger an earlier setup() installed gets removed on next run.
-  const handlers = new Set(['onEditTrigger', 'flushIfPending', 'backstop']);
+  const handlers = new Set(['onEditTrigger', 'flushIfPending']);
   ScriptApp.getProjectTriggers().forEach(t => {
     if (handlers.has(t.getHandlerFunction())) ScriptApp.deleteTrigger(t);
   });
@@ -117,7 +115,11 @@ function forceResyncCurrentRow() {
     toast_('Exercise Synced At column missing. Run setup.', 30);
     return;
   }
-  const weightSyncedAtCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER] || null;
+  const weightSyncedAtCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER];
+  if (!weightSyncedAtCol) {
+    toast_('Weight Synced At column missing. Run setup.', 30);
+    return;
+  }
   clearRowExerciseSynced(row, exerciseCol);
   clearRowWeightSynced(row, weightSyncedAtCol);
   SpreadsheetApp.flush();
@@ -133,7 +135,11 @@ function forceResyncAllRows() {
     toast_('Exercise Synced At column missing. Run setup.', 30);
     return;
   }
-  const weightSyncedAtCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER] || null;
+  const weightSyncedAtCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER];
+  if (!weightSyncedAtCol) {
+    toast_('Weight Synced At column missing. Run setup.', 30);
+    return;
+  }
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) {
     toast_('No data rows.', 10);
@@ -144,7 +150,7 @@ function forceResyncAllRows() {
   const blanks = [];
   for (let i = 0; i < dataRowCount; i++) blanks.push(['']);
   sheet.getRange(2, exerciseCol, dataRowCount, 1).setValues(blanks);
-  if (weightSyncedAtCol) sheet.getRange(2, weightSyncedAtCol, dataRowCount, 1).setValues(blanks);
+  sheet.getRange(2, weightSyncedAtCol, dataRowCount, 1).setValues(blanks);
   SpreadsheetApp.flush();
   markPendingDirty_();
 
@@ -504,18 +510,18 @@ function buildOrdinalMap_(rows) {
 //                   an old row today) doesn't shift startTime to today.
 //     - 'synthetic' otherwise: noon+ordinal on row.date.
 //
-//   Weight:
-//     - 'prior'     if a previous datapoint is provided. The weight value
-//                   can change without re-stamping the sample time.
+//   Weight (only consumed on the POST path; PATCH preserves sampleTime
+//   server-side by echoing back the prior GET, so the weight resolver
+//   isn't called with a prior):
 //     - 'edit'      if weightSampleAt's civil date == row.date.
 //                   weightSampleAt is weightEditedAt with a legacy
 //                   fallback to firstEditedAt (pre-split schema).
 //     - 'synthetic' otherwise: noon on row.date.
 //
-// priorExercise/priorWeight are the GET responses for the row's existing
-// datapoints (or null if first-sync, or null if the GET failed — in which
+// priorExercise is the GET response for the row's existing exercise
+// datapoint (or null if first-sync, or null if the GET failed — in which
 // case we fall through to the edit/synthetic path rather than erroring).
-function resolveRowTiming_(row, ordinal, priorExercise, priorWeight) {
+function resolveRowTiming_(row, ordinal, priorExercise) {
   const tz = getTz_();
   const rowDateKey = ymd(row.date);
 
@@ -555,30 +561,18 @@ function resolveRowTiming_(row, ordinal, priorExercise, priorWeight) {
     exerciseSource = 'synthetic';
   }
 
-  let weight = null;
-  let weightSource = null;
-  if (priorWeight) {
-    const s = priorWeight.weight && priorWeight.weight.sampleTime;
-    if (s && s.physicalTime) {
-      weight = {
-        utcMs: new Date(s.physicalTime).getTime(),
-        offsetSeconds: parseOffsetSeconds_(s.utcOffset)
-      };
-      weightSource = 'prior';
-    }
-  }
-  if (!weight) {
-    const weightSampleAt = row.weightEditedAt || row.firstEditedAt || null;
-    if (weightSampleAt && ymd(weightSampleAt) === rowDateKey) {
-      weight = {
-        utcMs: weightSampleAt.getTime(),
-        offsetSeconds: getTzOffsetSeconds_(tz, weightSampleAt)
-      };
-      weightSource = 'edit';
-    } else {
-      weight = syntheticWeightSample_(row.date);
-      weightSource = 'synthetic';
-    }
+  let weight;
+  let weightSource;
+  const weightSampleAt = row.weightEditedAt || row.firstEditedAt || null;
+  if (weightSampleAt && ymd(weightSampleAt) === rowDateKey) {
+    weight = {
+      utcMs: weightSampleAt.getTime(),
+      offsetSeconds: getTzOffsetSeconds_(tz, weightSampleAt)
+    };
+    weightSource = 'edit';
+  } else {
+    weight = syntheticWeightSample_(row.date);
+    weightSource = 'synthetic';
   }
   return {
     exercise: exercise,
@@ -655,7 +649,7 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
 
   let timing;
   try {
-    timing = resolveRowTiming_(row, ordinal, priorExercise, null);
+    timing = resolveRowTiming_(row, ordinal, priorExercise);
   } catch (err) {
     console.error(tag + ': resolveRowTiming_ failed: ' + err);
     return false;
@@ -668,11 +662,8 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
   let newExerciseIds = split.exercise;
   let weightFailed = false;
   let exerciseFailed = false;
-  let weightAttempted = false;
-  let exerciseAttempted = false;
 
   if (weightReady) {
-    weightAttempted = true;
     const hasBodyweight = SYNC_WEIGHT && row.bodyweight !== null;
     if (split.weight.length > 0 && hasBodyweight) {
       // PATCH in place. Preserves sampleTime (echoed back from the prior
@@ -731,7 +722,6 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
   }
 
   if (exerciseReady) {
-    exerciseAttempted = true;
     if (split.exercise.length > 0) {
       console.info(tag + ': deleting ' + split.exercise.length + ' previous exercise datapoint(s)');
       try {
@@ -770,7 +760,7 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
   }
 
   writeHealthIds(row.rowNum, cols.healthIdsCol, newWeightIds.concat(newExerciseIds).concat(split.other));
-  if (exerciseAttempted) {
+  if (exerciseReady) {
     writeMatchedHealthSession(row.rowNum, cols.matchedHealthSessionCol, match ? match.name : '');
   }
 
@@ -796,7 +786,7 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
     }
   }
   let weightConcurrentEdit = false;
-  if (weightAttempted && cols.weightEditedAtCol) {
+  if (weightReady && cols.weightEditedAtCol) {
     const currentEdit = toDate_(getSheet_().getRange(row.rowNum, cols.weightEditedAtCol).getValue());
     const previousMs = row.weightEditedAt ? row.weightEditedAt.getTime() : null;
     const currentMs = currentEdit ? currentEdit.getTime() : null;
@@ -810,10 +800,10 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
   }
 
   const stampIso = new Date().toISOString();
-  if (weightAttempted && !weightFailed && !weightConcurrentEdit) {
+  if (weightReady && !weightFailed && !weightConcurrentEdit) {
     markRowWeightSynced(row.rowNum, cols.weightSyncedAtCol, stampIso);
   }
-  if (exerciseAttempted && !exerciseFailed && !exerciseConcurrentEdit) {
+  if (exerciseReady && !exerciseFailed && !exerciseConcurrentEdit) {
     markRowExerciseSynced(row.rowNum, cols.exerciseSyncedAtCol, stampIso);
   }
 
@@ -826,8 +816,8 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
   // this pass or a concurrent edit blocked the stamp), advance the dirty
   // generation so syncDirtyRows' end-of-pass check leaves the flag set
   // (and a future poll picks the row up).
-  const weightStampMissing = !row.weightSyncedAt && !(weightAttempted && !weightConcurrentEdit);
-  const exerciseStampMissing = !row.exerciseSyncedAt && !(exerciseAttempted && !exerciseConcurrentEdit);
+  const weightStampMissing = !row.weightSyncedAt && !(weightReady && !weightConcurrentEdit);
+  const exerciseStampMissing = !row.exerciseSyncedAt && !(exerciseReady && !exerciseConcurrentEdit);
   if (weightStampMissing || exerciseStampMissing) {
     markPendingDirty_();
     console.info(tag + ': partial progress; row stays dirty (weightStamped='
