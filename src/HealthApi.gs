@@ -22,7 +22,7 @@ function httpJson_(method, url, payload) {
   };
   if (payload !== undefined) options.payload = JSON.stringify(payload);
 
-  const maxAttempts = 6;
+  const maxAttempts = 4;
   let lastErr;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     let resp;
@@ -69,7 +69,7 @@ function extractDataPointName_(createResponse) {
 
 // Lists exercise datapoints whose civil start time falls on `date` in the
 // script's time zone. Used by listForeignStrengthOnDate to discover
-// non-sync-created activities to match against, and by Debug.gs introspection.
+// non-sync-created activities to match against.
 function listExercisesOnDate(date) {
   const startDay = ymd(date);
   const nextDay = ymd(new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1));
@@ -190,10 +190,10 @@ function syntheticWeightSample_(date) {
   return { utcMs: sample.utcMs, offsetSeconds: sample.offsetSeconds };
 }
 
-// List foreign Strength Training datapoints whose civil start time falls on
-// `date`. "Foreign" = exerciseType STRENGTH_TRAINING and notes free of
-// SYNC_MARKER (i.e., not created by this script). Returned candidates are
-// sorted ascending by startUtcMs.
+// List candidate Strength Training datapoints whose civil start time falls
+// on `date`. Script-created sessions are not filtered out here; the caller
+// (resolveForeignMatches_) excludes any name already listed in a row's
+// Created Health IDs. Returned candidates are sorted ascending by startUtcMs.
 function listForeignStrengthOnDate(date) {
   const points = listExercisesOnDate(date);
   const out = [];
@@ -206,8 +206,6 @@ function listForeignStrengthOnDate(date) {
     const pStartMs = new Date(interval.startTime).getTime();
     const pEndMs = new Date(interval.endTime).getTime();
     if (isNaN(pStartMs) || isNaN(pEndMs)) continue;
-    const notes = (p.exercise && p.exercise.notes) || '';
-    if (notes.indexOf(SYNC_MARKER) !== -1) continue;
     out.push({
       name: p.name,
       startUtcMs: pStartMs,
@@ -216,7 +214,8 @@ function listForeignStrengthOnDate(date) {
       endUtcOffsetSeconds: parseOffsetSeconds_(interval.endUtcOffset)
     });
   }
-  out.sort((a, b) => a.startUtcMs - b.startUtcMs);
+  // Already sorted by startUtcMs because listExercisesOnDate sorts by the
+  // same key (interval.startTime).
   return out;
 }
 
@@ -259,8 +258,7 @@ function createExerciseAt(startUtcMs, startOffsetSeconds, endUtcMs, endOffsetSec
       exerciseType: 'STRENGTH_TRAINING',
       displayName: displayName || 'Strength Training',
       notes: notes,
-      activeDuration: durationSec + 's',
-      metricsSummary: { caloriesKcal: 0 }
+      activeDuration: durationSec + 's'
     }
   };
   const resp = httpJson_('POST', url, payload);
@@ -282,42 +280,34 @@ function createWeightAt(sampleUtcMs, sampleOffsetSeconds, lbs) {
   return extractDataPointName_(resp);
 }
 
-// Health API only supports `physical_time` for filtering sample-based data
-// points (civil_time.date is rejected). Convert the script-tz day boundaries
-// to UTC instants.
-function listWeightsOnDate(date) {
-  const tz = getTz_();
-  const p = civilDateParts_(tz, date);
-  const start = localCivilToUtcMs_(tz, p.year, p.month, p.day, 0, 0);
-  const end = localCivilToUtcMs_(tz, p.year, p.month, p.day + 1, 0, 0);
-  const startIso = Utilities.formatDate(new Date(start.utcMs), 'GMT', "yyyy-MM-dd'T'HH:mm:ss'Z'");
-  const endIso = Utilities.formatDate(new Date(end.utcMs), 'GMT', "yyyy-MM-dd'T'HH:mm:ss'Z'");
-
-  const filter = 'weight.sample_time.physical_time >= "' + startIso + '"'
-    + ' AND weight.sample_time.physical_time < "' + endIso + '"';
-  const url = HEALTH_API_BASE
-    + '/users/me/dataTypes/weight/dataPoints'
-    + '?filter=' + encodeURIComponent(filter)
-    + '&pageSize=100';
-
-  const points = [];
-  let pageToken = null;
-  do {
-    const pagedUrl = pageToken ? url + '&pageToken=' + encodeURIComponent(pageToken) : url;
-    const json = httpJson_('GET', pagedUrl);
-    (json.dataPoints || []).forEach(p => points.push(p));
-    pageToken = json.nextPageToken || null;
-  } while (pageToken);
-  return points;
-}
-
 function getDataPointByName(name) {
   return httpJson_('GET', HEALTH_API_BASE + '/' + name);
 }
 
-// Best-effort delete of previously-created datapoints. Groups by data type
-// and calls batchDelete per type. Failures (e.g. user already deleted the
-// point in the app) are logged but do not throw.
+// Update the notes field on an existing exercise datapoint we created.
+// dataPoints.patch does not accept updateMask (the endpoint rejects it with
+// "Cannot bind query parameter"), so per AIP-134 the request body acts as a
+// full replacement. To avoid wiping interval/exerciseType/etc., GET the
+// current datapoint, swap exercise.notes, and PATCH the rest back as-is.
+// Server-managed exercise fields (createTime/updateTime) are stripped from
+// the round-trip body. Returns the LRO response.
+// Per the Go client library's test for dataPoints.patch, both the URL and
+// body must address the resource as users/me/... — not the numeric user id
+// the server returns in resource names. Same gotcha already documented for
+// batchDelete below. Body is a minimal partial update (name + the changed
+// subfield only); no surrounding dataSource wrapper.
+function patchExerciseNotes(name, notes) {
+  const meName = name.replace(/^users\/[^/]+\//, 'users/me/');
+  return httpJson_('PATCH', HEALTH_API_BASE + '/' + meName, {
+    name: meName,
+    exercise: { notes: notes }
+  });
+}
+
+// Delete previously-created datapoints. Groups by data type and calls
+// batchDelete per type. Throws on API failure so the caller can keep the
+// IDs in the sheet and retry next sync (otherwise we orphan datapoints in
+// Health that the script no longer tracks).
 //
 // The Health API is picky about the parent/name combination on batchDelete:
 //   - URL parent MUST be `users/me/dataTypes/{type}` (literal "me", not the
@@ -338,10 +328,6 @@ function deleteDataPointsByName(names) {
   });
   Object.keys(byType).forEach(dataType => {
     const url = HEALTH_API_BASE + '/users/me/dataTypes/' + dataType + '/dataPoints:batchDelete';
-    try {
-      httpJson_('POST', url, { names: byType[dataType] });
-    } catch (err) {
-      console.warn('batchDelete failed for ' + dataType + ': ' + err);
-    }
+    httpJson_('POST', url, { names: byType[dataType] });
   });
 }

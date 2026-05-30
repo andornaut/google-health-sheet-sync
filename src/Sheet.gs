@@ -216,6 +216,19 @@ function onEditMarkDirty(e) {
   const onlyManaged = editedCols.every(c => managedCols.indexOf(c) !== -1);
   if (onlyManaged) return;
 
+  // Skip when every edited cell is now empty (clearing already-blank cells,
+  // pasting empty data). Deletions of real content are also skipped — use
+  // Force Resync to remove a row's datapoint after clearing it.
+  const newValues = e.range.getValues();
+  let anyNonEmpty = false;
+  for (let i = 0; i < newValues.length && !anyNonEmpty; i++) {
+    for (let j = 0; j < newValues[i].length; j++) {
+      const v = newValues[i][j];
+      if (v !== '' && v !== null && v !== undefined) { anyNonEmpty = true; break; }
+    }
+  }
+  if (!anyNonEmpty) return;
+
   PropertiesService.getScriptProperties().setProperty(PENDING_DIRTY_KEY, '1');
   // No lock: these are single-cell writes that race safely with an in-flight
   // sync. syncOneRow_ re-reads Last Edited At right before stamping the
