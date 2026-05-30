@@ -6,7 +6,7 @@ const WEIGHT_COLUMN_HEADER = 'Weight';
 // Both cleared on edit.
 const EXERCISE_SYNCED_AT_COLUMN_HEADER = 'Exercise Synced At';
 const WEIGHT_SYNCED_AT_COLUMN_HEADER = 'Weight Synced At';
-const HEALTH_IDS_COLUMN_HEADER = 'Health IDs';
+const HEALTH_IDS_COLUMN_HEADER = 'Created Health IDs';
 const FIRST_EDITED_AT_COLUMN_HEADER = 'First Edited At';
 const LAST_EDITED_AT_COLUMN_HEADER = 'Last Edited At';
 // Resource name of the foreign STRENGTH_TRAINING datapoint a row was matched
