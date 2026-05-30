@@ -307,11 +307,11 @@ function runParserTests() {
     eq(r.exercise.endOffsetSeconds, EST);
     eq(r.weight, { utcMs: first.getTime(), offsetSeconds: EST });
   });
-  t('resolveRowTiming_ edit source clamps too-short duration to MIN (20 min)', () => {
+  t('resolveRowTiming_ edit source clamps too-short duration to MIN (5 min)', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
-    const last = new Date(first.getTime() + 5 * 60 * 1000);
+    const last = new Date(first.getTime() + 60 * 1000);
     const r = resolveRowTiming_({ firstEditedAt: first, lastEditedAt: last, date: JAN_15_NOON_UTC }, 0);
-    eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 20 * 60 * 1000);
+    eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 5 * 60 * 1000);
   });
   t('resolveRowTiming_ edit source clamps too-long duration to MAX (120 min)', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));

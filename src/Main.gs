@@ -243,7 +243,7 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
     });
 
     if (waitingCount > 0) {
-      console.info('syncDirtyRows: ' + waitingCount + ' row(s) still in quiesce window ('
+      console.info('syncDirtyRows: ' + waitingCount + ' row(s) still in edit-debounce window ('
         + humanizeMs_(maxRemainingMs) + ' remaining of ' + humanizeMs_(LAST_EDIT_QUIESCE_MS)
         + '); will retry next pass.');
     }

@@ -1,277 +1,249 @@
-// Manual introspection helpers for inspecting Google Health datapoints.
-// Run from the Apps Script editor; output goes to the Executions log.
-// Read-only.
+// Probe whether POST or PUT directed at an existing datapoint can update it
+// in place, as an alternative to the delete+POST cycle our sync uses for
+// own datapoints (and as the only theoretical update path for foreign
+// datapoints, since DELETE on foreign is blocked at the API).
 //
-// Purpose: learn the JSON shape of manually-logged Strength Training
-// workouts (the "Workout summary" with per-exercise sets/reps/weight shown
-// in the Google Health app) so we can mirror that structure when creating
-// our own exercise datapoints from the sheet's exercise columns.
+// Targets the most-recent sync-created exercise (safe; we own it) and the
+// most-recent foreign exercise (typically a Fitbit watch session). For
+// each, runs four method/body combinations and re-GETs after every attempt
+// to see whether `notes` actually changed. Attempts to restore notes via
+// the same mechanism if it appeared to work, so a successful mutation
+// doesn't permanently rewrite a Fitbit-sourced note.
 //
-// Usage from the editor (all callable with no args):
-//   dumpLatestMatchedSession()    -> newest row's Matched Health Session
-//   dumpLatestCreatedId()         -> newest row's first Created Health ID
-//   dumpTodaysForeignStrength()   -> today's foreign Strength sessions
-//   findExerciseWithMetadata()    -> first exercise in last 90 days whose
-//                                    exerciseMetadata is non-empty (so we
-//                                    can copy the structured shape)
-//   patchLatestExerciseNotes()    -> PATCH notes on the newest row's
-//                                    sync-created exercise datapoint with
-//                                    freshly-built notes, then re-fetch to
-//                                    confirm the update took
-
-function dumpLatestMatchedSession() {
+// WARNING: this *attempts* to mutate foreign data. If any variant succeeds
+// and the restore step fails, that Fitbit session's notes will be modified.
+// Original notes are logged before any attempt so manual recovery is
+// possible from the Executions log.
+//
+// No args. Run from the Apps Script editor.
+function probeOverwrite() {
   const { rows } = readRows();
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const r = rows[i];
-    if (r.matchedHealthSession) {
-      console.log('Row ' + r.rowNum + ' (' + ymd(r.date) + ') matched session: ' + r.matchedHealthSession);
-      return dumpDataPoint_(r.matchedHealthSession);
-    }
-  }
-  console.log('No row has a Matched Health Session.');
-  return null;
-}
 
-function dumpLatestCreatedId() {
-  const { rows } = readRows();
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const r = rows[i];
-    if (r.healthIds && r.healthIds.length > 0) {
-      const name = r.healthIds[0];
-      console.log('Row ' + r.rowNum + ' (' + ymd(r.date) + ') created ID: ' + name);
-      return dumpDataPoint_(name);
-    }
-  }
-  console.log('No row has a Created Health ID.');
-  return null;
-}
-
-function dumpTodaysForeignStrength() {
-  const date = new Date();
-  const candidates = listForeignStrengthOnDate(date);
-  console.log('Foreign Strength Training on ' + ymd(date) + ': ' + candidates.length + ' datapoint(s)');
-  candidates.forEach((c, i) => {
-    console.log('=== [' + (i + 1) + '/' + candidates.length + '] ' + c.name);
-    dumpDataPoint_(c.name);
-  });
-  return candidates;
-}
-
-// Scan the last 90 days for any exercise datapoint with a non-empty
-// exerciseMetadata field, so we can copy the structured shape Google Fit /
-// Health Connect apps use for per-segment workout content. Logs the first
-// hit in full and returns it; logs nothing-found if all metadata is empty.
-function findExerciseWithMetadata() {
-  const today = new Date();
-  for (let i = 0; i < 90; i++) {
-    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
-    const points = listExercisesOnDate(d);
-    for (const p of points) {
-      const meta = p.exercise && p.exercise.exerciseMetadata;
-      if (meta && Object.keys(meta).length > 0) {
-        console.log('Found populated exerciseMetadata on ' + ymd(d) + ': ' + p.name);
-        console.log(JSON.stringify(p, null, 2));
-        return p;
-      }
-    }
-  }
-  console.log('No exercise datapoint in the last 90 days has a populated exerciseMetadata.');
-  return null;
-}
-
-// Single-row test of patchExerciseNotes: finds the newest row that has both
-// exercise content and a sync-created exercise datapoint, rebuilds notes
-// from the current sheet content, PATCHes them onto the existing datapoint,
-// and re-fetches to confirm the server stored the new text. Does NOT touch
-// any sheet column.
-function patchLatestExerciseNotes() {
-  const { rows } = readRows();
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const r = rows[i];
-    if (r.exercises.length === 0) continue;
-    const exerciseIds = splitHealthIdsByType_(r.healthIds).exercise;
-    if (exerciseIds.length === 0) continue;
-    const name = exerciseIds[0];
-    const notes = buildNotes(r.exercises);
-    console.log('Row ' + r.rowNum + ' (' + ymd(r.date) + ') patching ' + name);
-    console.log('--- New notes ---');
-    console.log(notes);
-    console.log('--- PATCH response ---');
-    const resp = patchExerciseNotes(name, notes);
-    console.log(JSON.stringify(resp, null, 2));
-    // Re-fetch repeatedly to test the eventual-consistency theory: the
-    // server may return stale notes immediately after PATCH and only reflect
-    // the new text seconds later.
-    const delaysSec = [0, 3, 10, 30];
-    for (const sec of delaysSec) {
-      if (sec > 0) Utilities.sleep(sec * 1000);
-      console.log('--- Re-fetch after +' + sec + 's ---');
-      const point = dumpDataPoint_(name);
-      const stored = point && point.exercise && point.exercise.notes;
-      console.log('notes match sent? ' + (stored === notes));
-      if (stored === notes) return point;
-    }
-    console.log('Notes still stale after ' + delaysSec[delaysSec.length - 1] + 's.');
-    return null;
-  }
-  console.log('No row has both exercise content and a sync-created exercise ID.');
-  return null;
-}
-
-// Diagnostic: pick the newest sync-created weight datapoint, PATCH its
-// weightGrams to a known-different value, re-fetch to see if the change
-// stuck, then restore the original value. Mirrors the Go client library's
-// dataPoints.patch test (which only covers weight). Tells us whether the
-// PATCH endpoint is fundamentally functional from Apps Script, isolating
-// whether the exercise-notes failure is exercise-specific or universal.
-function patchLatestWeightTest() {
-  const { rows } = readRows();
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const r = rows[i];
-    const weightIds = splitHealthIdsByType_(r.healthIds).weight;
-    if (weightIds.length === 0) continue;
-    const name = weightIds[0];
-    const meName = name.replace(/^users\/[^/]+\//, 'users/me/');
-    const url = HEALTH_API_BASE + '/' + meName;
-
-    const before = getDataPointByName(name);
-    const beforeGrams = before.weight && before.weight.weightGrams;
-    console.log('Row ' + r.rowNum + ' (' + ymd(r.date) + ') patching weight ' + name);
-    console.log('Before weightGrams: ' + beforeGrams);
-
-    const newGrams = Number(beforeGrams) + 100;
-    const newWeight = Object.assign({}, before.weight, { weightGrams: newGrams });
-    delete newWeight.createTime;
-    delete newWeight.updateTime;
-    const patchBody = { name: meName, weight: newWeight };
-    console.log('--- PATCH body ---');
-    console.log(JSON.stringify(patchBody, null, 2));
-    const resp = httpJson_('PATCH', url, patchBody);
-    console.log('--- PATCH response ---');
-    console.log(JSON.stringify(resp, null, 2));
-
-    const after = getDataPointByName(name);
-    const afterGrams = after.weight && after.weight.weightGrams;
-    console.log('After weightGrams: ' + afterGrams);
-    console.log('Changed? ' + (Number(afterGrams) !== Number(beforeGrams)));
-
-    // Best-effort restore so we don't leave the datapoint with the +100 nudge.
-    try {
-      const restoreWeight = Object.assign({}, before.weight, { weightGrams: beforeGrams });
-      delete restoreWeight.createTime;
-      delete restoreWeight.updateTime;
-      httpJson_('PATCH', url, { name: meName, weight: restoreWeight });
-      const restored = getDataPointByName(name);
-      console.log('Restored weightGrams: ' + (restored.weight && restored.weight.weightGrams));
-    } catch (err) {
-      console.warn('Restore PATCH failed (datapoint may be left at ' + newGrams + 'g): ' + err);
-    }
-    return { name: name, beforeGrams: beforeGrams, afterGrams: afterGrams };
-  }
-  console.log('No row has a sync-created weight datapoint.');
-  return null;
-}
-
-// Probe whether any exercise field is mutable via PATCH. We've confirmed
-// weight PATCH works (patchLatestWeightTest) but exercise notes PATCH
-// doesn't. This tries several body shapes against displayName,
-// activeDuration, and notes to narrow down whether the failure is
-// notes-specific, exercise-wide, or body-shape-sensitive. Bypasses
-// httpJson_'s retry loop since 500s here are consistent (not transient).
-// Restores original notes/displayName/activeDuration at the end.
-function probeExercisePatch() {
-  const { rows } = readRows();
-  let target = null;
+  let syncCreatedName = null;
   for (let i = rows.length - 1; i >= 0; i--) {
     const ids = splitHealthIdsByType_(rows[i].healthIds).exercise;
-    if (ids.length > 0) {
-      target = { row: rows[i], name: ids[0] };
+    if (ids.length > 0) { syncCreatedName = ids[0]; break; }
+  }
+
+  const ourIds = {};
+  rows.forEach(r => {
+    splitHealthIdsByType_(r.healthIds).exercise.forEach(n => { ourIds[n] = true; });
+  });
+
+  let foreignPoint = null;
+  const today = new Date();
+  for (let i = 0; i < 30 && !foreignPoint; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+    let points;
+    try {
+      points = listExercisesOnDate(d);
+    } catch (err) {
+      console.warn('probeOverwrite: listExercisesOnDate failed for ' + ymd(d) + ': ' + err);
+      continue;
+    }
+    points.sort((a, b) => {
+      const aS = new Date((a.exercise && a.exercise.interval && a.exercise.interval.startTime) || 0).getTime();
+      const bS = new Date((b.exercise && b.exercise.interval && b.exercise.interval.startTime) || 0).getTime();
+      return bS - aS;
+    });
+    for (const p of points) {
+      if (!p.name || ourIds[p.name]) continue;
+      foreignPoint = p;
       break;
     }
   }
-  if (!target) {
+
+  console.log('=== A. OWN datapoint ===');
+  if (syncCreatedName) {
+    probeOverwriteOne_(syncCreatedName);
+  } else {
     console.log('No sync-created exercise datapoint found.');
-    return null;
   }
 
-  const meName = target.name.replace(/^users\/[^/]+\//, 'users/me/');
+  console.log('\n=== B. FOREIGN datapoint ===');
+  if (foreignPoint) {
+    const platform = (foreignPoint.dataSource && foreignPoint.dataSource.platform) || '<unknown>';
+    console.log('Selected ' + foreignPoint.name + ' (platform=' + platform + ')');
+    probeOverwriteOne_(foreignPoint.name);
+  } else {
+    console.log('No foreign exercise datapoint found in last 30 days.');
+  }
+}
+
+function probeOverwriteOne_(name) {
+  const meName = name.replace(/^users\/[^/]+\//, 'users/me/');
   const url = HEALTH_API_BASE + '/' + meName;
-  const original = getDataPointByName(target.name);
-  const orig = original.exercise || {};
-  const origNotes = orig.notes;
-  const origDisplay = orig.displayName;
-  const origDuration = orig.activeDuration;
-  console.log('Probing ' + target.name);
-  console.log('Original notes:         ' + origNotes);
-  console.log('Original displayName:   ' + origDisplay);
-  console.log('Original activeDuration:' + origDuration);
 
-  function fullExercise_(overrides) {
-    const ex = Object.assign({}, orig, overrides);
-    delete ex.createTime;
-    delete ex.updateTime;
-    return ex;
+  console.log('--- GET original ---');
+  const before = getRaw_(name);
+  console.log('HTTP ' + before.code);
+  if (before.code < 200 || before.code >= 300) {
+    console.log(before.body);
+    return;
   }
+  const orig = JSON.parse(before.body);
+  const origNotes = (orig.exercise && orig.exercise.notes) || '';
+  console.log('Original notes: ' + JSON.stringify(origNotes));
 
+  const probeNotes = (origNotes || '<no notes>') + ' [PROBE-OVERWRITE]';
   const variants = [
-    { label: 'V1 minimal: displayName only',
-      body: { name: meName, exercise: { displayName: 'PROBE_DISPLAY_V1' } } },
-    { label: 'V2 minimal: activeDuration only',
-      body: { name: meName, exercise: { activeDuration: '1234s' } } },
-    { label: 'V3 minimal: notes only',
-      body: { name: meName, exercise: { notes: 'PROBE_NOTES_V3' } } },
-    { label: 'V4 full: notes swapped, no dataSource',
-      body: { name: meName, exercise: fullExercise_({ notes: 'PROBE_NOTES_V4' }) } },
-    { label: 'V5 full: notes swapped, with dataSource',
-      body: { name: meName, dataSource: original.dataSource, exercise: fullExercise_({ notes: 'PROBE_NOTES_V5' }) } },
-    { label: 'V6 full: displayName swapped, with dataSource',
-      body: { name: meName, dataSource: original.dataSource, exercise: fullExercise_({ displayName: 'PROBE_DISPLAY_V6' }) } }
+    { label: 'V1: POST to resource URL, minimal body',
+      method: 'POST',
+      body: { name: meName, exercise: { notes: probeNotes } } },
+    { label: 'V2: POST to resource URL, full body',
+      method: 'POST',
+      body: fullBodyWithNotes_(orig, probeNotes, meName) },
+    { label: 'V3: PUT to resource URL, minimal body',
+      method: 'PUT',
+      body: { name: meName, exercise: { notes: probeNotes } } },
+    { label: 'V4: PUT to resource URL, full body',
+      method: 'PUT',
+      body: fullBodyWithNotes_(orig, probeNotes, meName) }
   ];
 
   for (const v of variants) {
-    console.log('\n=== ' + v.label + ' ===');
+    console.log('\n--- ' + v.label + ' ---');
     const resp = UrlFetchApp.fetch(url, {
-      method: 'PATCH',
+      method: v.method,
       contentType: 'application/json',
       headers: authHeaders_(),
       payload: JSON.stringify(v.body),
       muteHttpExceptions: true
     });
-    const code = resp.getResponseCode();
-    const text = resp.getContentText();
-    console.log('HTTP ' + code);
-    if (code >= 300) {
-      console.log('Error body: ' + text);
+    console.log('HTTP ' + resp.getResponseCode());
+    console.log(resp.getContentText());
+
+    const after = getRaw_(name);
+    if (after.code < 200 || after.code >= 300) {
+      console.log('Re-fetch failed: HTTP ' + after.code + ' ' + after.body);
       continue;
     }
-    const after = getDataPointByName(target.name);
-    const aex = after.exercise || {};
-    console.log('  after.notes:          ' + aex.notes);
-    console.log('  after.displayName:    ' + aex.displayName);
-    console.log('  after.activeDuration: ' + aex.activeDuration);
-    console.log('  notes changed?           ' + (aex.notes !== origNotes));
-    console.log('  displayName changed?     ' + (aex.displayName !== origDisplay));
-    console.log('  activeDuration changed?  ' + (aex.activeDuration !== origDuration));
-  }
+    const post = JSON.parse(after.body);
+    const postNotes = (post.exercise && post.exercise.notes) || '';
+    const changed = postNotes !== origNotes;
+    console.log('Notes changed? ' + changed);
 
-  console.log('\n=== Restoring original values ===');
-  try {
-    const restore = { name: meName, dataSource: original.dataSource,
-      exercise: fullExercise_({ notes: origNotes, displayName: origDisplay, activeDuration: origDuration }) };
-    httpJson_('PATCH', url, restore);
-    const restored = getDataPointByName(target.name);
-    const rex = restored.exercise || {};
-    console.log('  notes:          ' + rex.notes);
-    console.log('  displayName:    ' + rex.displayName);
-    console.log('  activeDuration: ' + rex.activeDuration);
-  } catch (err) {
-    console.warn('Restore PATCH failed; datapoint may be left in probe state: ' + err);
+    if (changed) {
+      console.log('  After notes: ' + JSON.stringify(postNotes));
+      console.log('  Attempting restore via same method...');
+      const restoreBody = (v.body.exercise && 'notes' in v.body.exercise)
+        ? Object.assign({}, v.body, {
+            exercise: Object.assign({}, v.body.exercise, { notes: origNotes })
+          })
+        : null;
+      if (!restoreBody) {
+        console.error('  Could not build restore body; restore manually using the original-notes value above.');
+        return;
+      }
+      const restoreResp = UrlFetchApp.fetch(url, {
+        method: v.method,
+        contentType: 'application/json',
+        headers: authHeaders_(),
+        payload: JSON.stringify(restoreBody),
+        muteHttpExceptions: true
+      });
+      console.log('  Restore HTTP ' + restoreResp.getResponseCode());
+      const verify = getRaw_(name);
+      const verifyNotes = (JSON.parse(verify.body).exercise || {}).notes || '';
+      console.log('  Verified notes after restore: ' + JSON.stringify(verifyNotes));
+      if (verifyNotes !== origNotes) {
+        console.error('  RESTORE FAILED. Notes are: ' + JSON.stringify(verifyNotes));
+        console.error('  Original was: ' + JSON.stringify(origNotes));
+        return;
+      }
+    }
   }
-  return null;
 }
 
-function dumpDataPoint_(name) {
-  const point = getDataPointByName(name);
-  console.log(JSON.stringify(point, null, 2));
-  return point;
+// Find exercise datapoints created by this script (platform=GOOGLE_WEB_API
+// plus matching googleWebClientId) that aren't referenced by any sheet
+// row's Created Health IDs, and delete them. Catches the recreated
+// datapoint that the round-trip probe leaves behind, plus any other
+// orphans (rows deleted from the sheet without Force Resync first).
+//
+// Scans the last 30 days. Run when no sync is in flight; does not take
+// the script lock.
+function cleanupProbeRemnant() {
+  const ourClientId = PropertiesService.getScriptProperties().getProperty(HEALTH_OAUTH_CLIENT_ID_KEY);
+  if (!ourClientId) {
+    console.error('cleanupProbeRemnant: ' + HEALTH_OAUTH_CLIENT_ID_KEY
+      + ' script property not set; cannot identify which datapoints are ours.');
+    return;
+  }
+
+  const { rows } = readRows();
+  const trackedIds = {};
+  rows.forEach(r => {
+    splitHealthIdsByType_(r.healthIds).exercise.forEach(n => { trackedIds[n] = true; });
+  });
+
+  const today = new Date();
+  const LOOKBACK_DAYS = 30;
+  const orphans = [];
+  for (let i = 0; i < LOOKBACK_DAYS; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+    let points;
+    try {
+      points = listExercisesOnDate(d);
+    } catch (err) {
+      console.warn('cleanupProbeRemnant: listExercisesOnDate failed for ' + ymd(d) + ': ' + err);
+      continue;
+    }
+    points.forEach(p => {
+      if (!p.name || trackedIds[p.name]) return;
+      const ds = p.dataSource || {};
+      const app = ds.application || {};
+      if (ds.platform !== 'GOOGLE_WEB_API') return;
+      if (app.googleWebClientId !== ourClientId) return;
+      orphans.push({
+        name: p.name,
+        date: ymd(d),
+        startTime: (p.exercise && p.exercise.interval && p.exercise.interval.startTime) || '<unknown>',
+        notes: (p.exercise && p.exercise.notes) || ''
+      });
+    });
+  }
+
+  if (orphans.length === 0) {
+    console.log('No orphaned script-created exercise datapoints found in last '
+      + LOOKBACK_DAYS + ' days.');
+    return;
+  }
+
+  console.log('Found ' + orphans.length + ' orphan(s):');
+  orphans.forEach(o => {
+    console.log('  ' + o.date + ' ' + o.startTime + ' ' + o.name);
+    if (o.notes) console.log('    notes: ' + o.notes.split('\n').join(' | '));
+  });
+
+  console.log('Deleting...');
+  try {
+    deleteDataPointsByName(orphans.map(o => o.name));
+    console.log('Deleted ' + orphans.length + ' datapoint(s).');
+  } catch (err) {
+    console.error('Delete failed: ' + err);
+  }
+}
+
+function fullBodyWithNotes_(orig, newNotes, meName) {
+  const ex = Object.assign({}, orig.exercise || {});
+  delete ex.createTime;
+  delete ex.updateTime;
+  delete ex.metricsSummary;
+  ex.notes = newNotes;
+  return {
+    name: meName,
+    dataSource: orig.dataSource,
+    exercise: ex
+  };
+}
+
+function getRaw_(name) {
+  const meName = name.replace(/^users\/[^/]+\//, 'users/me/');
+  const resp = UrlFetchApp.fetch(HEALTH_API_BASE + '/' + meName, {
+    method: 'GET',
+    headers: authHeaders_(),
+    muteHttpExceptions: true
+  });
+  return { code: resp.getResponseCode(), body: resp.getContentText() };
 }
