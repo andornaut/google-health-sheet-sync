@@ -595,15 +595,19 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
   // foreign-matched rows don't surface misleading "edit/synthetic" labels
   // for an interval that will never be sent.
   const exerciseWillCreate = exerciseReady && !match && SYNC_EXERCISES && row.exercises.length > 0;
-  const weightWillCreate = weightReady && SYNC_WEIGHT && row.bodyweight !== null;
+  // Only POST creates need timing resolution. The PATCH path (prior weight ID
+  // present + bodyweight set) preserves sampleTime server-side, so no prior
+  // GET and no timing label.
+  const weightWillCreate = weightReady && SYNC_WEIGHT && row.bodyweight !== null && split.weight.length === 0;
 
-  // Fetch prior datapoints so the timing resolver can preserve them.
-  // Exercise prior is only useful when the edit isn't on row.date
-  // (otherwise the live-workout endTime-advancement path takes over).
-  // Weight prior is always preferred on re-sync. A GET failure is
-  // non-fatal: timing falls through to edit/synthetic.
+  // Fetch prior exercise datapoint so the timing resolver can preserve its
+  // interval verbatim. Only useful when the edit isn't on row.date
+  // (otherwise the live-workout endTime-advancement path takes over). A GET
+  // failure is non-fatal: timing falls through to edit/synthetic. Weight no
+  // longer needs a prior GET — the PATCH path preserves sampleTime
+  // server-side without one, and the POST path only runs when no prior
+  // exists.
   let priorExercise = null;
-  let priorWeight = null;
   const exerciseEditOnRowDate = row.firstEditedAt && row.exercisesEditedAt
     && ymd(row.firstEditedAt) === ymd(row.date);
   if (exerciseWillCreate && !exerciseEditOnRowDate && split.exercise.length > 0) {
@@ -613,17 +617,10 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
       console.warn(tag + ': GET prior exercise failed; will recompute timing: ' + err);
     }
   }
-  if (weightWillCreate && split.weight.length > 0) {
-    try {
-      priorWeight = getDataPoint(split.weight[0]);
-    } catch (err) {
-      console.warn(tag + ': GET prior weight failed; will recompute timing: ' + err);
-    }
-  }
 
   let timing;
   try {
-    timing = resolveRowTiming_(row, ordinal, priorExercise, priorWeight);
+    timing = resolveRowTiming_(row, ordinal, priorExercise, null);
   } catch (err) {
     console.error(tag + ': resolveRowTiming_ failed: ' + err);
     return false;
@@ -641,7 +638,19 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
 
   if (weightReady) {
     weightAttempted = true;
-    if (split.weight.length > 0) {
+    const hasBodyweight = SYNC_WEIGHT && row.bodyweight !== null;
+    if (split.weight.length > 0 && hasBodyweight) {
+      // PATCH in place. Preserves sampleTime, createTime, dataSource — the
+      // resource name stays the same so Created Health IDs doesn't churn.
+      try {
+        patchWeight(split.weight[0], row.bodyweight);
+        console.info(tag + ': patchWeight(' + row.bodyweight + ' lb) -> ' + split.weight[0]);
+      } catch (err) {
+        console.error(tag + ': patchWeight failed: ' + err);
+        weightFailed = true;
+      }
+    } else if (split.weight.length > 0 && !hasBodyweight) {
+      // Bodyweight cleared on a row that previously had one: delete.
       console.info(tag + ': deleting ' + split.weight.length + ' previous weight datapoint(s)');
       try {
         deleteDataPointsByName(split.weight);
@@ -651,10 +660,9 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
         weightFailed = true;
         // Keep newWeightIds = split.weight so the next sync retries delete.
       }
-    } else {
+    } else if (split.weight.length === 0 && hasBodyweight) {
+      // First weight for this row: POST.
       newWeightIds = [];
-    }
-    if (!weightFailed && SYNC_WEIGHT && row.bodyweight !== null) {
       try {
         const wt = timing.weight;
         const name = createWeightAt(wt.utcMs, wt.offsetSeconds, row.bodyweight);
@@ -670,6 +678,9 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
         console.error(tag + ': createWeightAt failed: ' + err);
         weightFailed = true;
       }
+    } else {
+      // No prior, no current. Nothing to do.
+      newWeightIds = [];
     }
   }
 

@@ -294,6 +294,23 @@ function createWeightAt(sampleUtcMs, sampleOffsetSeconds, lbs) {
   return extractDataPointName_(resp);
 }
 
+// Update an existing weight datapoint's weightGrams in place. The server
+// treats the body as a partial update — fields absent from the body are
+// preserved server-side — so sampleTime, createTime, and dataSource are
+// untouched. See CLAUDE.md "Health API: PATCH on dataPoints" for the full
+// matrix of verified body shapes; exercise PATCH is a server-side no-op so
+// only weight uses this path.
+function patchWeight(name, lbs) {
+  const meName = String(name).replace(/^users\/[^/]+\//, 'users/me/');
+  const url = HEALTH_API_BASE + '/' + meName;
+  const grams = Math.round(lbs * GRAMS_PER_LB);
+  const payload = {
+    name: meName,
+    weight: { weightGrams: grams }
+  };
+  httpJson_('PATCH', url, payload);
+}
+
 // Delete previously-created datapoints. Groups by data type and calls
 // batchDelete per type. Throws on API failure so the caller can keep the
 // IDs in the sheet and retry next sync (otherwise we orphan datapoints in
