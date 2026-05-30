@@ -315,8 +315,9 @@ function runParserTests() {
   t('resolveRowTiming_ edit source preserves interval within bounds', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
     const last = new Date(Date.UTC(2026, 0, 15, 18, 0, 0));
-    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: last, date: JAN_15_NOON_UTC }, 0);
-    eq(r.source, 'edit');
+    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: last, date: JAN_15_NOON_UTC }, 0, null, null);
+    eq(r.exerciseSource, 'edit');
+    eq(r.weightSource, 'edit');
     eq(r.exercise.startUtcMs, first.getTime());
     eq(r.exercise.endUtcMs, last.getTime());
     eq(r.exercise.startOffsetSeconds, EST);
@@ -326,18 +327,19 @@ function runParserTests() {
   t('resolveRowTiming_ edit source clamps too-short duration to MIN (5 min)', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
     const last = new Date(first.getTime() + 60 * 1000);
-    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: last, date: JAN_15_NOON_UTC }, 0);
+    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: last, date: JAN_15_NOON_UTC }, 0, null, null);
     eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 5 * 60 * 1000);
   });
   t('resolveRowTiming_ edit source clamps too-long duration to MAX (120 min)', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
     const last = new Date(first.getTime() + 5 * 60 * 60 * 1000);
-    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: last, date: JAN_15_NOON_UTC }, 0);
+    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: last, date: JAN_15_NOON_UTC }, 0, null, null);
     eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 120 * 60 * 1000);
   });
   t('resolveRowTiming_ synthetic source when no edit timestamps', () => {
-    const r = resolveRowTiming_({ firstEditedAt: null, exercisesEditedAt: null, date: JAN_15_NOON_UTC }, 0);
-    eq(r.source, 'synthetic');
+    const r = resolveRowTiming_({ firstEditedAt: null, exercisesEditedAt: null, date: JAN_15_NOON_UTC }, 0, null, null);
+    eq(r.exerciseSource, 'synthetic');
+    eq(r.weightSource, 'synthetic');
     eq(r.exercise.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
     eq(r.exercise.endUtcMs, Date.UTC(2026, 0, 15, 18, 0, 0));
   });
@@ -345,8 +347,9 @@ function runParserTests() {
     // 3pm EST = 20:00 UTC; distinct from synthetic-noon EST = 17:00 UTC so we
     // can verify which path each phase took.
     const first = new Date(Date.UTC(2026, 0, 15, 20, 0, 0));
-    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: null, weightEditedAt: null, date: JAN_15_NOON_UTC }, 0);
-    eq(r.source, 'edit');
+    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: null, weightEditedAt: null, date: JAN_15_NOON_UTC }, 0, null, null);
+    eq(r.exerciseSource, 'synthetic');
+    eq(r.weightSource, 'edit');
     eq(r.exercise.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
     eq(r.exercise.endUtcMs, Date.UTC(2026, 0, 15, 18, 0, 0));
     eq(r.weight, { utcMs: first.getTime(), offsetSeconds: EST });
@@ -354,15 +357,110 @@ function runParserTests() {
   t('resolveRowTiming_ weight uses weightEditedAt when set, takes priority over firstEditedAt', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 20, 0, 0));   // 3pm EST
     const wEdit = new Date(Date.UTC(2026, 0, 15, 22, 0, 0));   // 5pm EST
-    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: null, weightEditedAt: wEdit, date: JAN_15_NOON_UTC }, 0);
+    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: null, weightEditedAt: wEdit, date: JAN_15_NOON_UTC }, 0, null, null);
     eq(r.weight, { utcMs: wEdit.getTime(), offsetSeconds: EST });
   });
   t('resolveRowTiming_ weight uses weightEditedAt on weight-only row with no firstEditedAt', () => {
     const wEdit = new Date(Date.UTC(2026, 0, 15, 22, 0, 0));
-    const r = resolveRowTiming_({ firstEditedAt: null, exercisesEditedAt: null, weightEditedAt: wEdit, date: JAN_15_NOON_UTC }, 0);
-    eq(r.source, 'edit');
+    const r = resolveRowTiming_({ firstEditedAt: null, exercisesEditedAt: null, weightEditedAt: wEdit, date: JAN_15_NOON_UTC }, 0, null, null);
+    eq(r.exerciseSource, 'synthetic');
+    eq(r.weightSource, 'edit');
     eq(r.weight, { utcMs: wEdit.getTime(), offsetSeconds: EST });
     eq(r.exercise.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));   // exercise synthetic
+  });
+
+  // Off-date edits: row.date is JAN-15 but the edit timestamps are on
+  // JAN-20 (5 days later). The trust rule kicks in: edit-derived timing
+  // is rejected because firstEditedAt's civil date != row.date.
+  const JAN_20_3PM_EST = new Date(Date.UTC(2026, 0, 20, 20, 0, 0));
+  const JAN_20_4PM_EST = new Date(Date.UTC(2026, 0, 20, 21, 0, 0));
+
+  t('resolveRowTiming_ off-date edit with no prior -> synthetic', () => {
+    const r = resolveRowTiming_({
+      firstEditedAt: JAN_20_3PM_EST,
+      exercisesEditedAt: JAN_20_4PM_EST,
+      weightEditedAt: JAN_20_3PM_EST,
+      date: JAN_15_NOON_UTC
+    }, 0, null, null);
+    eq(r.exerciseSource, 'synthetic');
+    eq(r.weightSource, 'synthetic');
+    eq(r.exercise.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));   // noon EST on row.date
+    eq(r.weight.utcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
+  });
+
+  t('resolveRowTiming_ off-date edit with prior exercise -> reuses prior interval', () => {
+    const priorStart = Date.UTC(2026, 0, 15, 18, 30, 0);
+    const priorEnd = Date.UTC(2026, 0, 15, 19, 15, 0);
+    const priorExercise = {
+      exercise: {
+        interval: {
+          startTime: '2026-01-15T18:30:00Z',
+          startUtcOffset: '-18000s',
+          endTime: '2026-01-15T19:15:00Z',
+          endUtcOffset: '-18000s'
+        }
+      }
+    };
+    const r = resolveRowTiming_({
+      firstEditedAt: JAN_20_3PM_EST,
+      exercisesEditedAt: JAN_20_4PM_EST,
+      date: JAN_15_NOON_UTC
+    }, 0, priorExercise, null);
+    eq(r.exerciseSource, 'prior');
+    eq(r.exercise.startUtcMs, priorStart);
+    eq(r.exercise.endUtcMs, priorEnd);
+    eq(r.exercise.startOffsetSeconds, EST);
+    eq(r.exercise.endOffsetSeconds, EST);
+  });
+
+  t('resolveRowTiming_ same-date edit beats prior exercise (live-workout endTime advance)', () => {
+    const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
+    const last = new Date(Date.UTC(2026, 0, 15, 18, 0, 0));
+    const priorExercise = {
+      exercise: {
+        interval: {
+          startTime: '2026-01-15T16:00:00Z',
+          startUtcOffset: '-18000s',
+          endTime: '2026-01-15T16:30:00Z',
+          endUtcOffset: '-18000s'
+        }
+      }
+    };
+    const r = resolveRowTiming_({
+      firstEditedAt: first,
+      exercisesEditedAt: last,
+      date: JAN_15_NOON_UTC
+    }, 0, priorExercise, null);
+    eq(r.exerciseSource, 'edit');
+    eq(r.exercise.startUtcMs, first.getTime());
+    eq(r.exercise.endUtcMs, last.getTime());
+  });
+
+  t('resolveRowTiming_ prior weight always wins on re-sync', () => {
+    const wEdit = new Date(Date.UTC(2026, 0, 15, 22, 0, 0));   // 5pm EST, on row.date
+    const priorWeight = {
+      weight: {
+        sampleTime: { physicalTime: '2026-01-15T15:00:00Z', utcOffset: '-18000s' }
+      }
+    };
+    const r = resolveRowTiming_({
+      firstEditedAt: null,
+      exercisesEditedAt: null,
+      weightEditedAt: wEdit,
+      date: JAN_15_NOON_UTC
+    }, 0, null, priorWeight);
+    eq(r.weightSource, 'prior');
+    eq(r.weight, { utcMs: Date.UTC(2026, 0, 15, 15, 0, 0), offsetSeconds: EST });
+  });
+
+  t('resolveRowTiming_ malformed prior exercise falls through to synthetic', () => {
+    const r = resolveRowTiming_({
+      firstEditedAt: JAN_20_3PM_EST,
+      exercisesEditedAt: JAN_20_4PM_EST,
+      date: JAN_15_NOON_UTC
+    }, 0, { exercise: {} }, null);
+    eq(r.exerciseSource, 'synthetic');
+    eq(r.exercise.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
   });
 
   const msg = results.join('\n');
