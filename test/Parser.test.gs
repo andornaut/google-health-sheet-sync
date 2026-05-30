@@ -55,39 +55,40 @@ function runParserTests() {
   t('bodyweight junk -> null', () => eq(parseBodyweight('heavy'), null));
   t('bodyweight zero -> null', () => eq(parseBodyweight('0'), null));
 
-  t('formatEntry single weight', () => eq(formatEntry({ weight: 135, reps: 1, sets: 1, assisted: false }), '135'));
-  t('formatEntry weight x reps', () => eq(formatEntry({ weight: 135, reps: 5, sets: 1, assisted: false }), '135x5'));
-  t('formatEntry weight x reps x sets', () => eq(formatEntry({ weight: 135, reps: 5, sets: 3, assisted: false }), '135x5x3'));
-  t('formatEntry assisted preserved', () => eq(formatEntry({ weight: 135, reps: 5, sets: 3, assisted: true }), '*135x5x3'));
-
-  t('formatExerciseLine multi-entry joins with comma', () => eq(
-    formatExerciseLine('Bench press', [
-      { weight: 135, reps: 5, sets: 3, assisted: false },
-      { weight: 145, reps: 3, sets: 2, assisted: false },
-      { weight: 155, reps: 1, sets: 1, assisted: true }
-    ]),
-    'Bench press: 135x5x3, 145x3x2, *155'
+  t('formatEntryNote_ multiple sets', () => eq(
+    formatEntryNote_('Bench press', { weight: 190, reps: 5, sets: 5, assisted: false }),
+    'Bench press, 190 lbs, 5 sets of 5'
+  ));
+  t('formatEntryNote_ single set', () => eq(
+    formatEntryNote_('Bench press', { weight: 135, reps: 5, sets: 1, assisted: false }),
+    'Bench press, 135 lbs, 1 set of 5'
+  ));
+  t('formatEntryNote_ single rep', () => eq(
+    formatEntryNote_('Bench press', { weight: 225, reps: 1, sets: 1, assisted: false }),
+    'Bench press, 225 lbs, 1 set of 1'
+  ));
+  t('formatEntryNote_ assisted suffix', () => eq(
+    formatEntryNote_('Pull up', { weight: 25, reps: 5, sets: 3, assisted: true }),
+    'Pull up, 25 lbs, 3 sets of 5 (assisted)'
+  ));
+  t('formatEntryNote_ decimal weight', () => eq(
+    formatEntryNote_('Lateral raise', { weight: 22.5, reps: 10, sets: 3, assisted: false }),
+    'Lateral raise, 22.5 lbs, 3 sets of 10'
   ));
 
-  t('buildNotes structure', () => {
+  t('buildNotes one line per entry', () => {
     const notes = buildNotes([
-      { name: 'Bench press', entries: [{ weight: 135, reps: 5, sets: 3, assisted: false }] },
+      { name: 'Bench press', entries: [
+        { weight: 135, reps: 5, sets: 3, assisted: false },
+        { weight: 145, reps: 3, sets: 2, assisted: false }
+      ] },
       { name: 'Squat', entries: [{ weight: 225, reps: 5, sets: 3, assisted: false }] }
     ]);
-    eq(notes, SYNC_MARKER + '\nBench press: 135x5x3\nSquat: 225x5x3');
+    eq(notes,
+      'Bench press, 135 lbs, 3 sets of 5\n'
+      + 'Bench press, 145 lbs, 2 sets of 3\n'
+      + 'Squat, 225 lbs, 3 sets of 5');
   });
-
-  t('buildDisplayName uses abbreviations when known', () => eq(
-    buildDisplayName([
-      { name: 'Bench press', entries: [] },
-      { name: 'Squat', entries: [] }
-    ]),
-    'Strength: BP, SQ'
-  ));
-  t('buildDisplayName falls back to full name when unknown', () => eq(
-    buildDisplayName([{ name: 'Custom Exercise', entries: [] }]),
-    'Strength: Custom Exercise'
-  ));
 
   t('parseHealthIds_ empty/null', () => {
     eq(parseHealthIds_(''), []);
@@ -203,22 +204,130 @@ function runParserTests() {
     }
   ));
 
-  t('parseYmd_ dashed "2026-05-29"', () => {
-    const d = parseYmd_('2026-05-29');
-    if (d.getFullYear() !== 2026 || d.getMonth() !== 4 || d.getDate() !== 29) {
-      throw new Error('expected 2026-05-29, got ' + d);
-    }
+  // DST behavior for America/Toronto in 2026:
+  //   Spring forward: Mar 8, 02:00 EST -> 03:00 EDT  (clocks jump forward)
+  //   Fall back:      Nov 1, 02:00 EDT -> 01:00 EST  (clocks jump back)
+  const TORONTO = 'America/Toronto';
+  const EST = -5 * 3600;
+  const EDT = -4 * 3600;
+
+  t('localCivilToUtcMs_ winter EST (Jan)', () => {
+    const r = localCivilToUtcMs_(TORONTO, 2026, 1, 15, 12, 0);
+    eq(r.offsetSeconds, EST);
+    eq(r.utcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
   });
-  t('parseYmd_ compact "20260529"', () => {
-    const d = parseYmd_('20260529');
-    if (d.getFullYear() !== 2026 || d.getMonth() !== 4 || d.getDate() !== 29) {
-      throw new Error('expected 2026-05-29, got ' + d);
-    }
+  t('localCivilToUtcMs_ summer EDT (Jul)', () => {
+    const r = localCivilToUtcMs_(TORONTO, 2026, 7, 15, 12, 0);
+    eq(r.offsetSeconds, EDT);
+    eq(r.utcMs, Date.UTC(2026, 6, 15, 16, 0, 0));
   });
-  t('parseYmd_ bad format throws', () => {
+  t('localCivilToUtcMs_ day after spring-forward (Mar 9)', () => {
+    const r = localCivilToUtcMs_(TORONTO, 2026, 3, 9, 12, 0);
+    eq(r.offsetSeconds, EDT);
+    eq(r.utcMs, Date.UTC(2026, 2, 9, 16, 0, 0));
+  });
+  t('localCivilToUtcMs_ day after fall-back (Nov 2)', () => {
+    const r = localCivilToUtcMs_(TORONTO, 2026, 11, 2, 12, 0);
+    eq(r.offsetSeconds, EST);
+    eq(r.utcMs, Date.UTC(2026, 10, 2, 17, 0, 0));
+  });
+  t('localCivilToUtcMs_ spring-forward day pre-cutover (Mar 8 01:00 = EST)', () => {
+    const r = localCivilToUtcMs_(TORONTO, 2026, 3, 8, 1, 0);
+    eq(r.offsetSeconds, EST);
+    eq(r.utcMs, Date.UTC(2026, 2, 8, 6, 0, 0));
+  });
+  t('localCivilToUtcMs_ spring-forward day post-cutover (Mar 8 03:00 = EDT)', () => {
+    const r = localCivilToUtcMs_(TORONTO, 2026, 3, 8, 3, 0);
+    eq(r.offsetSeconds, EDT);
+    eq(r.utcMs, Date.UTC(2026, 2, 8, 7, 0, 0));
+  });
+  t('localCivilToUtcMs_ fall-back day pre-cutover (Nov 1 00:00 = EDT)', () => {
+    const r = localCivilToUtcMs_(TORONTO, 2026, 11, 1, 0, 0);
+    eq(r.offsetSeconds, EDT);
+    eq(r.utcMs, Date.UTC(2026, 10, 1, 4, 0, 0));
+  });
+  t('localCivilToUtcMs_ fall-back day post-cutover (Nov 1 03:00 = EST)', () => {
+    const r = localCivilToUtcMs_(TORONTO, 2026, 11, 1, 3, 0);
+    eq(r.offsetSeconds, EST);
+    eq(r.utcMs, Date.UTC(2026, 10, 1, 8, 0, 0));
+  });
+
+  t('getTzOffsetSeconds_ winter EST', () => eq(
+    getTzOffsetSeconds_(TORONTO, new Date(Date.UTC(2026, 0, 15, 17, 0, 0))), EST
+  ));
+  t('getTzOffsetSeconds_ summer EDT', () => eq(
+    getTzOffsetSeconds_(TORONTO, new Date(Date.UTC(2026, 6, 15, 16, 0, 0))), EDT
+  ));
+  t('getTzOffsetSeconds_ GMT zero', () => eq(
+    getTzOffsetSeconds_('GMT', new Date(Date.UTC(2026, 6, 15, 16, 0, 0))), 0
+  ));
+
+  t('buildIntervalFromUtc_ formats interval', () => eq(
+    buildIntervalFromUtc_(Date.UTC(2026, 0, 15, 17, 0, 0), EST, Date.UTC(2026, 0, 15, 18, 0, 0), EST),
+    {
+      startTime: '2026-01-15T17:00:00Z',
+      startUtcOffset: '-18000s',
+      endTime: '2026-01-15T18:00:00Z',
+      endUtcOffset: '-18000s'
+    }
+  ));
+
+  // syntheticExerciseInterval_ and resolveRowTiming_ use getTz_() which is
+  // cached on first call and resolves to the test runner's default
+  // (America/Toronto). Test dates use noon UTC so civilDateParts_ returns
+  // the intended calendar day in EST (UTC-5).
+  const JAN_15_NOON_UTC = new Date(Date.UTC(2026, 0, 15, 12, 0, 0));
+
+  t('syntheticExerciseInterval_ ordinal 0 -> noon-1pm EST', () => {
+    const r = syntheticExerciseInterval_(JAN_15_NOON_UTC, 0);
+    eq(r.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
+    eq(r.endUtcMs, Date.UTC(2026, 0, 15, 18, 0, 0));
+    eq(r.startOffsetSeconds, EST);
+    eq(r.endOffsetSeconds, EST);
+  });
+  t('syntheticExerciseInterval_ ordinal 1 -> 1pm-2pm EST', () => {
+    const r = syntheticExerciseInterval_(JAN_15_NOON_UTC, 1);
+    eq(r.startUtcMs, Date.UTC(2026, 0, 15, 18, 0, 0));
+    eq(r.endUtcMs, Date.UTC(2026, 0, 15, 19, 0, 0));
+  });
+  t('syntheticExerciseInterval_ throws when end spills past midnight', () => {
     let threw = false;
-    try { parseYmd_('not-a-date'); } catch (e) { threw = true; }
-    if (!threw) throw new Error('expected throw');
+    try { syntheticExerciseInterval_(JAN_15_NOON_UTC, 12); } catch (e) { threw = true; }
+    if (!threw) throw new Error('expected throw for ordinal 12 (startHour=24, endHour=25)');
+  });
+
+  t('resolveRowTiming_ edit source preserves interval within bounds', () => {
+    const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
+    const last = new Date(Date.UTC(2026, 0, 15, 18, 0, 0));
+    const r = resolveRowTiming_({ firstEditedAt: first, lastEditedAt: last, date: JAN_15_NOON_UTC }, 0);
+    eq(r.source, 'edit');
+    eq(r.exercise.startUtcMs, first.getTime());
+    eq(r.exercise.endUtcMs, last.getTime());
+    eq(r.exercise.startOffsetSeconds, EST);
+    eq(r.exercise.endOffsetSeconds, EST);
+    eq(r.weight, { utcMs: first.getTime(), offsetSeconds: EST });
+  });
+  t('resolveRowTiming_ edit source clamps too-short duration to MIN (20 min)', () => {
+    const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
+    const last = new Date(first.getTime() + 5 * 60 * 1000);
+    const r = resolveRowTiming_({ firstEditedAt: first, lastEditedAt: last, date: JAN_15_NOON_UTC }, 0);
+    eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 20 * 60 * 1000);
+  });
+  t('resolveRowTiming_ edit source clamps too-long duration to MAX (120 min)', () => {
+    const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
+    const last = new Date(first.getTime() + 5 * 60 * 60 * 1000);
+    const r = resolveRowTiming_({ firstEditedAt: first, lastEditedAt: last, date: JAN_15_NOON_UTC }, 0);
+    eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 120 * 60 * 1000);
+  });
+  t('resolveRowTiming_ synthetic source when no edit timestamps', () => {
+    const r = resolveRowTiming_({ firstEditedAt: null, lastEditedAt: null, date: JAN_15_NOON_UTC }, 0);
+    eq(r.source, 'synthetic');
+    eq(r.exercise.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
+    eq(r.exercise.endUtcMs, Date.UTC(2026, 0, 15, 18, 0, 0));
+  });
+  t('resolveRowTiming_ synthetic source falls through when only one edit timestamp set', () => {
+    const r = resolveRowTiming_({ firstEditedAt: new Date(), lastEditedAt: null, date: JAN_15_NOON_UTC }, 0);
+    eq(r.source, 'synthetic');
   });
 
   const msg = results.join('\n');

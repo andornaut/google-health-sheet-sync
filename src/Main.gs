@@ -86,8 +86,22 @@ function backstop() {
 // editing afterward, the row goes dirty again and the next sync replaces the
 // Health datapoint(s).
 function runSyncNow() {
-  const result = syncDirtyRows(true, LOCK_WAIT_MS);
-  toastSyncResult_(result, 'Synced');
+  runSyncAndToast_('Synced');
+}
+
+// Manual sync entry points share this wrapper so an unexpected throw from
+// syncDirtyRows (e.g. readRows can't find the Date column) surfaces as a
+// toast instead of Apps Script's modal error dialog. The error is re-thrown
+// so it still lands in Executions for diagnosis.
+function runSyncAndToast_(verb) {
+  let result;
+  try {
+    result = syncDirtyRows(true, LOCK_WAIT_MS);
+  } catch (err) {
+    toast_('Sync failed: ' + String(err.message || err), 30);
+    throw err;
+  }
+  toastSyncResult_(result, verb);
 }
 
 function forceResyncCurrentRow() {
@@ -100,13 +114,12 @@ function forceResyncCurrentRow() {
     toast_('Exercise Synced At column missing. Run setup.', 30);
     return;
   }
-  const weightCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER] || null;
+  const weightSyncedAtCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER] || null;
   clearRowExerciseSynced(row, exerciseCol);
-  clearRowWeightSynced(row, weightCol);
+  clearRowWeightSynced(row, weightSyncedAtCol);
   SpreadsheetApp.flush();
   PropertiesService.getScriptProperties().setProperty(PENDING_DIRTY_KEY, '1');
-  const result = syncDirtyRows(true, LOCK_WAIT_MS);
-  toastSyncResult_(result, 'Resynced');
+  runSyncAndToast_('Resynced');
 }
 
 function forceResyncAllRows() {
@@ -117,7 +130,7 @@ function forceResyncAllRows() {
     toast_('Exercise Synced At column missing. Run setup.', 30);
     return;
   }
-  const weightCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER] || null;
+  const weightSyncedAtCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER] || null;
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) {
     toast_('No data rows.', 10);
@@ -128,12 +141,11 @@ function forceResyncAllRows() {
   const blanks = [];
   for (let i = 0; i < dataRowCount; i++) blanks.push(['']);
   sheet.getRange(2, exerciseCol, dataRowCount, 1).setValues(blanks);
-  if (weightCol) sheet.getRange(2, weightCol, dataRowCount, 1).setValues(blanks);
+  if (weightSyncedAtCol) sheet.getRange(2, weightSyncedAtCol, dataRowCount, 1).setValues(blanks);
   SpreadsheetApp.flush();
   PropertiesService.getScriptProperties().setProperty(PENDING_DIRTY_KEY, '1');
 
-  const result = syncDirtyRows(true, LOCK_WAIT_MS);
-  toastSyncResult_(result, 'Resynced');
+  runSyncAndToast_('Resynced');
 }
 
 function formatSyncResult_(result, verb) {
@@ -290,17 +302,29 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
 // lifting content is already covered by a non-sync-created Health datapoint.
 // Two-phase per date: time-range overlap (rows with edit timestamps) then
 // 1:1 ordinal pairing (rows without). Candidates already claimed by other
-// synced rows are excluded first so incremental syncs can't double-claim.
+// rows (foreign-matched or script-created) are excluded first so a session
+// this script wrote can't be re-matched and incremental syncs can't
+// double-claim.
+//
+// Ordering note: this runs once near the top of syncDirtyRows, before the
+// per-row syncOneRow_ loop. The `allRows` snapshot comes from readRows() at
+// the start of the pass, and `listForeignStrengthOnDate` calls the API
+// before any row in this pass has had its create issued. So same-pass
+// freshly-created datapoints are not yet visible to the API and not yet in
+// any row's Created Health IDs — both gaps cancel out and there's no
+// self-match risk.
 function resolveForeignMatches_(allRows, readyRows) {
   const plan = {};
   const readyRowNums = {};
   readyRows.forEach(r => { readyRowNums[r.rowNum] = true; });
   const claimedByOthers = {};
+  const claim_ = (date, name) => {
+    const key = ymd(date);
+    (claimedByOthers[key] = claimedByOthers[key] || {})[name] = true;
+  };
   allRows.forEach(r => {
-    if (readyRowNums[r.rowNum]) return;
-    if (!r.matchedHealthSession) return;
-    const key = ymd(r.date);
-    (claimedByOthers[key] = claimedByOthers[key] || {})[r.matchedHealthSession] = true;
+    if (!readyRowNums[r.rowNum] && r.matchedHealthSession) claim_(r.date, r.matchedHealthSession);
+    splitHealthIdsByType_(r.healthIds).exercise.forEach(name => claim_(r.date, name));
   });
   const byDate = groupRowsByDate_(readyRows.filter(r => r.exercises.length > 0));
   Object.keys(byDate).forEach(dateKey => {
@@ -462,14 +486,28 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
     weightAttempted = true;
     if (split.weight.length > 0) {
       console.info(tag + ': deleting ' + split.weight.length + ' previous weight datapoint(s)');
-      deleteDataPointsByName(split.weight);
+      try {
+        deleteDataPointsByName(split.weight);
+        newWeightIds = [];
+      } catch (err) {
+        console.error(tag + ': delete previous weight datapoint(s) failed: ' + err);
+        weightFailed = true;
+        // Keep newWeightIds = split.weight so the next sync retries delete.
+      }
+    } else {
+      newWeightIds = [];
     }
-    newWeightIds = [];
-    if (SYNC_WEIGHT && row.bodyweight !== null) {
+    if (!weightFailed && SYNC_WEIGHT && row.bodyweight !== null) {
       try {
         const wt = timing.weight;
         const name = createWeightAt(wt.utcMs, wt.offsetSeconds, row.bodyweight);
-        if (name) newWeightIds.push(name);
+        if (name) {
+          newWeightIds.push(name);
+          // Persist immediately so a 6-minute kill before the end-of-row
+          // write can't orphan a freshly-created datapoint we no longer
+          // have a sheet reference for.
+          writeHealthIds(row.rowNum, cols.healthIdsCol, newWeightIds.concat(newExerciseIds).concat(split.other));
+        }
         console.info(tag + ': createWeightAt(' + row.bodyweight + ' lb) -> ' + (name || '<no name>'));
       } catch (err) {
         console.error(tag + ': createWeightAt failed: ' + err);
@@ -482,20 +520,32 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
     exerciseAttempted = true;
     if (split.exercise.length > 0) {
       console.info(tag + ': deleting ' + split.exercise.length + ' previous exercise datapoint(s)');
-      deleteDataPointsByName(split.exercise);
+      try {
+        deleteDataPointsByName(split.exercise);
+        newExerciseIds = [];
+      } catch (err) {
+        console.error(tag + ': delete previous exercise datapoint(s) failed: ' + err);
+        exerciseFailed = true;
+        // Keep newExerciseIds = split.exercise so the next sync retries delete.
+      }
+    } else {
+      newExerciseIds = [];
     }
-    newExerciseIds = [];
-    if (SYNC_EXERCISES && row.exercises.length > 0) {
+    if (!exerciseFailed && SYNC_EXERCISES && row.exercises.length > 0) {
       if (match) {
         console.info(tag + ': skipping exercise create; matched foreign ' + match.name);
       } else {
         try {
           const ex = timing.exercise;
           const notes = buildNotes(row.exercises);
-          const displayName = buildDisplayName(row.exercises);
           const name = createExerciseAt(ex.startUtcMs, ex.startOffsetSeconds,
-            ex.endUtcMs, ex.endOffsetSeconds, notes, displayName);
-          if (name) newExerciseIds.push(name);
+            ex.endUtcMs, ex.endOffsetSeconds, notes);
+          if (name) {
+            newExerciseIds.push(name);
+            // Same rationale as the weight write above: persist before any
+            // later step can fail and leave the datapoint untracked.
+            writeHealthIds(row.rowNum, cols.healthIdsCol, newWeightIds.concat(newExerciseIds).concat(split.other));
+          }
           console.info(tag + ': createExerciseAt -> ' + (name || '<no name>'));
         } catch (err) {
           console.error(tag + ': createExerciseAt failed: ' + err);
@@ -518,8 +568,8 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
   //
   // Two transitions to detect:
   //  - non-null -> different value (the row already had edit timestamps)
-  //  - null     -> non-null        (a legacy/backfill row got its first edit
-  //                                 while sync was running)
+  //  - null     -> non-null        (a new row got its first edit while sync
+  //                                 was running)
   let concurrentEdit = false;
   if (cols.lastEditedAtCol) {
     const currentLastEdit = toDate_(getSheet_().getRange(row.rowNum, cols.lastEditedAtCol).getValue());

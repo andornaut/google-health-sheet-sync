@@ -44,10 +44,10 @@ const MAX_ROWS_PER_SYNC = 75;
 const PENDING_DIRTY_KEY = 'pendingDirty';
 
 // Synthetic timing is the fallback when a row has no First/Last Edited At
-// timestamps (e.g. rows that pre-date this feature, or rows imported in bulk).
-// Each row on a given date gets startHour = SYNTHETIC_START_HOUR + ordinal,
-// endHour = startHour + SYNTHETIC_DURATION_HOURS, so the second strength row
-// on the same date starts an hour after the first, and so on.
+// timestamps (e.g. rows imported in bulk). Each row on a given date gets
+// startHour = SYNTHETIC_START_HOUR + ordinal, endHour = startHour +
+// SYNTHETIC_DURATION_HOURS, so the second strength row on the same date
+// starts an hour after the first, and so on.
 const SYNTHETIC_START_HOUR = 12;
 const SYNTHETIC_DURATION_HOURS = 1;
 
@@ -63,8 +63,7 @@ const MAX_EXERCISE_DURATION_MS = 120 * 60 * 1000;
 // end time with roughly when the workout actually finished, not when the
 // first sync trigger happened to fire. If you re-edit a synced row, this
 // re-applies (the row goes dirty again and waits another quiesce window).
-// Rows with no Last Edited At (legacy/backfill) bypass the wait and sync
-// immediately.
+// Rows with no Last Edited At bypass the wait and sync immediately.
 const LAST_EDIT_QUIESCE_MS = 45 * 60 * 1000;
 
 // When matching foreign Google Health activities (ones this script didn't
@@ -91,19 +90,5 @@ const HEALTH_OAUTH_SCOPES = [
 ].join(' ');
 
 const HEALTH_API_BASE = 'https://health.googleapis.com/v4';
-const SYNC_MARKER = '[gs-sync]';
-
-const EXERCISE_ABBREVIATIONS = {
-  'Barbell curl': 'BC',
-  'Barbell triceps extension': 'BTE',
-  'Bench press': 'BP',
-  'Deadlift': 'DL',
-  'Dumbell curl': 'DC',
-  'Dumbell rows': 'DR',
-  'Landmine rows': 'LR',
-  'Lateral raises': 'LAT',
-  'Shoulder press': 'SP',
-  'Squat': 'SQ'
-};
 
 const GRAMS_PER_LB = 453.59237;

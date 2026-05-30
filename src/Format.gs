@@ -1,29 +1,21 @@
-function formatEntry(entry) {
-  const prefix = entry.assisted ? '*' : '';
-  if (entry.reps === 1 && entry.sets === 1) {
-    return prefix + entry.weight;
-  }
-  if (entry.sets === 1) {
-    return prefix + entry.weight + 'x' + entry.reps;
-  }
-  return prefix + entry.weight + 'x' + entry.reps + 'x' + entry.sets;
-}
-
-function formatExerciseLine(exerciseName, entries) {
-  return exerciseName + ': ' + entries.map(formatEntry).join(', ');
-}
-
+// Natural-language phrasing mirroring Fitbit-originated Strength Training
+// notes ("Bench press, 190 lbs, 5 sets of 5"), which the Google Health UI
+// evidently parses to render the in-app "Workout summary" card. The API
+// itself has no structured slot for per-set strength data
+// (Exercise.exerciseMetadata only carries hasGps / poolLengthMillimeters),
+// so the notes field is the only lever we have.
 function buildNotes(parsedExercises) {
-  const lines = [SYNC_MARKER];
+  const lines = [];
   for (const ex of parsedExercises) {
-    lines.push(formatExerciseLine(ex.name, ex.entries));
+    for (const entry of ex.entries) {
+      lines.push(formatEntryNote_(ex.name, entry));
+    }
   }
   return lines.join('\n');
 }
 
-// Server normalizes displayName for STRENGTH_TRAINING to 'Strength training'
-// regardless of what we send, so this is mostly cosmetic. Kept short.
-function buildDisplayName(parsedExercises) {
-  const abbrs = parsedExercises.map(ex => EXERCISE_ABBREVIATIONS[ex.name] || ex.name);
-  return 'Strength: ' + abbrs.join(', ');
+function formatEntryNote_(exerciseName, entry) {
+  const setLabel = entry.sets === 1 ? '1 set' : entry.sets + ' sets';
+  const line = exerciseName + ', ' + entry.weight + ' lbs, ' + setLabel + ' of ' + entry.reps;
+  return entry.assisted ? line + ' (assisted)' : line;
 }
