@@ -69,15 +69,18 @@ for (const f of testFiles) {
 }
 
 const logs = [];
-const origLog = console.log;
-console.log = (...args) => { logs.push(args.join(' ')); origLog(...args); };
+const origLog = quietConsole.log;
+quietConsole.log = (...args) => { logs.push(args.join(' ')); origLog(...args); };
 try {
   vm.runInContext('runParserTests();', sandbox);
 } finally {
-  console.log = origLog;
+  quietConsole.log = origLog;
 }
 
 const output = logs.join('\n');
-if (/^FAIL /m.test(output)) {
+const passed = (output.match(/^PASS /gm) || []).length;
+const failed = (output.match(/^FAIL /gm) || []).length;
+console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed`);
+if (failed > 0) {
   process.exit(1);
 }
