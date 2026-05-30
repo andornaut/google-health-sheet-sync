@@ -325,16 +325,16 @@ function resolveForeignMatches_(allRows, readyRows) {
   const readyRowNums = {};
   readyRows.forEach(r => { readyRowNums[r.rowNum] = true; });
   const accountedFor = {};
-  const markAccountedFor_ = (date, name, reason) => {
+  const markAccountedFor_ = (date, name, reason, rowNum) => {
     const key = ymd(date);
-    (accountedFor[key] = accountedFor[key] || {})[name] = reason;
+    (accountedFor[key] = accountedFor[key] || {})[name] = { reason: reason, rowNum: rowNum };
   };
   allRows.forEach(r => {
     if (!readyRowNums[r.rowNum] && r.matchedHealthSession) {
-      markAccountedFor_(r.date, r.matchedHealthSession, 'matched-elsewhere');
+      markAccountedFor_(r.date, r.matchedHealthSession, 'matched-elsewhere', r.rowNum);
     }
     splitHealthIdsByType_(r.healthIds).exercise.forEach(name => {
-      markAccountedFor_(r.date, name, 'sync-created');
+      markAccountedFor_(r.date, name, 'sync-created', r.rowNum);
     });
   });
   const byDate = groupRowsByDate_(readyRows.filter(r => r.exercises.length > 0));
@@ -352,17 +352,23 @@ function resolveForeignMatches_(allRows, readyRows) {
       const before = candidates.length;
       let syncCreatedCount = 0;
       let matchedElsewhereCount = 0;
+      const ownerRowNums = {};
       candidates = candidates.filter(c => {
-        const reason = reasons[c.name];
-        if (!reason) return true;
-        if (reason === 'sync-created') syncCreatedCount++;
+        const entry = reasons[c.name];
+        if (!entry) return true;
+        if (entry.reason === 'sync-created') syncCreatedCount++;
         else matchedElsewhereCount++;
+        if (entry.rowNum != null) ownerRowNums[entry.rowNum] = true;
         return false;
       });
       const removed = before - candidates.length;
       if (removed > 0) {
+        const ownerList = Object.keys(ownerRowNums).sort((a, b) => Number(a) - Number(b));
+        const ownerSuffix = ownerList.length > 0
+          ? ' by row(s) ' + ownerList.join(', ')
+          : '';
         console.info('resolveForeignMatches_: ' + dateKey + ' excluded ' + removed
-          + ' candidate(s) already accounted for ('
+          + ' candidate(s) already accounted for' + ownerSuffix + ' ('
           + syncCreatedCount + ' sync-created, '
           + matchedElsewhereCount + ' matched to another row)');
       }

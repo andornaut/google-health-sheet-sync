@@ -230,36 +230,37 @@ function onEditMarkDirty(e) {
   const dateCol = map[DATE_COLUMN_HEADER] || null;
   const weightCol = map[WEIGHT_COLUMN_HEADER] || null;
 
-  // Classify the edited columns per phase. Weight column edits affect only
-  // the weight datapoint and must NOT advance the row's edit timestamps —
-  // doing so would drag the exercise datapoint's endTime forward on every
-  // bodyweight change. Exercise columns (any non-managed column that isn't
-  // Date or Weight) advance the timestamps as before. The Date column is
-  // metadata that doesn't itself trigger a sync; typing a Date alone on a
-  // new row is a no-op until exercise or weight content lands.
+  // Classify per phase by walking the cell values (not just column indices).
+  // A range that spans empty cells — e.g. pasting only Date + Weight on a
+  // new row leaves the exercise columns in between empty — must not be
+  // treated as an exercise edit. Only cells with content count. This also
+  // implicitly handles the "every cell empty" case (clearing already-blank
+  // cells, pasting empty data): no flag gets set and we return early.
+  // Deletions of real content are also skipped — use Force Resync to
+  // remove a row's datapoint after clearing it.
+  //
+  // Weight-column edits affect only the weight datapoint and must NOT
+  // advance the row's exercise timestamps. Exercise columns (any non-
+  // managed column that isn't Date or Weight) advance Exercises Edited At.
+  // The Date column is metadata that doesn't itself trigger a sync;
+  // typing a Date alone on a new row is a no-op until exercise or weight
+  // content lands.
   const managedCols = MANAGED_COLUMN_HEADERS.map(h => map[h]).filter(c => c);
+  const newValues = e.range.getValues();
   let exerciseRelevant = false;
   let weightRelevant = false;
-  for (let c = firstCol; c <= lastCol; c++) {
-    if (managedCols.indexOf(c) !== -1) continue;
-    if (c === dateCol) continue;
-    if (c === weightCol) weightRelevant = true;
-    else exerciseRelevant = true;
-  }
-  if (!exerciseRelevant && !weightRelevant) return;
-
-  // Skip when every edited cell is now empty (clearing already-blank cells,
-  // pasting empty data). Deletions of real content are also skipped — use
-  // Force Resync to remove a row's datapoint after clearing it.
-  const newValues = e.range.getValues();
-  let anyNonEmpty = false;
-  for (let i = 0; i < newValues.length && !anyNonEmpty; i++) {
+  for (let i = 0; i < newValues.length; i++) {
     for (let j = 0; j < newValues[i].length; j++) {
       const v = newValues[i][j];
-      if (v !== '' && v !== null && v !== undefined) { anyNonEmpty = true; break; }
+      if (v === '' || v === null || v === undefined) continue;
+      const c = firstCol + j;
+      if (managedCols.indexOf(c) !== -1) continue;
+      if (c === dateCol) continue;
+      if (c === weightCol) weightRelevant = true;
+      else exerciseRelevant = true;
     }
   }
-  if (!anyNonEmpty) return;
+  if (!exerciseRelevant && !weightRelevant) return;
 
   PropertiesService.getScriptProperties().setProperty(PENDING_DIRTY_KEY, '1');
   // No lock: these are single-cell writes that race safely with an in-flight
