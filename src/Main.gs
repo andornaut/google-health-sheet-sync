@@ -362,7 +362,13 @@ function resolveForeignMatches_(allRows, readyRows) {
         return false;
       });
       const removed = before - candidates.length;
-      if (removed > 0) {
+      // Quiet the common no-op case where a fully-synced historical date has
+      // exactly one sync-created candidate owned by the row itself. Only
+      // surface exclusions that signal something cross-row: matched-elsewhere
+      // dedup, or more than one sync-created on a single date (multi-workout
+      // day, or stray orphans).
+      const interesting = matchedElsewhereCount > 0 || syncCreatedCount > 1;
+      if (removed > 0 && interesting) {
         const ownerList = Object.keys(ownerRowNums).sort((a, b) => Number(a) - Number(b));
         const ownerSuffix = ownerList.length > 0
           ? ' by row(s) ' + ownerList.join(', ')
@@ -375,8 +381,15 @@ function resolveForeignMatches_(allRows, readyRows) {
     }
     if (candidates.length === 0) return;
 
-    const timeRangeRows = dayRows.filter(r => r.firstEditedAt && r.exercisesEditedAt);
-    const ordinalRows = dayRows.filter(r => !(r.firstEditedAt && r.exercisesEditedAt));
+    // Only trust edit timestamps as a foreign-match window when they're on
+    // dateKey (== row.date in script tz). An off-date timestamp pair — e.g. a
+    // backfill edited today for an old workout — produces a window that can't
+    // overlap any same-day candidate, so the row would silently fall through.
+    // Off-date rows go into ordinal pairing instead, same as no-edit-time rows.
+    const isOnRowDate_ = r => r.firstEditedAt && r.exercisesEditedAt
+      && ymd(r.firstEditedAt) === dateKey;
+    const timeRangeRows = dayRows.filter(isOnRowDate_);
+    const ordinalRows = dayRows.filter(r => !isOnRowDate_(r));
 
     timeRangeRows.forEach(r => {
       const windowStart = r.firstEditedAt.getTime() - FOREIGN_MATCH_BUFFER_MS;
@@ -559,25 +572,31 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
 
   const split = splitHealthIdsByType_(row.healthIds);
 
-  // Fetch prior datapoints (only the phases that will run, and only when
-  // the prior interval/sampleTime might actually be used) so the timing
-  // resolver can preserve them. Exercise prior is only useful when the
-  // edit isn't on row.date (otherwise the live-workout endTime-advancement
-  // path takes over). Weight prior is always preferred on re-sync. A GET
-  // failure here is non-fatal: timing falls through to edit/synthetic.
+  // Phases that will actually issue a create (and thus need a resolved
+  // interval/sampleTime). Delete-only phases don't need timing. The
+  // timing log line shows only the phases listed here, so weight-only or
+  // foreign-matched rows don't surface misleading "edit/synthetic" labels
+  // for an interval that will never be sent.
+  const exerciseWillCreate = exerciseReady && !match && SYNC_EXERCISES && row.exercises.length > 0;
+  const weightWillCreate = weightReady && SYNC_WEIGHT && row.bodyweight !== null;
+
+  // Fetch prior datapoints so the timing resolver can preserve them.
+  // Exercise prior is only useful when the edit isn't on row.date
+  // (otherwise the live-workout endTime-advancement path takes over).
+  // Weight prior is always preferred on re-sync. A GET failure is
+  // non-fatal: timing falls through to edit/synthetic.
   let priorExercise = null;
   let priorWeight = null;
   const exerciseEditOnRowDate = row.firstEditedAt && row.exercisesEditedAt
     && ymd(row.firstEditedAt) === ymd(row.date);
-  if (exerciseReady && !match && row.exercises.length > 0
-    && !exerciseEditOnRowDate && split.exercise.length > 0) {
+  if (exerciseWillCreate && !exerciseEditOnRowDate && split.exercise.length > 0) {
     try {
       priorExercise = getDataPoint(split.exercise[0]);
     } catch (err) {
       console.warn(tag + ': GET prior exercise failed; will recompute timing: ' + err);
     }
   }
-  if (weightReady && SYNC_WEIGHT && row.bodyweight !== null && split.weight.length > 0) {
+  if (weightWillCreate && split.weight.length > 0) {
     try {
       priorWeight = getDataPoint(split.weight[0]);
     } catch (err) {
@@ -592,7 +611,10 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
     console.error(tag + ': resolveRowTiming_ failed: ' + err);
     return false;
   }
-  console.info(tag + ': timing exercise=' + timing.exerciseSource + ' weight=' + timing.weightSource);
+  const labelParts = [];
+  if (exerciseWillCreate) labelParts.push('exercise=' + timing.exerciseSource);
+  if (weightWillCreate) labelParts.push('weight=' + timing.weightSource);
+  if (labelParts.length > 0) console.info(tag + ': timing ' + labelParts.join(' '));
   let newWeightIds = split.weight;
   let newExerciseIds = split.exercise;
   let weightFailed = false;
