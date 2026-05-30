@@ -1,25 +1,38 @@
 const DATE_COLUMN_HEADER = 'Date';
 const WEIGHT_COLUMN_HEADER = 'Weight';
-// Weight syncs immediately on edit (no quiesce), exercises wait for the
-// quiesce window. Each content type has its own stamp so a row with both can
-// record weight progress without losing track that exercise is still pending.
-// Both cleared on edit.
+// Weight syncs immediately on edit (no debounce); exercises wait for the
+// edit-burst debounce window. Each content type has its own stamp so a row
+// with both can record weight progress without losing track that exercise
+// is still pending. Cleared independently per phase by onEditMarkDirty.
 const EXERCISE_SYNCED_AT_COLUMN_HEADER = 'Exercise Synced At';
 const WEIGHT_SYNCED_AT_COLUMN_HEADER = 'Weight Synced At';
 const HEALTH_IDS_COLUMN_HEADER = 'Created Health IDs';
 const FIRST_EDITED_AT_COLUMN_HEADER = 'First Edited At';
-const LAST_EDITED_AT_COLUMN_HEADER = 'Last Edited At';
+// Last edit time for exercise-relevant columns (Date or exercise). Drives
+// the exercise interval's endTime and the exercise phase's concurrent-edit
+// guard. Weight-only edits do NOT advance it — otherwise a bodyweight
+// change would drag the exercise endTime forward.
+const EXERCISES_EDITED_AT_COLUMN_HEADER = 'Exercises Edited At';
+// Last edit time for the Weight column. Drives the weight sample time and
+// the weight phase's concurrent-edit guard. Advances on every weight edit
+// so weight re-edits update the sample time accordingly.
+const WEIGHT_EDITED_AT_COLUMN_HEADER = 'Weight Edited At';
+// Legacy header from before the Exercises Edited At / Weight Edited At
+// split. ensureManagedColumns renames it to EXERCISES_EDITED_AT_COLUMN_HEADER
+// in place on the first run after upgrade, preserving the stored timestamps.
+const LEGACY_LAST_EDITED_AT_COLUMN_HEADER = 'Last Edited At';
 // Resource name of the foreign STRENGTH_TRAINING datapoint a row was matched
-// to. Recomputed every sync. Also consulted by resolveForeignMatches_ to
-// avoid two sheet rows claiming the same foreign session across incremental
-// runs (the dirty row excludes candidates already held by synced rows).
+// to. Recomputed every sync. Also consulted by resolveForeignMatches_ so
+// foreign sessions already matched to a non-ready row are accounted for and
+// can't be re-matched to a different row in a later incremental run.
 const MATCHED_HEALTH_SESSION_COLUMN_HEADER = 'Matched Health Session';
 const MANAGED_COLUMN_HEADERS = [
   EXERCISE_SYNCED_AT_COLUMN_HEADER,
   WEIGHT_SYNCED_AT_COLUMN_HEADER,
   HEALTH_IDS_COLUMN_HEADER,
   FIRST_EDITED_AT_COLUMN_HEADER,
-  LAST_EDITED_AT_COLUMN_HEADER,
+  EXERCISES_EDITED_AT_COLUMN_HEADER,
+  WEIGHT_EDITED_AT_COLUMN_HEADER,
   MATCHED_HEALTH_SESSION_COLUMN_HEADER
 ];
 
@@ -42,7 +55,8 @@ const MAX_ROWS_PER_SYNC = 75;
 // unset so most poll ticks are just a property read.
 const PENDING_DIRTY_KEY = 'pendingDirty';
 
-// Synthetic timing is the fallback when a row has no First/Last Edited At
+// Synthetic timing is the fallback when a row has no First Edited At /
+// Exercises Edited At / Weight Edited At
 // timestamps (e.g. rows imported in bulk). Each row on a given date gets
 // startHour = SYNTHETIC_START_HOUR + ordinal, endHour = startHour +
 // SYNTHETIC_DURATION_HOURS, so the second strength row on the same date
@@ -59,13 +73,14 @@ const SYNTHETIC_DURATION_HOURS = 1;
 const MIN_EXERCISE_DURATION_MS = 5 * 60 * 1000;
 const MAX_EXERCISE_DURATION_MS = 120 * 60 * 1000;
 
-// Per-row "still typing" guard. A dirty row whose Last Edited At is within
-// this window is skipped on the current poll and picked up by the next one.
-// Without it, a poll firing mid-edit would push out a half-typed row. Since
-// every sync delete+recreates with the row's current state, syncing more
-// often than necessary just churns the Health datapoint without changing
-// the eventual state — the guard avoids that churn during an edit burst.
-// Rows with no Last Edited At bypass the wait and sync immediately.
+// Per-row "still typing" guard. A dirty row whose Exercises Edited At is
+// within this window is skipped on the current poll and picked up by the
+// next one. Without it, a poll firing mid-edit would push out a half-typed
+// row. Since every sync delete+recreates with the row's current state,
+// syncing more often than necessary just churns the Health datapoint
+// without changing the eventual state — the guard avoids that churn during
+// an edit burst. Rows with no Exercises Edited At bypass the wait and sync
+// immediately. Weight phase has no debounce.
 const LAST_EDIT_QUIESCE_MS = 60 * 1000;
 
 // When matching foreign Google Health activities (ones this script didn't

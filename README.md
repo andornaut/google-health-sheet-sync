@@ -10,7 +10,7 @@ Google Apps Script to sync strength-training and bodyweight data from Google She
 - **Edit-derived timing**: The activity's start/end times are taken from when you first/last edited the row, so the Google Health session reflects when you actually did the workout. Rows without edit timestamps (e.g. backfill) fall back to a synthetic noon-ordinal slot.
 - **Foreign-activity matching**: If a Strength Training session you logged on a watch or in another app already covers the same workout (overlapping edit window, or 1:1 by ordinal when the row has no edit timestamps), the script skips writing its own duplicate exercise datapoint and records the matched session in the row's `Matched Health Session` column. The foreign datapoint is left untouched — its calories, heart rate, and recording method are preserved. (The API enforces this anyway — DELETE on a non-script-owned datapoint returns `403 DATA_POINT_NOT_OWNED_BY_CLIENT`.) Bodyweight still syncs as normal.
 - **Two-phase sync**: Weight and exercise sync independently with their own `Synced At` stamps and column-aware dirty tracking. Editing only the Weight column re-pushes just the weight datapoint and leaves the exercise interval untouched; editing only an exercise column re-pushes just the exercise datapoint. Editing the Date column alone on an otherwise-empty row is a no-op (nothing to sync until exercise or weight content lands).
-- **Edit-burst debounce**: A dirty row whose `Last Edited At` is within 60 seconds is skipped on the current poll and retried on the next, so a poll firing mid-edit doesn't push a half-typed row. Weight-only edits don't advance `Last Edited At`, so they skip the debounce.
+- **Edit-burst debounce**: A dirty row whose `Exercises Edited At` is within 60 seconds is skipped on the current poll and retried on the next, so a poll firing mid-edit doesn't push a half-typed row. The weight phase has no debounce — `Weight Edited At` advances on every weight cell edit and the weight datapoint pushes on the next poll.
 - **Automated**: Polls every 5 minutes for dirty rows past the debounce.
 - **Per-pass cap**: Each sync processes up to 75 rows (newest dates first) to stay under Apps Script's 6-minute execution limit. Remaining rows are picked up on the next poll.
 
@@ -43,7 +43,7 @@ Unspecified fields are omitted from the Google Health notes. For example, a `Ben
 
 ### Example
 
-Trimmed to a few exercise columns and the most relevant managed columns. Health resource names abbreviated as `ex/NNN` / `wt/NNN`; the remaining managed columns `First Edited At` and `Last Edited At` are omitted here. `Exercise Synced At` and `Weight Synced At` are stamped independently per phase — a row with only bodyweight leaves `Exercise Synced At` blank, and vice versa:
+Trimmed to a few exercise columns and the most relevant managed columns. Health resource names abbreviated as `ex/NNN` / `wt/NNN`; the remaining managed columns `First Edited At`, `Exercises Edited At`, and `Weight Edited At` are omitted here. `Exercise Synced At` and `Weight Synced At` are stamped independently per phase — a row with only bodyweight leaves `Exercise Synced At` blank, and vice versa:
 
 | Date         | Bench press | Deadlift         | Weight | Exercise Synced At   | Weight Synced At     | Created Health IDs | Matched Health Session |
 | ------------ | ----------- | ---------------- | ------ | -------------------- | -------------------- | ------------------ | ---------------------- |
@@ -106,7 +106,7 @@ In Apps Script **Project Settings (⚙)**, set the project time zone to your loc
 
 ### 6. Initialize & Authorize
 
-1. In the Apps Script editor, open the `Main` file, select the `setup` function, and click **Run**. The first run prompts for sheet access; approve it. `setup` installs triggers (`onEditTrigger`, `flushIfPending`) and appends the managed columns (`Exercise Synced At`, `Weight Synced At`, `Created Health IDs`, `First Edited At`, `Last Edited At`, `Matched Health Session`) to the first tab. If you previously ran `setup` on an older version that installed a `backstop` trigger, this run also removes it.
+1. In the Apps Script editor, open the `Main` file, select the `setup` function, and click **Run**. The first run prompts for sheet access; approve it. `setup` installs triggers (`onEditTrigger`, `flushIfPending`) and appends the managed columns (`Exercise Synced At`, `Weight Synced At`, `Created Health IDs`, `First Edited At`, `Exercises Edited At`, `Weight Edited At`, `Matched Health Session`) to the first tab. If you previously ran `setup` on an older version, this run also removes the old `backstop` trigger and renames the legacy `Last Edited At` column to `Exercises Edited At` in place (preserving any stored timestamps).
 2. Refresh your spreadsheet, then select **Sync ▸ Authorize Health API** from the menu. Complete the OAuth consent flow.
 
 The **Sync** menu also exposes:
@@ -125,7 +125,7 @@ The **Sync** menu also exposes:
 Edit [Config.gs](src/Config.gs) to customize:
 
 - `SYNTHETIC_START_HOUR` / `SYNTHETIC_DURATION_HOURS` (default `12` / `1`): synthetic session start hour and duration when edit-derived timing is unavailable (legacy/backfill rows).
-- `LAST_EDIT_QUIESCE_MS` (default 60 sec): edit-burst "still typing" guard. A row whose `Last Edited At` is within this window is skipped on the current poll and retried on the next, so a poll firing mid-edit doesn't push a half-typed row.
+- `LAST_EDIT_QUIESCE_MS` (default 60 sec): edit-burst "still typing" guard for the exercise phase. A row whose `Exercises Edited At` is within this window is skipped on the current poll and retried on the next, so a poll firing mid-edit doesn't push a half-typed row. Weight phase has no debounce.
 - `MIN_EXERCISE_DURATION_MS` / `MAX_EXERCISE_DURATION_MS` (defaults 5 min / 120 min): bounds for the edit-derived interval duration. The floor satisfies the Health API's "endTime must be strictly after startTime" requirement when only a single edit has happened; the ceiling caps multi-hour-spanning rows at a plausible workout length.
 - `FOREIGN_MATCH_BUFFER_MS` (default 30 min): when checking whether a non-sync-created Strength Training activity matches a row's edit window, allow this much slack on either side. If a foreign activity overlaps, the row is treated as already represented in Health (no own exercise written) and the foreign datapoint's resource name is recorded in the `Matched Health Session` column.
 - `POLL_INTERVAL_MIN` (default 5): trigger cadence for `flushIfPending`. Apps Script's minimum is 1 minute.

@@ -155,9 +155,9 @@ function probeOverwriteOne_(name) {
   }
 }
 
-// Find exercise datapoints created by this script (platform=GOOGLE_WEB_API
-// plus matching googleWebClientId) that aren't referenced by any sheet
-// row's Created Health IDs, and delete them. Catches the recreated
+// Find sync-created exercise datapoints (platform=GOOGLE_WEB_API plus
+// matching googleWebClientId) that aren't referenced by any sheet row's
+// Created Health IDs, and delete them. Catches the recreated
 // datapoint that the round-trip probe leaves behind, plus any other
 // orphans (rows deleted from the sheet without Force Resync first).
 //
@@ -205,7 +205,7 @@ function cleanupProbeRemnant() {
   }
 
   if (orphans.length === 0) {
-    console.log('No orphaned script-created exercise datapoints found in last '
+    console.log('No orphaned sync-created exercise datapoints found in last '
       + LOOKBACK_DAYS + ' days.');
     return;
   }

@@ -35,7 +35,7 @@ function httpJson_(method, url, payload) {
         throw lastErr;
       }
       const backoffMs = 500 * Math.pow(2, attempt);
-      console.warn('Health API ' + method + ' attempt ' + (attempt + 1) + '/' + maxAttempts + ' failed; retrying in ' + backoffMs + 'ms. Error: ' + lastErr);
+      console.warn('Health API ' + method + ' attempt ' + (attempt + 1) + '/' + maxAttempts + ' failed; retrying in ' + humanizeMs_(backoffMs) + '. Error: ' + lastErr);
       Utilities.sleep(backoffMs);
       continue;
     }
@@ -51,7 +51,7 @@ function httpJson_(method, url, payload) {
       throw lastErr;
     }
     const backoffMs = 500 * Math.pow(2, attempt);
-    console.warn('Health API ' + method + ' attempt ' + (attempt + 1) + '/' + maxAttempts + ' failed; retrying in ' + backoffMs + 'ms. Error: ' + lastErr);
+    console.warn('Health API ' + method + ' attempt ' + (attempt + 1) + '/' + maxAttempts + ' failed; retrying in ' + humanizeMs_(backoffMs) + '. Error: ' + lastErr);
     Utilities.sleep(backoffMs);
   }
   throw lastErr;
@@ -68,7 +68,7 @@ function extractDataPointName_(createResponse) {
 }
 
 // Lists exercise datapoints whose civil start time falls on `date` in the
-// script's time zone. Used by listForeignStrengthOnDate to discover
+// script's time zone. Used by listStrengthOnDate to discover
 // non-sync-created activities to match against.
 function listExercisesOnDate(date) {
   const startDay = ymd(date);
@@ -190,11 +190,12 @@ function syntheticWeightSample_(date) {
   return { utcMs: sample.utcMs, offsetSeconds: sample.offsetSeconds };
 }
 
-// List candidate Strength Training datapoints whose civil start time falls
-// on `date`. Script-created sessions are not filtered out here; the caller
-// (resolveForeignMatches_) excludes any name already listed in a row's
-// Created Health IDs. Returned candidates are sorted ascending by startUtcMs.
-function listForeignStrengthOnDate(date) {
+// List all Strength Training datapoints whose civil start time falls on
+// `date`. Sync-created sessions are NOT filtered out here; the caller
+// (resolveForeignMatches_) is responsible for excluding any name it
+// already accounts for (sync-created or matched to another row).
+// Returned candidates are sorted ascending by startUtcMs.
+function listStrengthOnDate(date) {
   const points = listExercisesOnDate(date);
   const out = [];
   for (const p of points) {
