@@ -67,12 +67,20 @@ function onEditTrigger(e) {
 
 function flushIfPending() {
   const props = PropertiesService.getScriptProperties();
-  if (props.getProperty(PENDING_DIRTY_KEY) !== '1') {
+  if (!props.getProperty(PENDING_DIRTY_KEY)) {
     console.info('flushIfPending: no pending edits, skipping');
     return;
   }
   console.info('flushIfPending: pending edits detected, syncing');
   syncDirtyRows(false, 0);
+}
+
+// Write a fresh generation marker into PENDING_DIRTY_KEY. The value matters
+// (syncDirtyRows compares start vs end to detect concurrent edits), so always
+// advance it — never just re-write the same string.
+function markPendingDirty_() {
+  PropertiesService.getScriptProperties()
+    .setProperty(PENDING_DIRTY_KEY, String(Date.now()));
 }
 
 // "Run now" is an explicit manual action: bypasses the exercise edit-burst
@@ -113,7 +121,7 @@ function forceResyncCurrentRow() {
   clearRowExerciseSynced(row, exerciseCol);
   clearRowWeightSynced(row, weightSyncedAtCol);
   SpreadsheetApp.flush();
-  PropertiesService.getScriptProperties().setProperty(PENDING_DIRTY_KEY, '1');
+  markPendingDirty_();
   runSyncAndToast_('Resynced');
 }
 
@@ -138,7 +146,7 @@ function forceResyncAllRows() {
   sheet.getRange(2, exerciseCol, dataRowCount, 1).setValues(blanks);
   if (weightSyncedAtCol) sheet.getRange(2, weightSyncedAtCol, dataRowCount, 1).setValues(blanks);
   SpreadsheetApp.flush();
-  PropertiesService.getScriptProperties().setProperty(PENDING_DIRTY_KEY, '1');
+  markPendingDirty_();
 
   runSyncAndToast_('Resynced');
 }
@@ -192,15 +200,18 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
     return null;
   }
   const props = PropertiesService.getScriptProperties();
+  // Capture the dirty-marker generation at start. onEditMarkDirty advances it
+  // on every edit (Date.now() string), so a concurrent edit during the pass
+  // shows up as a mismatch at end-of-pass. The flag is NOT cleared here:
+  // a hard kill (6-min Apps Script timeout, uncaught throw) before the
+  // finally block would otherwise drop the signal and orphan the dirty rows
+  // until the next manual sync or new edit.
+  const genAtStart = props.getProperty(PENDING_DIRTY_KEY);
   let ok = 0;
   let errors = 0;
   let waitingCount = 0;
   let deferredCount = 0;
   try {
-    // Clear early so any onEditMarkDirty that fires during this pass can
-    // re-set the flag and be picked up by the next poll without ambiguity.
-    props.deleteProperty(PENDING_DIRTY_KEY);
-
     const { rows, exerciseSyncedAtCol, weightSyncedAtCol, weightCol, healthIdsCol, exercisesEditedAtCol, weightEditedAtCol, matchedHealthSessionCol } = readRows();
     if (!exerciseSyncedAtCol || !weightSyncedAtCol || !healthIdsCol) {
       console.error('syncDirtyRows: managed columns missing; run setup().');
@@ -290,12 +301,24 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
       else errors++;
     }
   } finally {
-    // Re-set the flag if work remains: quiescing rows need a future poll to
-    // pick them up, and failed rows should be retried promptly. (syncOneRow_
-    // also sets the flag itself when it defers a row due to a concurrent
-    // edit, so even rows counted as ok can leave the flag set.)
-    if (waitingCount > 0 || errors > 0 || deferredCount > 0) {
-      props.setProperty(PENDING_DIRTY_KEY, '1');
+    // End-of-pass flag resolution:
+    //   - If work remains (quiescing, errors, deferred): ensure the flag is
+    //     set so a future poll picks it up. If a concurrent edit advanced
+    //     the generation already, its value is fine; otherwise write a fresh
+    //     one. (syncOneRow_ also calls markPendingDirty_ for partial-progress
+    //     rows, so ok-counted rows can leave the flag set too.)
+    //   - If no work remains AND the generation hasn't moved: the pass fully
+    //     drained the queue, safe to clear.
+    //   - If no work remains BUT the generation moved: an edit landed during
+    //     the pass that this pass didn't see (readRows snapshotted before it).
+    //     Leave the new generation in place so the next poll runs.
+    const genAtEnd = props.getProperty(PENDING_DIRTY_KEY);
+    const concurrentEdit = genAtEnd !== genAtStart;
+    const workRemaining = waitingCount > 0 || errors > 0 || deferredCount > 0;
+    if (workRemaining) {
+      if (!concurrentEdit) markPendingDirty_();
+    } else if (!concurrentEdit) {
+      props.deleteProperty(PENDING_DIRTY_KEY);
     }
     lock.releaseLock();
   }
@@ -800,12 +823,13 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
   }
 
   // If the row still has unstamped phases (either because we skipped a phase
-  // this pass or a concurrent edit blocked the stamp), keep PENDING_DIRTY_KEY
-  // set so a future poll picks it up.
+  // this pass or a concurrent edit blocked the stamp), advance the dirty
+  // generation so syncDirtyRows' end-of-pass check leaves the flag set
+  // (and a future poll picks the row up).
   const weightStampMissing = !row.weightSyncedAt && !(weightAttempted && !weightConcurrentEdit);
   const exerciseStampMissing = !row.exerciseSyncedAt && !(exerciseAttempted && !exerciseConcurrentEdit);
   if (weightStampMissing || exerciseStampMissing) {
-    PropertiesService.getScriptProperties().setProperty(PENDING_DIRTY_KEY, '1');
+    markPendingDirty_();
     console.info(tag + ': partial progress; row stays dirty (weightStamped='
       + (!weightStampMissing) + ', exerciseStamped=' + (!exerciseStampMissing) + ')');
   } else {

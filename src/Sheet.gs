@@ -272,7 +272,7 @@ function onEditMarkDirty(e) {
   const rowDesc = firstRow === lastRow ? 'row ' + firstRow : 'rows ' + firstRow + '-' + lastRow;
   console.info('onEditTrigger: ' + a1 + ' ' + rowDesc + ' dirty=[' + phases.join(',') + ']');
 
-  PropertiesService.getScriptProperties().setProperty(PENDING_DIRTY_KEY, '1');
+  markPendingDirty_();
   // No lock: these are single-cell writes that race safely with an in-flight
   // sync. syncOneRow_'s per-phase concurrent-edit guards re-check at stamp
   // time and defer if our update landed during processing.
