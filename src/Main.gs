@@ -438,18 +438,38 @@ function buildOrdinalMap_(rows) {
   return ordinalByRowNum;
 }
 
-// Resolve the exercise interval and weight sample time independently. The
-// exercise interval is a span (needs both First Edited At + Exercises
-// Edited At); the weight is a point sample (uses Weight Edited At alone).
-// Weight falls back to First Edited At for rows synced under the pre-split
-// schema (legacy "Last Edited At" was renamed in place; Weight Edited At
-// is empty until the user next edits the weight cell). Both phases fall
-// back to synthetic noon-ordinal when their respective timestamps are
-// absent.
-function resolveRowTiming_(row, ordinal) {
+// Resolve the exercise interval and weight sample time independently, per
+// phase, with these rules:
+//
+//   Exercise:
+//     - 'edit'      if firstEditedAt's civil date == row.date AND
+//                   exercisesEditedAt is set. This lets endTime advance
+//                   during a live workout as more sets are typed in.
+//     - 'prior'     if a previous datapoint is provided. Its interval is
+//                   reused verbatim so an off-date edit (e.g. correcting
+//                   an old row today) doesn't shift startTime to today.
+//     - 'synthetic' otherwise: noon+ordinal on row.date.
+//
+//   Weight:
+//     - 'prior'     if a previous datapoint is provided. The weight value
+//                   can change without re-stamping the sample time.
+//     - 'edit'      if weightSampleAt's civil date == row.date.
+//                   weightSampleAt is weightEditedAt with a legacy
+//                   fallback to firstEditedAt (pre-split schema).
+//     - 'synthetic' otherwise: noon on row.date.
+//
+// priorExercise/priorWeight are the GET responses for the row's existing
+// datapoints (or null if first-sync, or null if the GET failed — in which
+// case we fall through to the edit/synthetic path rather than erroring).
+function resolveRowTiming_(row, ordinal, priorExercise, priorWeight) {
   const tz = getTz_();
-  let exercise;
-  if (row.firstEditedAt && row.exercisesEditedAt) {
+  const rowDateKey = ymd(row.date);
+
+  let exercise = null;
+  let exerciseSource = null;
+  const exerciseEditOnRowDate = row.firstEditedAt && row.exercisesEditedAt
+    && ymd(row.firstEditedAt) === rowDateKey;
+  if (exerciseEditOnRowDate) {
     const startMs = row.firstEditedAt.getTime();
     const rawDuration = row.exercisesEditedAt.getTime() - startMs;
     const clampedDuration = Math.min(
@@ -463,23 +483,55 @@ function resolveRowTiming_(row, ordinal) {
       endUtcMs: endMs,
       endOffsetSeconds: getTzOffsetSeconds_(tz, new Date(endMs))
     };
-  } else {
+    exerciseSource = 'edit';
+  } else if (priorExercise) {
+    const i = priorExercise.exercise && priorExercise.exercise.interval;
+    if (i && i.startTime && i.endTime) {
+      exercise = {
+        startUtcMs: new Date(i.startTime).getTime(),
+        startOffsetSeconds: parseOffsetSeconds_(i.startUtcOffset),
+        endUtcMs: new Date(i.endTime).getTime(),
+        endOffsetSeconds: parseOffsetSeconds_(i.endUtcOffset)
+      };
+      exerciseSource = 'prior';
+    }
+  }
+  if (!exercise) {
     exercise = syntheticExerciseInterval_(row.date, ordinal);
+    exerciseSource = 'synthetic';
   }
-  let weight;
-  const weightSampleAt = row.weightEditedAt || row.firstEditedAt || null;
-  if (weightSampleAt) {
-    weight = {
-      utcMs: weightSampleAt.getTime(),
-      offsetSeconds: getTzOffsetSeconds_(tz, weightSampleAt)
-    };
-  } else {
-    weight = syntheticWeightSample_(row.date);
+
+  let weight = null;
+  let weightSource = null;
+  if (priorWeight) {
+    const s = priorWeight.weight && priorWeight.weight.sampleTime;
+    if (s && s.physicalTime) {
+      weight = {
+        utcMs: new Date(s.physicalTime).getTime(),
+        offsetSeconds: parseOffsetSeconds_(s.utcOffset)
+      };
+      weightSource = 'prior';
+    }
   }
-  // Single source label for the caller's log line. 'edit' means at least
-  // the weight is edit-derived; 'synthetic' means both phases fall back.
-  const source = (row.firstEditedAt || row.weightEditedAt) ? 'edit' : 'synthetic';
-  return { source: source, exercise: exercise, weight: weight };
+  if (!weight) {
+    const weightSampleAt = row.weightEditedAt || row.firstEditedAt || null;
+    if (weightSampleAt && ymd(weightSampleAt) === rowDateKey) {
+      weight = {
+        utcMs: weightSampleAt.getTime(),
+        offsetSeconds: getTzOffsetSeconds_(tz, weightSampleAt)
+      };
+      weightSource = 'edit';
+    } else {
+      weight = syntheticWeightSample_(row.date);
+      weightSource = 'synthetic';
+    }
+  }
+  return {
+    exercise: exercise,
+    weight: weight,
+    exerciseSource: exerciseSource,
+    weightSource: weightSource
+  };
 }
 
 // Sync a single row in two independent phases (weight, exercise). Either or
@@ -505,16 +557,42 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
     + ', oldIds=' + row.healthIds.length
     + (match ? ', match=' + match.name : '') + ')');
 
+  const split = splitHealthIdsByType_(row.healthIds);
+
+  // Fetch prior datapoints (only the phases that will run, and only when
+  // the prior interval/sampleTime might actually be used) so the timing
+  // resolver can preserve them. Exercise prior is only useful when the
+  // edit isn't on row.date (otherwise the live-workout endTime-advancement
+  // path takes over). Weight prior is always preferred on re-sync. A GET
+  // failure here is non-fatal: timing falls through to edit/synthetic.
+  let priorExercise = null;
+  let priorWeight = null;
+  const exerciseEditOnRowDate = row.firstEditedAt && row.exercisesEditedAt
+    && ymd(row.firstEditedAt) === ymd(row.date);
+  if (exerciseReady && !match && row.exercises.length > 0
+    && !exerciseEditOnRowDate && split.exercise.length > 0) {
+    try {
+      priorExercise = getDataPoint(split.exercise[0]);
+    } catch (err) {
+      console.warn(tag + ': GET prior exercise failed; will recompute timing: ' + err);
+    }
+  }
+  if (weightReady && SYNC_WEIGHT && row.bodyweight !== null && split.weight.length > 0) {
+    try {
+      priorWeight = getDataPoint(split.weight[0]);
+    } catch (err) {
+      console.warn(tag + ': GET prior weight failed; will recompute timing: ' + err);
+    }
+  }
+
   let timing;
   try {
-    timing = resolveRowTiming_(row, ordinal);
+    timing = resolveRowTiming_(row, ordinal, priorExercise, priorWeight);
   } catch (err) {
     console.error(tag + ': resolveRowTiming_ failed: ' + err);
     return false;
   }
-  console.info(tag + ': timing source=' + timing.source);
-
-  const split = splitHealthIdsByType_(row.healthIds);
+  console.info(tag + ': timing exercise=' + timing.exerciseSource + ' weight=' + timing.weightSource);
   let newWeightIds = split.weight;
   let newExerciseIds = split.exercise;
   let weightFailed = false;

@@ -67,6 +67,19 @@ function extractDataPointName_(createResponse) {
   return null;
 }
 
+// GET a single datapoint by its full resource name. Used to preserve the
+// prior interval/sampleTime when re-syncing an existing row, so an
+// off-date edit (e.g. correcting an old row's notes today) doesn't shift
+// the Health datapoint's start/sample time to today. Stored names use the
+// numeric user id; we rewrite to `me` for consistency with the rest of
+// the client (matches the literal-`me` requirement already documented for
+// batchDelete).
+function getDataPoint(name) {
+  const meName = String(name).replace(/^users\/[^/]+\//, 'users/me/');
+  const url = HEALTH_API_BASE + '/' + meName;
+  return httpJson_('GET', url);
+}
+
 // Lists exercise datapoints whose civil start time falls on `date` in the
 // script's time zone. Used by listStrengthOnDate to discover
 // non-sync-created activities to match against.
