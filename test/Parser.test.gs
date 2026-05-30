@@ -463,6 +463,138 @@ function runParserTests() {
     eq(r.exercise.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
   });
 
+  // resolveForeignMatches_ tests. listStrengthOnDate is stubbed per-test so
+  // we control the foreign candidate list without hitting the API.
+  const withStubbedList = (stub, fn) => {
+    // Apps Script declares top-level functions on the global scope, but the
+    // VM sandbox these tests run in treats the function name like a const-
+    // binding at the outer scope, so direct reassignment throws. Stash and
+    // restore via globalThis instead.
+    const orig = globalThis.listStrengthOnDate;
+    globalThis.listStrengthOnDate = stub;
+    try { fn(); } finally { globalThis.listStrengthOnDate = orig; }
+  };
+
+  // 2026-01-15 12:00 UTC = 2026-01-15 07:00 EST, civil date 2026-01-15.
+  const FOREIGN_DATE = new Date(Date.UTC(2026, 0, 15, 12, 0, 0));
+  const fRow_ = (overrides) => Object.assign({
+    rowNum: 10,
+    date: FOREIGN_DATE,
+    exercises: [{ name: 'Bench', entries: [{ weight: 135, reps: 5, sets: 3, assisted: false }] }],
+    healthIds: [],
+    matchedHealthSession: '',
+    firstEditedAt: null,
+    exercisesEditedAt: null
+  }, overrides);
+  const fCand_ = (name, startUtcMs, endUtcMs) => ({
+    name: name, startUtcMs: startUtcMs, endUtcMs: endUtcMs,
+    startUtcOffsetSeconds: EST, endUtcOffsetSeconds: EST
+  });
+
+  t('resolveForeignMatches_ time-range matches on-date row to overlapping candidate', () => {
+    const row = fRow_({
+      firstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),   // 5pm EST
+      exercisesEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0)) // 6pm EST
+    });
+    const cand = fCand_('foreign/A',
+      Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
+    withStubbedList(() => [cand], () => {
+      const plan = resolveForeignMatches_([row], [row]);
+      eq(plan[10] && plan[10].name, 'foreign/A');
+    });
+  });
+
+  t('resolveForeignMatches_ off-date row skips time-range, falls into ordinal pairing', () => {
+    // Row dated 2026-01-15 but edited 2026-01-20. Under the old logic this
+    // landed in timeRangeRows and silently failed (zero overlap). New logic
+    // sends it to ordinalRows so 1-row-1-candidate cases pair correctly.
+    const row = fRow_({
+      firstEditedAt: new Date(Date.UTC(2026, 0, 20, 22, 0, 0)),
+      exercisesEditedAt: new Date(Date.UTC(2026, 0, 20, 23, 0, 0))
+    });
+    const cand = fCand_('foreign/A',
+      Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
+    withStubbedList(() => [cand], () => {
+      const plan = resolveForeignMatches_([row], [row]);
+      eq(plan[10] && plan[10].name, 'foreign/A');
+    });
+  });
+
+  t('resolveForeignMatches_ no-timestamp row pairs via ordinal when counts match', () => {
+    const row = fRow_({ rowNum: 10 });
+    const cand = fCand_('foreign/A',
+      Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
+    withStubbedList(() => [cand], () => {
+      const plan = resolveForeignMatches_([row], [row]);
+      eq(plan[10] && plan[10].name, 'foreign/A');
+    });
+  });
+
+  t('resolveForeignMatches_ ordinal pairs N rows to N candidates sorted asc', () => {
+    const rowA = fRow_({ rowNum: 5 });
+    const rowB = fRow_({ rowNum: 10 });
+    const candEarly = fCand_('foreign/early',
+      Date.UTC(2026, 0, 15, 15, 0, 0), Date.UTC(2026, 0, 15, 16, 0, 0));
+    const candLate = fCand_('foreign/late',
+      Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
+    withStubbedList(() => [candLate, candEarly], () => {   // unsorted input
+      const plan = resolveForeignMatches_([rowA, rowB], [rowA, rowB]);
+      eq(plan[5] && plan[5].name, 'foreign/early');         // lowest rowNum -> earliest cand
+      eq(plan[10] && plan[10].name, 'foreign/late');
+    });
+  });
+
+  t('resolveForeignMatches_ ordinal counts disagree -> no pairing', () => {
+    const rowA = fRow_({ rowNum: 5 });
+    const rowB = fRow_({ rowNum: 10 });
+    const cand = fCand_('foreign/A',
+      Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
+    withStubbedList(() => [cand], () => {
+      const plan = resolveForeignMatches_([rowA, rowB], [rowA, rowB]);
+      eq(plan[5], undefined);
+      eq(plan[10], undefined);
+    });
+  });
+
+  t('resolveForeignMatches_ excludes sync-created candidates (self-owned name)', () => {
+    const ownName = 'users/me/dataTypes/exercise/dataPoints/123';
+    const row = fRow_({ rowNum: 10, healthIds: [ownName] });
+    const cand = fCand_(ownName,
+      Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
+    withStubbedList(() => [cand], () => {
+      const plan = resolveForeignMatches_([row], [row]);
+      eq(plan[10], undefined);   // own datapoint not re-matched to self
+    });
+  });
+
+  t('resolveForeignMatches_ excludes candidates already matched-elsewhere by a non-ready row', () => {
+    const readyRow = fRow_({ rowNum: 10 });
+    const nonReadyRow = fRow_({ rowNum: 5, matchedHealthSession: 'foreign/A' });
+    const cand = fCand_('foreign/A',
+      Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
+    withStubbedList(() => [cand], () => {
+      const plan = resolveForeignMatches_([readyRow, nonReadyRow], [readyRow]);
+      eq(plan[10], undefined);
+    });
+  });
+
+  t('resolveForeignMatches_ time-range picks the best-overlap candidate when several exist', () => {
+    // Row window 4:30pm-6:30pm EST (5pm-6pm edit + 30min buffer each side).
+    // candA: 7am-8am EST, no overlap. candB: 5pm-6pm EST, full overlap.
+    const row = fRow_({
+      firstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),
+      exercisesEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0))
+    });
+    const candA = fCand_('foreign/early',
+      Date.UTC(2026, 0, 15, 12, 0, 0), Date.UTC(2026, 0, 15, 13, 0, 0));
+    const candB = fCand_('foreign/match',
+      Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
+    withStubbedList(() => [candA, candB], () => {
+      const plan = resolveForeignMatches_([row], [row]);
+      eq(plan[10] && plan[10].name, 'foreign/match');
+    });
+  });
+
   const msg = results.join('\n');
   console.log(msg);
   try { SpreadsheetApp.getUi().alert('Parser tests\n\n' + msg); } catch (e) {}
