@@ -303,8 +303,10 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
 
 // Returns rowNum -> foreign Strength Training session for ready rows whose
 // lifting content is already covered by a foreign (non-sync-created) Health
-// datapoint. Two-phase per date: time-range overlap (rows with edit
-// timestamps) then 1:1 ordinal pairing (rows without).
+// datapoint. Two-phase per date: time-range overlap for rows whose edit
+// timestamps fall on row.date (the timestamps anchor a meaningful window),
+// then partial ordinal pairing — min(rows, candidates) sorted by rowNum vs
+// startUtcMs — for everything else (no-timestamp rows AND off-date rows).
 //
 // Before matching, candidates the script already accounts for are excluded:
 //   - sync-created: name appears in some row's Created Health IDs (could be
@@ -392,8 +394,16 @@ function resolveForeignMatches_(allRows, readyRows) {
     const ordinalRows = dayRows.filter(r => !isOnRowDate_(r));
 
     timeRangeRows.forEach(r => {
-      const windowStart = r.firstEditedAt.getTime() - FOREIGN_MATCH_BUFFER_MS;
-      const windowEnd = r.exercisesEditedAt.getTime() + FOREIGN_MATCH_BUFFER_MS;
+      // Clamp to MAX_EXERCISE_DURATION_MS the same way resolveRowTiming_ does
+      // so a row whose exercisesEditedAt drifted past firstEditedAt (late
+      // corrections to an old row keep sticky firstEditedAt + advance
+      // exercisesEditedAt) doesn't produce a multi-day window that biases
+      // toward the longest unrelated candidate.
+      const startMs = r.firstEditedAt.getTime();
+      const rawDuration = r.exercisesEditedAt.getTime() - startMs;
+      const clampedEndMs = startMs + Math.min(rawDuration, MAX_EXERCISE_DURATION_MS);
+      const windowStart = startMs - FOREIGN_MATCH_BUFFER_MS;
+      const windowEnd = clampedEndMs + FOREIGN_MATCH_BUFFER_MS;
       let bestIdx = -1;
       let bestOverlap = 0;
       candidates.forEach((c, i) => {
