@@ -44,6 +44,8 @@ function setup() {
 }
 
 function installTriggers() {
+  // 'backstop' is no longer installed but kept in the cleanup set so the
+  // hourly trigger an earlier setup() installed gets removed on next run.
   const handlers = new Set(['onEditTrigger', 'flushIfPending', 'backstop']);
   ScriptApp.getProjectTriggers().forEach(t => {
     if (handlers.has(t.getHandlerFunction())) ScriptApp.deleteTrigger(t);
@@ -52,7 +54,6 @@ function installTriggers() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   ScriptApp.newTrigger('onEditTrigger').forSpreadsheet(ss).onEdit().create();
   ScriptApp.newTrigger('flushIfPending').timeBased().everyMinutes(POLL_INTERVAL_MIN).create();
-  ScriptApp.newTrigger('backstop').timeBased().everyHours(BACKSTOP_INTERVAL_HOURS).create();
 }
 
 function onEditTrigger(e) {
@@ -71,13 +72,6 @@ function flushIfPending() {
   }
   console.info('flushIfPending: pending edits detected, syncing');
   syncDirtyRows(false, 0);
-}
-
-function backstop() {
-  const result = syncDirtyRows(false, 0);
-  if (result && result.ok === 0 && result.errors === 0 && !result.deferred) {
-    console.info('backstop: no dirty rows, nothing to do');
-  }
 }
 
 // "Run now" is an explicit manual action: bypasses the exercise quiesce
@@ -200,7 +194,7 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
     // re-set the flag and be picked up by the next poll without ambiguity.
     props.deleteProperty(PENDING_DIRTY_KEY);
 
-    const { rows, exerciseSyncedAtCol, weightSyncedAtCol, healthIdsCol, lastEditedAtCol, matchedHealthSessionCol } = readRows();
+    const { rows, exerciseSyncedAtCol, weightSyncedAtCol, weightCol, healthIdsCol, lastEditedAtCol, matchedHealthSessionCol } = readRows();
     if (!exerciseSyncedAtCol || !weightSyncedAtCol || !healthIdsCol) {
       console.error('syncDirtyRows: managed columns missing; run setup().');
       errors = 1;
@@ -274,6 +268,7 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
     const cols = {
       exerciseSyncedAtCol: exerciseSyncedAtCol,
       weightSyncedAtCol: weightSyncedAtCol,
+      weightCol: weightCol,
       healthIdsCol: healthIdsCol,
       lastEditedAtCol: lastEditedAtCol,
       matchedHealthSessionCol: matchedHealthSessionCol
@@ -560,17 +555,14 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
     writeMatchedHealthSession(row.rowNum, cols.matchedHealthSessionCol, match ? match.name : '');
   }
 
-  // Concurrent-edit guard: if the user edited this row while we were
-  // processing it, Last Edited At in the sheet is newer than what we
-  // captured at the start of the pass. Skip stamping the synced-at columns
-  // so the row stays dirty; the next sync replaces our just-created
-  // datapoint(s) with content that reflects the new edits.
-  //
-  // Two transitions to detect:
-  //  - non-null -> different value (the row already had edit timestamps)
-  //  - null     -> non-null        (a new row got its first edit while sync
-  //                                 was running)
-  let concurrentEdit = false;
+  // Concurrent-edit guards, phase-isolated. onEditMarkDirty only advances
+  // Last Edited At on exercise-relevant edits, so the exercise phase uses
+  // it as its "row changed during sync" signal. The weight phase compares
+  // the bodyweight value we synced against the cell's current value — a
+  // weight edit during sync doesn't touch Last Edited At, so we'd miss it
+  // otherwise. The two phases are independent: a concurrent weight edit
+  // doesn't defer the exercise stamp and vice versa.
+  let exerciseConcurrentEdit = false;
   if (cols.lastEditedAtCol) {
     const currentLastEdit = toDate_(getSheet_().getRange(row.rowNum, cols.lastEditedAtCol).getValue());
     const previousMs = row.lastEditedAt ? row.lastEditedAt.getTime() : null;
@@ -578,17 +570,28 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
     if (currentMs !== previousMs) {
       const prevLabel = row.lastEditedAt ? row.lastEditedAt.toISOString() : '<none>';
       const currLabel = currentLastEdit ? currentLastEdit.toISOString() : '<cleared>';
-      console.info(tag + ': concurrent edit detected (Last Edited At '
-        + prevLabel + ' -> ' + currLabel + '); deferring synced-at stamps, will retry next sync.');
-      concurrentEdit = true;
+      console.info(tag + ': concurrent exercise edit detected (Last Edited At '
+        + prevLabel + ' -> ' + currLabel + '); deferring Exercise Synced At stamp.');
+      exerciseConcurrentEdit = true;
+    }
+  }
+  let weightConcurrentEdit = false;
+  if (weightAttempted && cols.weightCol) {
+    const currentBodyweight = parseBodyweight(getSheet_().getRange(row.rowNum, cols.weightCol).getValue());
+    if (currentBodyweight !== row.bodyweight) {
+      console.info(tag + ': concurrent weight edit detected (bodyweight '
+        + (row.bodyweight === null ? '<none>' : row.bodyweight) + ' -> '
+        + (currentBodyweight === null ? '<cleared>' : currentBodyweight)
+        + '); deferring Weight Synced At stamp.');
+      weightConcurrentEdit = true;
     }
   }
 
   const stampIso = new Date().toISOString();
-  if (weightAttempted && !weightFailed && !concurrentEdit) {
+  if (weightAttempted && !weightFailed && !weightConcurrentEdit) {
     markRowWeightSynced(row.rowNum, cols.weightSyncedAtCol, stampIso);
   }
-  if (exerciseAttempted && !exerciseFailed && !concurrentEdit) {
+  if (exerciseAttempted && !exerciseFailed && !exerciseConcurrentEdit) {
     markRowExerciseSynced(row.rowNum, cols.exerciseSyncedAtCol, stampIso);
   }
 
@@ -600,8 +603,8 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
   // If the row still has unstamped phases (either because we skipped a phase
   // this pass or a concurrent edit blocked the stamp), keep PENDING_DIRTY_KEY
   // set so a future poll picks it up.
-  const weightStampMissing = !row.weightSyncedAt && !(weightAttempted && !concurrentEdit);
-  const exerciseStampMissing = !row.exerciseSyncedAt && !(exerciseAttempted && !concurrentEdit);
+  const weightStampMissing = !row.weightSyncedAt && !(weightAttempted && !weightConcurrentEdit);
+  const exerciseStampMissing = !row.exerciseSyncedAt && !(exerciseAttempted && !exerciseConcurrentEdit);
   if (weightStampMissing || exerciseStampMissing) {
     PropertiesService.getScriptProperties().setProperty(PENDING_DIRTY_KEY, '1');
     console.info(tag + ': partial progress; row stays dirty (weightStamped='

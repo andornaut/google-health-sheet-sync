@@ -31,10 +31,10 @@ function parseLine_(line) {
   if (nums.some(n => !Number.isFinite(n) || n < 0)) return null;
 
   const weight = nums[0];
-  const reps = parts.length >= 2 ? nums[1] : 1;
-  const sets = parts.length === 3 ? nums[2] : 1;
-  if (!Number.isInteger(reps) || !Number.isInteger(sets)) return null;
-  if (reps < 1 || sets < 1) return null;
+  const reps = parts.length >= 2 ? nums[1] : null;
+  const sets = parts.length === 3 ? nums[2] : null;
+  if (reps !== null && (!Number.isInteger(reps) || reps < 1)) return null;
+  if (sets !== null && (!Number.isInteger(sets) || sets < 1)) return null;
 
   return { weight: weight, reps: reps, sets: sets, assisted: assisted };
 }

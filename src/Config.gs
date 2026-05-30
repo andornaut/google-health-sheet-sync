@@ -26,7 +26,6 @@ const MANAGED_COLUMN_HEADERS = [
 // How often the polling trigger fires to check for ready-to-sync rows.
 // Apps Script has no setTimeout; deferred work happens via periodic triggers.
 const POLL_INTERVAL_MIN = 5;
-const BACKSTOP_INTERVAL_HOURS = 1;
 
 // How long manual sync entry points (Run now, force-resync) wait to acquire
 // the script lock before giving up. Automatic triggers pass 0.
