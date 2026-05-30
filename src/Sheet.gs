@@ -26,6 +26,16 @@ function getHeaderMap_(sheet) {
 function ensureManagedColumns() {
   const sheet = getSheet_();
   const { map } = getHeaderMap_(sheet);
+  // One-time migration: rename the legacy "Last Edited At" header to
+  // "Exercises Edited At" in place so stored timestamps are preserved.
+  // Runs once per sheet (only if the old header still exists and the new
+  // one doesn't); after that it's a no-op.
+  const legacyCol = map[LEGACY_LAST_EDITED_AT_COLUMN_HEADER];
+  if (legacyCol && !map[EXERCISES_EDITED_AT_COLUMN_HEADER]) {
+    sheet.getRange(1, legacyCol).setValue(EXERCISES_EDITED_AT_COLUMN_HEADER);
+    map[EXERCISES_EDITED_AT_COLUMN_HEADER] = legacyCol;
+    delete map[LEGACY_LAST_EDITED_AT_COLUMN_HEADER];
+  }
   MANAGED_COLUMN_HEADERS.forEach(header => {
     let col = map[header];
     if (!col) {
@@ -47,7 +57,8 @@ function readRows() {
   const weightSyncedAtCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER] || null;
   const healthIdsCol = map[HEALTH_IDS_COLUMN_HEADER] || null;
   const firstEditedAtCol = map[FIRST_EDITED_AT_COLUMN_HEADER] || null;
-  const lastEditedAtCol = map[LAST_EDITED_AT_COLUMN_HEADER] || null;
+  const exercisesEditedAtCol = map[EXERCISES_EDITED_AT_COLUMN_HEADER] || null;
+  const weightEditedAtCol = map[WEIGHT_EDITED_AT_COLUMN_HEADER] || null;
   const matchedHealthSessionCol = map[MATCHED_HEALTH_SESSION_COLUMN_HEADER] || null;
   const dateCol = map[DATE_COLUMN_HEADER];
   const weightCol = map[WEIGHT_COLUMN_HEADER];
@@ -82,7 +93,8 @@ function readRows() {
       weightCol: weightCol,
       healthIdsCol: healthIdsCol,
       firstEditedAtCol: firstEditedAtCol,
-      lastEditedAtCol: lastEditedAtCol,
+      exercisesEditedAtCol: exercisesEditedAtCol,
+      weightEditedAtCol: weightEditedAtCol,
       matchedHealthSessionCol: matchedHealthSessionCol
     };
   }
@@ -107,7 +119,8 @@ function readRows() {
     const weightSyncedAt = weightSyncedAtCol ? row[weightSyncedAtCol - 1] : '';
     const healthIds = healthIdsCol ? parseHealthIds_(row[healthIdsCol - 1]) : [];
     const firstEditedAt = firstEditedAtCol ? toDate_(row[firstEditedAtCol - 1]) : null;
-    const lastEditedAt = lastEditedAtCol ? toDate_(row[lastEditedAtCol - 1]) : null;
+    const exercisesEditedAt = exercisesEditedAtCol ? toDate_(row[exercisesEditedAtCol - 1]) : null;
+    const weightEditedAt = weightEditedAtCol ? toDate_(row[weightEditedAtCol - 1]) : null;
     const matchedHealthSession = matchedHealthSessionCol
       ? String(row[matchedHealthSessionCol - 1] || '').trim()
       : '';
@@ -120,7 +133,8 @@ function readRows() {
       weightSyncedAt: weightSyncedAt ? String(weightSyncedAt).trim() : '',
       healthIds: healthIds,
       firstEditedAt: firstEditedAt,
-      lastEditedAt: lastEditedAt,
+      exercisesEditedAt: exercisesEditedAt,
+      weightEditedAt: weightEditedAt,
       matchedHealthSession: matchedHealthSession
     });
   });
@@ -131,7 +145,8 @@ function readRows() {
     weightCol: weightCol,
     healthIdsCol: healthIdsCol,
     firstEditedAtCol: firstEditedAtCol,
-    lastEditedAtCol: lastEditedAtCol,
+    exercisesEditedAtCol: exercisesEditedAtCol,
+    weightEditedAtCol: weightEditedAtCol,
     matchedHealthSessionCol: matchedHealthSessionCol
   };
 }
@@ -210,7 +225,8 @@ function onEditMarkDirty(e) {
   if (!exerciseSyncedAtCol) return;
   const weightSyncedAtCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER] || null;
   const firstEditedAtCol = map[FIRST_EDITED_AT_COLUMN_HEADER] || null;
-  const lastEditedAtCol = map[LAST_EDITED_AT_COLUMN_HEADER] || null;
+  const exercisesEditedAtCol = map[EXERCISES_EDITED_AT_COLUMN_HEADER] || null;
+  const weightEditedAtCol = map[WEIGHT_EDITED_AT_COLUMN_HEADER] || null;
   const dateCol = map[DATE_COLUMN_HEADER] || null;
   const weightCol = map[WEIGHT_COLUMN_HEADER] || null;
 
@@ -249,11 +265,20 @@ function onEditMarkDirty(e) {
   // No lock: these are single-cell writes that race safely with an in-flight
   // sync. syncOneRow_'s per-phase concurrent-edit guards re-check at stamp
   // time and defer if our update landed during processing.
+  //
+  // firstEditedAt is sticky-written for any edit (sets if blank, otherwise
+  // leaves it alone). exercisesEditedAt is overwritten only on exercise-relevant
+  // edits — it drives the exercise interval's endTime, so advancing it on
+  // weight-only edits would drag the exercise endTime forward.
+  // weightEditedAt is overwritten on every weight-relevant edit — it
+  // drives the weight sample time and the weight phase's concurrent-edit
+  // guard, so it should reflect the latest weight cell change.
   writeEditMarkers_(sheet, firstRow, lastRow,
     exerciseRelevant ? exerciseSyncedAtCol : null,
     weightRelevant ? weightSyncedAtCol : null,
-    exerciseRelevant ? firstEditedAtCol : null,
-    exerciseRelevant ? lastEditedAtCol : null);
+    firstEditedAtCol,
+    exerciseRelevant ? exercisesEditedAtCol : null,
+    weightRelevant ? weightEditedAtCol : null);
 }
 
 function clearStampColumn_(sheet, firstRow, numRows, col) {
@@ -268,7 +293,7 @@ function clearStampColumn_(sheet, firstRow, numRows, col) {
   if (needsClear) range.setValues(blanks);
 }
 
-function writeEditMarkers_(sheet, firstRow, lastRow, exerciseSyncedAtCol, weightSyncedAtCol, firstEditedAtCol, lastEditedAtCol) {
+function writeEditMarkers_(sheet, firstRow, lastRow, exerciseSyncedAtCol, weightSyncedAtCol, firstEditedAtCol, exercisesEditedAtCol, weightEditedAtCol) {
   const numRows = lastRow - firstRow + 1;
   const nowIso = new Date().toISOString();
 
@@ -291,10 +316,17 @@ function writeEditMarkers_(sheet, firstRow, lastRow, exerciseSyncedAtCol, weight
     if (needsWrite) firstRange.setValues(writes);
   }
 
-  if (lastEditedAtCol) {
-    const lastRange = sheet.getRange(firstRow, lastEditedAtCol, numRows, 1);
+  if (exercisesEditedAtCol) {
+    const lastRange = sheet.getRange(firstRow, exercisesEditedAtCol, numRows, 1);
     const stamps = [];
     for (let i = 0; i < numRows; i++) stamps.push([nowIso]);
     lastRange.setValues(stamps);
+  }
+
+  if (weightEditedAtCol) {
+    const weightRange = sheet.getRange(firstRow, weightEditedAtCol, numRows, 1);
+    const stamps = [];
+    for (let i = 0; i < numRows; i++) stamps.push([nowIso]);
+    weightRange.setValues(stamps);
   }
 }

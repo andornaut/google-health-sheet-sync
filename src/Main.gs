@@ -1,3 +1,8 @@
+function setup() {
+  ensureManagedColumns();
+  installTriggers();
+}
+
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Sync')
@@ -38,11 +43,6 @@ function revokeHealthApi() {
   toast_('Google Health authorization cleared. Use "Authorize Health API" to grant again.', 10);
 }
 
-function setup() {
-  ensureManagedColumns();
-  installTriggers();
-}
-
 function installTriggers() {
   // 'backstop' is no longer installed but kept in the cleanup set so the
   // hourly trigger an earlier setup() installed gets removed on next run.
@@ -74,11 +74,11 @@ function flushIfPending() {
   syncDirtyRows(false, 0);
 }
 
-// "Run now" is an explicit manual action: bypasses the exercise quiesce
-// window so the user sees results immediately. Weight already syncs without
-// quiesce, so this only changes behavior for exercise content. If they keep
-// editing afterward, the row goes dirty again and the next sync replaces the
-// Health datapoint(s).
+// "Run now" is an explicit manual action: bypasses the exercise edit-burst
+// debounce so the user sees results immediately. Weight phase has no
+// debounce, so this only changes behavior for exercise content. If they
+// keep editing afterward, the row goes dirty again and the next sync
+// replaces the Health datapoint(s).
 function runSyncNow() {
   runSyncAndToast_('Synced');
 }
@@ -166,11 +166,17 @@ function toastSyncResult_(result, verb) {
 
 function humanizeMs_(ms) {
   if (ms < 0) ms = 0;
+  if (ms < 1000) return ms + 'ms';
   const totalSec = Math.round(ms / 1000);
   if (totalSec < 60) return totalSec + 's';
   const min = Math.floor(totalSec / 60);
   const sec = totalSec % 60;
   return sec === 0 ? min + 'm' : min + 'm ' + sec + 's';
+}
+
+function humanizeDate_(date) {
+  if (!date) return '<none>';
+  return Utilities.formatDate(date, getTz_(), 'yyyy-MM-dd HH:mm:ss');
 }
 
 function syncDirtyRows(bypassQuiesce, lockWaitMs) {
@@ -194,7 +200,7 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
     // re-set the flag and be picked up by the next poll without ambiguity.
     props.deleteProperty(PENDING_DIRTY_KEY);
 
-    const { rows, exerciseSyncedAtCol, weightSyncedAtCol, weightCol, healthIdsCol, lastEditedAtCol, matchedHealthSessionCol } = readRows();
+    const { rows, exerciseSyncedAtCol, weightSyncedAtCol, weightCol, healthIdsCol, exercisesEditedAtCol, weightEditedAtCol, matchedHealthSessionCol } = readRows();
     if (!exerciseSyncedAtCol || !weightSyncedAtCol || !healthIdsCol) {
       console.error('syncDirtyRows: managed columns missing; run setup().');
       errors = 1;
@@ -208,10 +214,11 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
     const ordinalByRowNum = buildOrdinalMap_(rows);
 
     // Per-row phase readiness:
-    //   - Weight phase: always ready when the row is weight-dirty (no quiesce).
-    //   - Exercise phase: ready iff bypassed, or the row has no edit timestamp,
-    //     or quiesce time has elapsed since the last edit. Rows with no
-    //     exercise content also pass instantly since there's nothing to time.
+    //   - Weight phase: always ready when the row is weight-dirty (no debounce).
+    //   - Exercise phase: ready iff bypassed, or the row has no Exercises
+    //     Edited At timestamp, or the debounce window has elapsed since the
+    //     last exercise edit. Rows with no exercise content also pass
+    //     instantly since there's nothing to time.
     const now = Date.now();
     const ready = [];
     let maxRemainingMs = 0;
@@ -220,10 +227,10 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
       let exerciseReady = false;
       let remainingMs = 0;
       if (!r.exerciseSyncedAt) {
-        if (bypassQuiesce || !r.lastEditedAt || r.exercises.length === 0) {
+        if (bypassQuiesce || !r.exercisesEditedAt || r.exercises.length === 0) {
           exerciseReady = true;
         } else {
-          const sinceMs = now - r.lastEditedAt.getTime();
+          const sinceMs = now - r.exercisesEditedAt.getTime();
           exerciseReady = sinceMs >= LAST_EDIT_QUIESCE_MS;
           remainingMs = LAST_EDIT_QUIESCE_MS - sinceMs;
         }
@@ -270,7 +277,8 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
       weightSyncedAtCol: weightSyncedAtCol,
       weightCol: weightCol,
       healthIdsCol: healthIdsCol,
-      lastEditedAtCol: lastEditedAtCol,
+      exercisesEditedAtCol: exercisesEditedAtCol,
+      weightEditedAtCol: weightEditedAtCol,
       matchedHealthSessionCol: matchedHealthSessionCol
     };
     for (let i = 0; i < ready.length; i++) {
@@ -294,61 +302,79 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
 }
 
 // Returns rowNum -> foreign Strength Training session for ready rows whose
-// lifting content is already covered by a non-sync-created Health datapoint.
-// Two-phase per date: time-range overlap (rows with edit timestamps) then
-// 1:1 ordinal pairing (rows without). Candidates already claimed by other
-// rows (foreign-matched or script-created) are excluded first so a session
-// this script wrote can't be re-matched and incremental syncs can't
-// double-claim.
+// lifting content is already covered by a foreign (non-sync-created) Health
+// datapoint. Two-phase per date: time-range overlap (rows with edit
+// timestamps) then 1:1 ordinal pairing (rows without).
+//
+// Before matching, candidates the script already accounts for are excluded:
+//   - sync-created: name appears in some row's Created Health IDs (could be
+//     the row itself on a re-sync, or another row).
+//   - matched-elsewhere: name is a non-ready row's Matched Health Session.
+// This prevents a sync-created session from re-matching to itself and
+// prevents two sheet rows from double-claiming the same foreign session
+// across incremental runs.
 //
 // Ordering note: this runs once near the top of syncDirtyRows, before the
 // per-row syncOneRow_ loop. The `allRows` snapshot comes from readRows() at
-// the start of the pass, and `listForeignStrengthOnDate` calls the API
-// before any row in this pass has had its create issued. So same-pass
-// freshly-created datapoints are not yet visible to the API and not yet in
-// any row's Created Health IDs — both gaps cancel out and there's no
-// self-match risk.
+// the start of the pass, and `listStrengthOnDate` calls the API before any
+// row in this pass has had its create issued. So same-pass freshly-created
+// datapoints are not yet visible to the API and not yet in any row's
+// Created Health IDs — both gaps cancel out and there's no self-match risk.
 function resolveForeignMatches_(allRows, readyRows) {
   const plan = {};
   const readyRowNums = {};
   readyRows.forEach(r => { readyRowNums[r.rowNum] = true; });
-  const claimedByOthers = {};
-  const claim_ = (date, name) => {
+  const accountedFor = {};
+  const markAccountedFor_ = (date, name, reason) => {
     const key = ymd(date);
-    (claimedByOthers[key] = claimedByOthers[key] || {})[name] = true;
+    (accountedFor[key] = accountedFor[key] || {})[name] = reason;
   };
   allRows.forEach(r => {
-    if (!readyRowNums[r.rowNum] && r.matchedHealthSession) claim_(r.date, r.matchedHealthSession);
-    splitHealthIdsByType_(r.healthIds).exercise.forEach(name => claim_(r.date, name));
+    if (!readyRowNums[r.rowNum] && r.matchedHealthSession) {
+      markAccountedFor_(r.date, r.matchedHealthSession, 'matched-elsewhere');
+    }
+    splitHealthIdsByType_(r.healthIds).exercise.forEach(name => {
+      markAccountedFor_(r.date, name, 'sync-created');
+    });
   });
   const byDate = groupRowsByDate_(readyRows.filter(r => r.exercises.length > 0));
   Object.keys(byDate).forEach(dateKey => {
     const dayRows = byDate[dateKey];
     let candidates;
     try {
-      candidates = listForeignStrengthOnDate(dayRows[0].date);
+      candidates = listStrengthOnDate(dayRows[0].date);
     } catch (err) {
       console.warn('resolveForeignMatches_: list failed for ' + dateKey + ': ' + err);
       return;
     }
-    const claimed = claimedByOthers[dateKey];
-    if (claimed) {
+    const reasons = accountedFor[dateKey];
+    if (reasons) {
       const before = candidates.length;
-      candidates = candidates.filter(c => !claimed[c.name]);
+      let syncCreatedCount = 0;
+      let matchedElsewhereCount = 0;
+      candidates = candidates.filter(c => {
+        const reason = reasons[c.name];
+        if (!reason) return true;
+        if (reason === 'sync-created') syncCreatedCount++;
+        else matchedElsewhereCount++;
+        return false;
+      });
       const removed = before - candidates.length;
       if (removed > 0) {
         console.info('resolveForeignMatches_: ' + dateKey + ' excluded ' + removed
-          + ' candidate(s) already claimed by other sheet row(s)');
+          + ' candidate(s) already accounted for ('
+          + syncCreatedCount + ' sync-created, '
+          + matchedElsewhereCount + ' matched to another row)');
       }
     }
     if (candidates.length === 0) return;
 
-    const timeRangeRows = dayRows.filter(r => r.firstEditedAt && r.lastEditedAt);
-    const ordinalRows = dayRows.filter(r => !(r.firstEditedAt && r.lastEditedAt));
+    const timeRangeRows = dayRows.filter(r => r.firstEditedAt && r.exercisesEditedAt);
+    const ordinalRows = dayRows.filter(r => !(r.firstEditedAt && r.exercisesEditedAt));
 
     timeRangeRows.forEach(r => {
       const windowStart = r.firstEditedAt.getTime() - FOREIGN_MATCH_BUFFER_MS;
-      const windowEnd = r.lastEditedAt.getTime() + FOREIGN_MATCH_BUFFER_MS;
+      const windowEnd = r.exercisesEditedAt.getTime() + FOREIGN_MATCH_BUFFER_MS;
       let bestIdx = -1;
       let bestOverlap = 0;
       candidates.forEach((c, i) => {
@@ -361,7 +387,7 @@ function resolveForeignMatches_(allRows, readyRows) {
       if (bestIdx >= 0) {
         plan[r.rowNum] = candidates[bestIdx];
         console.info('resolveForeignMatches_: ' + dateKey + ' row ' + r.rowNum
-          + ' time-range matches ' + candidates[bestIdx].name + ' (overlap=' + bestOverlap + 'ms)');
+          + ' time-range matches ' + candidates[bestIdx].name + ' (overlap=' + humanizeMs_(bestOverlap) + ')');
         candidates.splice(bestIdx, 1);
       }
     });
@@ -406,35 +432,48 @@ function buildOrdinalMap_(rows) {
   return ordinalByRowNum;
 }
 
-// Resolve the exercise interval (and weight sampleTime) for a row.
-// Prefers edit-derived timing when First/Last Edited At are both present.
-// Falls back to synthetic noon-ordinal otherwise.
+// Resolve the exercise interval and weight sample time independently. The
+// exercise interval is a span (needs both First Edited At + Exercises
+// Edited At); the weight is a point sample (uses Weight Edited At alone).
+// Weight falls back to First Edited At for rows synced under the pre-split
+// schema (legacy "Last Edited At" was renamed in place; Weight Edited At
+// is empty until the user next edits the weight cell). Both phases fall
+// back to synthetic noon-ordinal when their respective timestamps are
+// absent.
 function resolveRowTiming_(row, ordinal) {
-  if (row.firstEditedAt && row.lastEditedAt) {
+  const tz = getTz_();
+  let exercise;
+  if (row.firstEditedAt && row.exercisesEditedAt) {
     const startMs = row.firstEditedAt.getTime();
-    const rawDuration = row.lastEditedAt.getTime() - startMs;
+    const rawDuration = row.exercisesEditedAt.getTime() - startMs;
     const clampedDuration = Math.min(
       Math.max(rawDuration, MIN_EXERCISE_DURATION_MS),
       MAX_EXERCISE_DURATION_MS
     );
     const endMs = startMs + clampedDuration;
-    const tz = getTz_();
-    const startOffset = getTzOffsetSeconds_(tz, row.firstEditedAt);
-    const endOffset = getTzOffsetSeconds_(tz, new Date(endMs));
-    return {
-      source: 'edit',
-      exercise: {
-        startUtcMs: startMs,
-        startOffsetSeconds: startOffset,
-        endUtcMs: endMs,
-        endOffsetSeconds: endOffset
-      },
-      weight: { utcMs: startMs, offsetSeconds: startOffset }
+    exercise = {
+      startUtcMs: startMs,
+      startOffsetSeconds: getTzOffsetSeconds_(tz, row.firstEditedAt),
+      endUtcMs: endMs,
+      endOffsetSeconds: getTzOffsetSeconds_(tz, new Date(endMs))
     };
+  } else {
+    exercise = syntheticExerciseInterval_(row.date, ordinal);
   }
-  const ex = syntheticExerciseInterval_(row.date, ordinal);
-  const wt = syntheticWeightSample_(row.date);
-  return { source: 'synthetic', exercise: ex, weight: wt };
+  let weight;
+  const weightSampleAt = row.weightEditedAt || row.firstEditedAt || null;
+  if (weightSampleAt) {
+    weight = {
+      utcMs: weightSampleAt.getTime(),
+      offsetSeconds: getTzOffsetSeconds_(tz, weightSampleAt)
+    };
+  } else {
+    weight = syntheticWeightSample_(row.date);
+  }
+  // Single source label for the caller's log line. 'edit' means at least
+  // the weight is edit-derived; 'synthetic' means both phases fall back.
+  const source = (row.firstEditedAt || row.weightEditedAt) ? 'edit' : 'synthetic';
+  return { source: source, exercise: exercise, weight: weight };
 }
 
 // Sync a single row in two independent phases (weight, exercise). Either or
@@ -555,33 +594,36 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
     writeMatchedHealthSession(row.rowNum, cols.matchedHealthSessionCol, match ? match.name : '');
   }
 
-  // Concurrent-edit guards, phase-isolated. onEditMarkDirty only advances
-  // Last Edited At on exercise-relevant edits, so the exercise phase uses
-  // it as its "row changed during sync" signal. The weight phase compares
-  // the bodyweight value we synced against the cell's current value — a
-  // weight edit during sync doesn't touch Last Edited At, so we'd miss it
-  // otherwise. The two phases are independent: a concurrent weight edit
+  // Concurrent-edit guards, phase-isolated. Each phase compares its own
+  // edit-time column (Exercises Edited At / Weight Edited At) against the
+  // value captured at the start of the pass. onEditMarkDirty advances them
+  // only on the matching column class, so this catches edits to the right
+  // phase regardless of whether the cell's value actually changed (covers
+  // the "edit value, edit back" case that a value-comparison guard would
+  // miss). The two phases are independent: a concurrent weight edit
   // doesn't defer the exercise stamp and vice versa.
   let exerciseConcurrentEdit = false;
-  if (cols.lastEditedAtCol) {
-    const currentLastEdit = toDate_(getSheet_().getRange(row.rowNum, cols.lastEditedAtCol).getValue());
-    const previousMs = row.lastEditedAt ? row.lastEditedAt.getTime() : null;
-    const currentMs = currentLastEdit ? currentLastEdit.getTime() : null;
+  if (cols.exercisesEditedAtCol) {
+    const currentEdit = toDate_(getSheet_().getRange(row.rowNum, cols.exercisesEditedAtCol).getValue());
+    const previousMs = row.exercisesEditedAt ? row.exercisesEditedAt.getTime() : null;
+    const currentMs = currentEdit ? currentEdit.getTime() : null;
     if (currentMs !== previousMs) {
-      const prevLabel = row.lastEditedAt ? row.lastEditedAt.toISOString() : '<none>';
-      const currLabel = currentLastEdit ? currentLastEdit.toISOString() : '<cleared>';
-      console.info(tag + ': concurrent exercise edit detected (Last Edited At '
-        + prevLabel + ' -> ' + currLabel + '); deferring Exercise Synced At stamp.');
+      console.info(tag + ': concurrent exercise edit detected (Exercises Edited At '
+        + humanizeDate_(row.exercisesEditedAt) + ' -> '
+        + (currentEdit ? humanizeDate_(currentEdit) : '<cleared>')
+        + '); deferring Exercise Synced At stamp.');
       exerciseConcurrentEdit = true;
     }
   }
   let weightConcurrentEdit = false;
-  if (weightAttempted && cols.weightCol) {
-    const currentBodyweight = parseBodyweight(getSheet_().getRange(row.rowNum, cols.weightCol).getValue());
-    if (currentBodyweight !== row.bodyweight) {
-      console.info(tag + ': concurrent weight edit detected (bodyweight '
-        + (row.bodyweight === null ? '<none>' : row.bodyweight) + ' -> '
-        + (currentBodyweight === null ? '<cleared>' : currentBodyweight)
+  if (weightAttempted && cols.weightEditedAtCol) {
+    const currentEdit = toDate_(getSheet_().getRange(row.rowNum, cols.weightEditedAtCol).getValue());
+    const previousMs = row.weightEditedAt ? row.weightEditedAt.getTime() : null;
+    const currentMs = currentEdit ? currentEdit.getTime() : null;
+    if (currentMs !== previousMs) {
+      console.info(tag + ': concurrent weight edit detected (Weight Edited At '
+        + humanizeDate_(row.weightEditedAt) + ' -> '
+        + (currentEdit ? humanizeDate_(currentEdit) : '<cleared>')
         + '); deferring Weight Synced At stamp.');
       weightConcurrentEdit = true;
     }
