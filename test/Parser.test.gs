@@ -590,6 +590,31 @@ function runParserTests() {
     });
   });
 
+  t('resolveForeignMatches_ time-range window is clamped to MAX_EXERCISE_DURATION_MS', () => {
+    // Row's firstEditedAt is 9am on row.date; exercisesEditedAt drifted 5
+    // days forward to 9am the next workout week. Without clamping, the
+    // window would balloon to 5 days and incorrectly catch a candidate at
+    // 5pm on row.date. With clamping (2h + 30min buffer = 12:30pm cutoff),
+    // that candidate is excluded.
+    const row = fRow_({
+      rowNum: 10,
+      firstEditedAt: new Date(Date.UTC(2026, 0, 15, 14, 0, 0)),  // 9am EST Jan 15
+      exercisesEditedAt: new Date(Date.UTC(2026, 0, 20, 14, 0, 0)) // 9am EST Jan 20
+    });
+    // Candidate at 5pm-6pm EST Jan 15 — outside the clamped window but
+    // inside the unclamped one.
+    const cand = fCand_('foreign/late',
+      Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
+    withStubbedList(() => [cand], () => {
+      const plan = resolveForeignMatches_([row], [row]);
+      // No time-range match (clamped window doesn't reach 5pm). Falls into
+      // ordinal pairing instead — and since the row IS on-date for
+      // firstEditedAt, it's in timeRangeRows, not ordinalRows. So no match.
+      // (If clamping were absent, plan[10] would have been 'foreign/late'.)
+      eq(plan[10], undefined);
+    });
+  });
+
   t('resolveForeignMatches_ time-range picks the best-overlap candidate when several exist', () => {
     // Row window 4:30pm-6:30pm EST (5pm-6pm edit + 30min buffer each side).
     // candA: 7am-8am EST, no overlap. candB: 5pm-6pm EST, full overlap.
