@@ -49,10 +49,15 @@ const LOCK_WAIT_MS = 30 * 1000;
 // Remaining dirty rows are deferred to the next pass via PENDING_DIRTY_KEY.
 const MAX_ROWS_PER_SYNC = 75;
 
-// Script-properties key. Set to '1' whenever a non-managed edit happens or a
-// force-resync path clears the synced-at stamps; cleared by syncDirtyRows
-// when it finds no dirty rows. flushIfPending short-circuits when this is
-// unset so most poll ticks are just a property read.
+// Script-properties key. Stores a generation marker (Date.now() string)
+// rather than a boolean: every dirty-marking call writes a fresh value, so
+// syncDirtyRows can detect concurrent edits during a pass by comparing the
+// value at end-of-pass with the value at start-of-pass. The flag is cleared
+// only at end-of-pass when (a) no work remains AND (b) the generation has
+// not advanced. This avoids the early-clear / hard-kill orphan window:
+// an Apps Script 6-minute timeout (or any uncaught throw) before the finally
+// block runs leaves the flag set, so the next flushIfPending retries the
+// remaining dirty rows instead of stalling until a new edit.
 const PENDING_DIRTY_KEY = 'pendingDirty';
 
 // Synthetic timing is the fallback when a row has no First Edited At /
