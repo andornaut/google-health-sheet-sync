@@ -9,7 +9,7 @@
     "login": "clasp login",
     "push": "clasp push",
     "pull": "clasp pull",
-    "open": "clasp open",
+    "open": "clasp open-script",
     "test": "node test/run.js",
     "lint": "markdownlint README.md AGENTS.md"
   },

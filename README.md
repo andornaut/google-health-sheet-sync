@@ -120,6 +120,20 @@ The **Sync** menu also exposes:
 
 ---
 
+## Google Cloud caveats
+
+The Google Health API uses **restricted** OAuth scopes. Some gotchas worth knowing before you commit to this setup:
+
+- **7-day refresh token expiry in Testing mode.** With your project's OAuth consent screen set to *Testing*, refresh tokens for restricted scopes expire after 7 days regardless of activity. You'll need to re-run **Sync ▸ Authorize Health API** about once a week. There is no Google-supported way to avoid this for personal Gmail accounts on Testing.
+- **"In production" without verification 500s the consent flow.** Publishing the consent screen to *In production* without completing verification causes the Google sign-in consent page itself to return `Error 500. That's an error.` Stay on Testing unless you've gone through verification.
+- **Verification for restricted scopes is impractical for personal use.** Google requires brand verification, scope justification, demo video, and a third-party **CASA security assessment** (~$500–$3000, 6–12 weeks, **annual re-cert required**). Total realistic timeline 2–4 months. Not viable for a one-user personal sync script.
+- **Cloud Identity Free is the only no-fee escape hatch — if you can still sign up.** A custom domain (`you@yourdomain.com`) under [Cloud Identity Free](https://workspace.google.com/signup/gcpfree/welcome) lets you set the consent screen's *User type* to **Internal**, which removes the 7-day expiry forever. Google has been actively hiding the free signup flow; as of 2026 it often redirects to paid Workspace. If self-serve signup fails for you, the only alternatives are paid Workspace Business Starter (~$7/mo) or living with the weekly re-auth.
+- **The unsuffixed `googlehealth.activity_and_fitness` and `googlehealth.health_metrics_and_measurements` scopes are legacy.** They were Google's pre-migration combined read+write scopes, retired on 2026-05-26: *"Replacing read/write scopes with .writeonly. Developers must now explicitly specify read and write permissions"* (per the [Google Health release notes](https://developers.google.com/health/release-notes)). The data plane returns `ACCESS_TOKEN_SCOPE_INSUFFICIENT` if you grant only the unsuffixed scope, and no v4 method lists it in its `scopes` array. The consent screen scope picker still shows their stale pre-migration descriptions, which is misleading. Use the `.readonly` + `.writeonly` suffix variants only.
+- **Foreign datapoints cannot be modified by any client.** The Health API enforces ownership on every write path — DELETE returns `403 DATA_POINT_NOT_OWNED_BY_CLIENT` and PATCH returns `400 DATA_POINT_NOT_OWNED_BY_CLIENT` ("Updating data points sourced from other API clients is forbidden"). PUT/POST-to-resource don't exist (404 at Google's frontend). There is no client-side workaround. For workouts your watch/Fitbit logged independently of this script, attach notes in the sheet only — the script's foreign-match logic records the foreign session's resource name in `Matched Health Session` so you can still cross-reference.
+- **No newer API version exists.** Only `health:v4` is published in Google's API directory. `v1`/`v1beta`/`v5` all 404; this is the latest and only version.
+
+---
+
 ## Configuration & Tuning
 
 Edit [Config.gs](src/Config.gs) to customize:
