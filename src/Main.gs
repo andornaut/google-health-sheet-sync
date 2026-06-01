@@ -33,6 +33,7 @@ function authorizeHealthApi() {
     return;
   }
   const url = service.getAuthorizationUrl();
+  console.log('Authorize Google Health API: ' + url);
   const html = '<p>Click the link below, sign in with the Google account that owns your Google Health data, and grant the requested scopes.</p>'
     + '<p><a href="' + url + '" target="_blank" rel="noopener">Authorize Google Health API</a></p>'
     + '<p>After the success page appears, you can close that tab and return here.</p>';
