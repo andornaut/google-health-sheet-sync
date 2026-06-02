@@ -7,12 +7,16 @@ const WEIGHT_COLUMN_HEADER = 'Weight';
 const EXERCISE_SYNCED_AT_COLUMN_HEADER = 'Exercise Synced At';
 const WEIGHT_SYNCED_AT_COLUMN_HEADER = 'Weight Synced At';
 const HEALTH_IDS_COLUMN_HEADER = 'Created Health IDs';
-const FIRST_EDITED_AT_COLUMN_HEADER = 'First Edited At';
-// Last edit time for exercise-relevant columns (Date or exercise). Drives
-// the exercise interval's endTime and the exercise phase's concurrent-edit
-// guard. Weight-only edits do NOT advance it — otherwise a bodyweight
-// change would drag the exercise endTime forward.
-const EXERCISES_EDITED_AT_COLUMN_HEADER = 'Exercises Edited At';
+// First exercise-relevant edit (sticky). Drives the exercise interval's
+// startTime. Only set by exercise-column edits — a weight or Date edit must
+// not seed it, otherwise the exercise interval would start before any
+// exercise content was typed.
+const EXERCISE_FIRST_EDITED_AT_COLUMN_HEADER = 'Exercise First Edited At';
+// Last edit time for exercise-relevant columns. Drives the exercise
+// interval's endTime and the exercise phase's concurrent-edit guard.
+// Weight-only edits do NOT advance it — otherwise a bodyweight change
+// would drag the exercise endTime forward.
+const EXERCISES_LAST_EDITED_AT_COLUMN_HEADER = 'Exercises Last Edited At';
 // Last edit time for the Weight column. Drives the weight sample time and
 // the weight phase's concurrent-edit guard. Advances on every weight edit
 // so weight re-edits update the sample time accordingly.
@@ -26,8 +30,8 @@ const MANAGED_COLUMN_HEADERS = [
   EXERCISE_SYNCED_AT_COLUMN_HEADER,
   WEIGHT_SYNCED_AT_COLUMN_HEADER,
   HEALTH_IDS_COLUMN_HEADER,
-  FIRST_EDITED_AT_COLUMN_HEADER,
-  EXERCISES_EDITED_AT_COLUMN_HEADER,
+  EXERCISE_FIRST_EDITED_AT_COLUMN_HEADER,
+  EXERCISES_LAST_EDITED_AT_COLUMN_HEADER,
   WEIGHT_EDITED_AT_COLUMN_HEADER,
   MATCHED_HEALTH_SESSION_COLUMN_HEADER
 ];
@@ -56,9 +60,9 @@ const MAX_ROWS_PER_SYNC = 75;
 // remaining dirty rows instead of stalling until a new edit.
 const PENDING_DIRTY_KEY = 'pendingDirty';
 
-// Synthetic timing is the fallback when a row has no First Edited At /
-// Exercises Edited At / Weight Edited At
-// timestamps (e.g. rows imported in bulk). Each row on a given date gets
+// Synthetic timing is the fallback when a row has no Exercise First Edited
+// At / Exercises Last Edited At / Weight Edited At timestamps (e.g. rows
+// imported in bulk). Each row on a given date gets
 // startHour = SYNTHETIC_START_HOUR + ordinal, endHour = startHour +
 // SYNTHETIC_DURATION_HOURS, so the second strength row on the same date
 // starts an hour after the first, and so on.
@@ -74,14 +78,14 @@ const SYNTHETIC_DURATION_HOURS = 1;
 const MIN_EXERCISE_DURATION_MS = 5 * 60 * 1000;
 const MAX_EXERCISE_DURATION_MS = 120 * 60 * 1000;
 
-// Per-row "still typing" guard. A dirty row whose Exercises Edited At is
-// within this window is skipped on the current poll and picked up by the
+// Per-row "still typing" guard. A dirty row whose Exercises Last Edited At
+// is within this window is skipped on the current poll and picked up by the
 // next one. Without it, a poll firing mid-edit would push out a half-typed
 // row. Since every sync delete+recreates with the row's current state,
 // syncing more often than necessary just churns the Health datapoint
 // without changing the eventual state — the guard avoids that churn during
-// an edit burst. Rows with no Exercises Edited At bypass the wait and sync
-// immediately. Weight phase has no debounce.
+// an edit burst. Rows with no Exercises Last Edited At bypass the wait and
+// sync immediately. Weight phase has no debounce.
 const LAST_EDIT_QUIESCE_MS = 60 * 1000;
 
 // When matching foreign Google Health activities (ones this script didn't
