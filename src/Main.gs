@@ -771,7 +771,7 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
   // would miss). The two phases are independent: a concurrent weight edit
   // doesn't defer the exercise stamp and vice versa.
   let exerciseConcurrentEdit = false;
-  if (cols.exercisesLastEditedAtCol) {
+  if (exerciseReady && cols.exercisesLastEditedAtCol) {
     const currentEdit = toDate_(getSheet_().getRange(row.rowNum, cols.exercisesLastEditedAtCol).getValue());
     const previousMs = row.exercisesLastEditedAt ? row.exercisesLastEditedAt.getTime() : null;
     const currentMs = currentEdit ? currentEdit.getTime() : null;
