@@ -22,6 +22,12 @@ function httpJson_(method, url, payload) {
   };
   if (payload !== undefined) options.payload = JSON.stringify(payload);
 
+  // Retry caveat: a create POST that succeeded server-side but timed out
+  // client-side (UrlFetchApp.fetch throws -> transient -> retry) will be
+  // re-issued, creating a second datapoint whose name we record while the
+  // first is orphaned in Health. GET/batchDelete/PATCH are idempotent so
+  // they retry safely. The Health API exposes no idempotency key, so this
+  // is an accepted (rare) tradeoff rather than something we can guard.
   const maxAttempts = 4;
   let lastErr;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -260,7 +266,7 @@ function parseOffsetSeconds_(raw) {
 
 // Returns the created datapoint's resource name. Accepts an explicit interval
 // in UTC ms plus the offsets that applied at each endpoint.
-function createExerciseAt(startUtcMs, startOffsetSeconds, endUtcMs, endOffsetSeconds, notes, displayName) {
+function createExerciseAt(startUtcMs, startOffsetSeconds, endUtcMs, endOffsetSeconds, notes) {
   const url = HEALTH_API_BASE + '/users/me/dataTypes/exercise/dataPoints';
   const durationSec = Math.max(0, Math.round((endUtcMs - startUtcMs) / 1000));
   const payload = {
@@ -268,7 +274,7 @@ function createExerciseAt(startUtcMs, startOffsetSeconds, endUtcMs, endOffsetSec
     exercise: {
       interval: buildIntervalFromUtc_(startUtcMs, startOffsetSeconds, endUtcMs, endOffsetSeconds),
       exerciseType: 'STRENGTH_TRAINING',
-      displayName: displayName || 'Strength Training',
+      displayName: 'Strength Training',
       notes: notes,
       activeDuration: durationSec + 's'
     }
