@@ -315,7 +315,7 @@ function runParserTests() {
   t('resolveRowTiming_ edit source preserves interval within bounds', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
     const last = new Date(Date.UTC(2026, 0, 15, 18, 0, 0));
-    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: last, date: JAN_15_NOON_UTC }, 0, null);
+    const r = resolveRowTiming_({ exerciseFirstEditedAt: first, exercisesLastEditedAt: last, weightEditedAt: first, date: JAN_15_NOON_UTC }, 0, null);
     eq(r.exerciseSource, 'edit');
     eq(r.weightSource, 'edit');
     eq(r.exercise.startUtcMs, first.getTime());
@@ -327,42 +327,39 @@ function runParserTests() {
   t('resolveRowTiming_ edit source clamps too-short duration to MIN (5 min)', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
     const last = new Date(first.getTime() + 60 * 1000);
-    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: last, date: JAN_15_NOON_UTC }, 0, null);
+    const r = resolveRowTiming_({ exerciseFirstEditedAt: first, exercisesLastEditedAt: last, date: JAN_15_NOON_UTC }, 0, null);
     eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 5 * 60 * 1000);
   });
   t('resolveRowTiming_ edit source clamps too-long duration to MAX (120 min)', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
     const last = new Date(first.getTime() + 5 * 60 * 60 * 1000);
-    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: last, date: JAN_15_NOON_UTC }, 0, null);
+    const r = resolveRowTiming_({ exerciseFirstEditedAt: first, exercisesLastEditedAt: last, date: JAN_15_NOON_UTC }, 0, null);
     eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 120 * 60 * 1000);
   });
   t('resolveRowTiming_ synthetic source when no edit timestamps', () => {
-    const r = resolveRowTiming_({ firstEditedAt: null, exercisesEditedAt: null, date: JAN_15_NOON_UTC }, 0, null);
+    const r = resolveRowTiming_({ exerciseFirstEditedAt: null, exercisesLastEditedAt: null, date: JAN_15_NOON_UTC }, 0, null);
     eq(r.exerciseSource, 'synthetic');
     eq(r.weightSource, 'synthetic');
     eq(r.exercise.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
     eq(r.exercise.endUtcMs, Date.UTC(2026, 0, 15, 18, 0, 0));
   });
-  t('resolveRowTiming_ weight uses firstEditedAt as legacy fallback when weightEditedAt is missing; exercise falls back to synthetic', () => {
-    // 3pm EST = 20:00 UTC; distinct from synthetic-noon EST = 17:00 UTC so we
-    // can verify which path each phase took.
+  t('resolveRowTiming_ weight falls back to synthetic when weightEditedAt is missing', () => {
+    // Exercise-only row (e.g. set bodyweight separately or not at all).
+    // exerciseFirstEditedAt no longer feeds weight, so without weightEditedAt
+    // the weight phase falls through to synthetic noon on row.date.
     const first = new Date(Date.UTC(2026, 0, 15, 20, 0, 0));
-    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: null, weightEditedAt: null, date: JAN_15_NOON_UTC }, 0, null);
-    eq(r.exerciseSource, 'synthetic');
-    eq(r.weightSource, 'edit');
-    eq(r.exercise.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
-    eq(r.exercise.endUtcMs, Date.UTC(2026, 0, 15, 18, 0, 0));
-    eq(r.weight, { utcMs: first.getTime(), offsetSeconds: EST });
+    const r = resolveRowTiming_({ exerciseFirstEditedAt: first, exercisesLastEditedAt: null, weightEditedAt: null, date: JAN_15_NOON_UTC }, 0, null);
+    eq(r.weightSource, 'synthetic');
+    eq(r.weight.utcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
   });
-  t('resolveRowTiming_ weight uses weightEditedAt when set, takes priority over firstEditedAt', () => {
-    const first = new Date(Date.UTC(2026, 0, 15, 20, 0, 0));   // 3pm EST
+  t('resolveRowTiming_ weight uses weightEditedAt when set', () => {
     const wEdit = new Date(Date.UTC(2026, 0, 15, 22, 0, 0));   // 5pm EST
-    const r = resolveRowTiming_({ firstEditedAt: first, exercisesEditedAt: null, weightEditedAt: wEdit, date: JAN_15_NOON_UTC }, 0, null);
+    const r = resolveRowTiming_({ exerciseFirstEditedAt: null, exercisesLastEditedAt: null, weightEditedAt: wEdit, date: JAN_15_NOON_UTC }, 0, null);
     eq(r.weight, { utcMs: wEdit.getTime(), offsetSeconds: EST });
   });
-  t('resolveRowTiming_ weight uses weightEditedAt on weight-only row with no firstEditedAt', () => {
+  t('resolveRowTiming_ weight uses weightEditedAt on weight-only row with no exerciseFirstEditedAt', () => {
     const wEdit = new Date(Date.UTC(2026, 0, 15, 22, 0, 0));
-    const r = resolveRowTiming_({ firstEditedAt: null, exercisesEditedAt: null, weightEditedAt: wEdit, date: JAN_15_NOON_UTC }, 0, null);
+    const r = resolveRowTiming_({ exerciseFirstEditedAt: null, exercisesLastEditedAt: null, weightEditedAt: wEdit, date: JAN_15_NOON_UTC }, 0, null);
     eq(r.exerciseSource, 'synthetic');
     eq(r.weightSource, 'edit');
     eq(r.weight, { utcMs: wEdit.getTime(), offsetSeconds: EST });
@@ -371,14 +368,14 @@ function runParserTests() {
 
   // Off-date edits: row.date is JAN-15 but the edit timestamps are on
   // JAN-20 (5 days later). The trust rule kicks in: edit-derived timing
-  // is rejected because firstEditedAt's civil date != row.date.
+  // is rejected because exerciseFirstEditedAt's civil date != row.date.
   const JAN_20_3PM_EST = new Date(Date.UTC(2026, 0, 20, 20, 0, 0));
   const JAN_20_4PM_EST = new Date(Date.UTC(2026, 0, 20, 21, 0, 0));
 
   t('resolveRowTiming_ off-date edit with no prior -> synthetic', () => {
     const r = resolveRowTiming_({
-      firstEditedAt: JAN_20_3PM_EST,
-      exercisesEditedAt: JAN_20_4PM_EST,
+      exerciseFirstEditedAt: JAN_20_3PM_EST,
+      exercisesLastEditedAt: JAN_20_4PM_EST,
       weightEditedAt: JAN_20_3PM_EST,
       date: JAN_15_NOON_UTC
     }, 0, null);
@@ -402,8 +399,8 @@ function runParserTests() {
       }
     };
     const r = resolveRowTiming_({
-      firstEditedAt: JAN_20_3PM_EST,
-      exercisesEditedAt: JAN_20_4PM_EST,
+      exerciseFirstEditedAt: JAN_20_3PM_EST,
+      exercisesLastEditedAt: JAN_20_4PM_EST,
       date: JAN_15_NOON_UTC
     }, 0, priorExercise);
     eq(r.exerciseSource, 'prior');
@@ -427,8 +424,8 @@ function runParserTests() {
       }
     };
     const r = resolveRowTiming_({
-      firstEditedAt: first,
-      exercisesEditedAt: last,
+      exerciseFirstEditedAt: first,
+      exercisesLastEditedAt: last,
       date: JAN_15_NOON_UTC
     }, 0, priorExercise);
     eq(r.exerciseSource, 'edit');
@@ -438,8 +435,8 @@ function runParserTests() {
 
   t('resolveRowTiming_ malformed prior exercise falls through to synthetic', () => {
     const r = resolveRowTiming_({
-      firstEditedAt: JAN_20_3PM_EST,
-      exercisesEditedAt: JAN_20_4PM_EST,
+      exerciseFirstEditedAt: JAN_20_3PM_EST,
+      exercisesLastEditedAt: JAN_20_4PM_EST,
       date: JAN_15_NOON_UTC
     }, 0, { exercise: {} });
     eq(r.exerciseSource, 'synthetic');
@@ -466,8 +463,8 @@ function runParserTests() {
     exercises: [{ name: 'Bench', entries: [{ weight: 135, reps: 5, sets: 3, assisted: false }] }],
     healthIds: [],
     matchedHealthSession: '',
-    firstEditedAt: null,
-    exercisesEditedAt: null
+    exerciseFirstEditedAt: null,
+    exercisesLastEditedAt: null
   }, overrides);
   const fCand_ = (name, startUtcMs, endUtcMs) => ({
     name: name, startUtcMs: startUtcMs, endUtcMs: endUtcMs,
@@ -476,8 +473,8 @@ function runParserTests() {
 
   t('resolveForeignMatches_ time-range matches on-date row to overlapping candidate', () => {
     const row = fRow_({
-      firstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),   // 5pm EST
-      exercisesEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0)) // 6pm EST
+      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),   // 5pm EST
+      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0))    // 6pm EST
     });
     const cand = fCand_('foreign/A',
       Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
@@ -492,8 +489,8 @@ function runParserTests() {
     // landed in timeRangeRows and silently failed (zero overlap). New logic
     // sends it to ordinalRows so 1-row-1-candidate cases pair correctly.
     const row = fRow_({
-      firstEditedAt: new Date(Date.UTC(2026, 0, 20, 22, 0, 0)),
-      exercisesEditedAt: new Date(Date.UTC(2026, 0, 20, 23, 0, 0))
+      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 20, 22, 0, 0)),
+      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 20, 23, 0, 0))
     });
     const cand = fCand_('foreign/A',
       Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
@@ -574,15 +571,15 @@ function runParserTests() {
   });
 
   t('resolveForeignMatches_ time-range window is clamped to MAX_EXERCISE_DURATION_MS', () => {
-    // Row's firstEditedAt is 9am on row.date; exercisesEditedAt drifted 5
-    // days forward to 9am the next workout week. Without clamping, the
-    // window would balloon to 5 days and incorrectly catch a candidate at
-    // 5pm on row.date. With clamping (2h + 30min buffer = 12:30pm cutoff),
-    // that candidate is excluded.
+    // Row's exerciseFirstEditedAt is 9am on row.date; exercisesLastEditedAt
+    // drifted 5 days forward to 9am the next workout week. Without clamping,
+    // the window would balloon to 5 days and incorrectly catch a candidate
+    // at 5pm on row.date. With clamping (2h + 30min buffer = 12:30pm
+    // cutoff), that candidate is excluded.
     const row = fRow_({
       rowNum: 10,
-      firstEditedAt: new Date(Date.UTC(2026, 0, 15, 14, 0, 0)),  // 9am EST Jan 15
-      exercisesEditedAt: new Date(Date.UTC(2026, 0, 20, 14, 0, 0)) // 9am EST Jan 20
+      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 14, 0, 0)),  // 9am EST Jan 15
+      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 20, 14, 0, 0))   // 9am EST Jan 20
     });
     // Candidate at 5pm-6pm EST Jan 15 — outside the clamped window but
     // inside the unclamped one.
@@ -592,8 +589,9 @@ function runParserTests() {
       const plan = resolveForeignMatches_([row], [row]);
       // No time-range match (clamped window doesn't reach 5pm). Falls into
       // ordinal pairing instead — and since the row IS on-date for
-      // firstEditedAt, it's in timeRangeRows, not ordinalRows. So no match.
-      // (If clamping were absent, plan[10] would have been 'foreign/late'.)
+      // exerciseFirstEditedAt, it's in timeRangeRows, not ordinalRows. So
+      // no match. (If clamping were absent, plan[10] would have been
+      // 'foreign/late'.)
       eq(plan[10], undefined);
     });
   });
@@ -602,8 +600,8 @@ function runParserTests() {
     // Row window 4:30pm-6:30pm EST (5pm-6pm edit + 30min buffer each side).
     // candA: 7am-8am EST, no overlap. candB: 5pm-6pm EST, full overlap.
     const row = fRow_({
-      firstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),
-      exercisesEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0))
+      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),
+      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0))
     });
     const candA = fCand_('foreign/early',
       Date.UTC(2026, 0, 15, 12, 0, 0), Date.UTC(2026, 0, 15, 13, 0, 0));

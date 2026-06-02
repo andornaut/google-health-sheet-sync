@@ -219,7 +219,7 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
   let waitingCount = 0;
   let deferredCount = 0;
   try {
-    const { rows, exerciseSyncedAtCol, weightSyncedAtCol, weightCol, healthIdsCol, exercisesEditedAtCol, weightEditedAtCol, matchedHealthSessionCol } = readRows();
+    const { rows, exerciseSyncedAtCol, weightSyncedAtCol, weightCol, healthIdsCol, exercisesLastEditedAtCol, weightEditedAtCol, matchedHealthSessionCol } = readRows();
     if (!exerciseSyncedAtCol || !weightSyncedAtCol || !healthIdsCol) {
       console.error('syncDirtyRows: managed columns missing; run setup().');
       errors = 1;
@@ -246,10 +246,10 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
       let exerciseReady = false;
       let remainingMs = 0;
       if (!r.exerciseSyncedAt) {
-        if (bypassQuiesce || !r.exercisesEditedAt || r.exercises.length === 0) {
+        if (bypassQuiesce || !r.exercisesLastEditedAt || r.exercises.length === 0) {
           exerciseReady = true;
         } else {
-          const sinceMs = now - r.exercisesEditedAt.getTime();
+          const sinceMs = now - r.exercisesLastEditedAt.getTime();
           exerciseReady = sinceMs >= LAST_EDIT_QUIESCE_MS;
           remainingMs = LAST_EDIT_QUIESCE_MS - sinceMs;
         }
@@ -296,7 +296,7 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
       weightSyncedAtCol: weightSyncedAtCol,
       weightCol: weightCol,
       healthIdsCol: healthIdsCol,
-      exercisesEditedAtCol: exercisesEditedAtCol,
+      exercisesLastEditedAtCol: exercisesLastEditedAtCol,
       weightEditedAtCol: weightEditedAtCol,
       matchedHealthSessionCol: matchedHealthSessionCol
     };
@@ -419,19 +419,19 @@ function resolveForeignMatches_(allRows, readyRows) {
     // backfill edited today for an old workout — produces a window that can't
     // overlap any same-day candidate, so the row would silently fall through.
     // Off-date rows go into ordinal pairing instead, same as no-edit-time rows.
-    const isOnRowDate_ = r => r.firstEditedAt && r.exercisesEditedAt
-      && ymd(r.firstEditedAt) === dateKey;
+    const isOnRowDate_ = r => r.exerciseFirstEditedAt && r.exercisesLastEditedAt
+      && ymd(r.exerciseFirstEditedAt) === dateKey;
     const timeRangeRows = dayRows.filter(isOnRowDate_);
     const ordinalRows = dayRows.filter(r => !isOnRowDate_(r));
 
     timeRangeRows.forEach(r => {
       // Clamp to MAX_EXERCISE_DURATION_MS the same way resolveRowTiming_ does
-      // so a row whose exercisesEditedAt drifted past firstEditedAt (late
-      // corrections to an old row keep sticky firstEditedAt + advance
-      // exercisesEditedAt) doesn't produce a multi-day window that biases
-      // toward the longest unrelated candidate.
-      const startMs = r.firstEditedAt.getTime();
-      const rawDuration = r.exercisesEditedAt.getTime() - startMs;
+      // so a row whose exercisesLastEditedAt drifted past exerciseFirstEditedAt
+      // (late corrections to an old row keep sticky exerciseFirstEditedAt +
+      // advance exercisesLastEditedAt) doesn't produce a multi-day window
+      // that biases toward the longest unrelated candidate.
+      const startMs = r.exerciseFirstEditedAt.getTime();
+      const rawDuration = r.exercisesLastEditedAt.getTime() - startMs;
       const clampedEndMs = startMs + Math.min(rawDuration, MAX_EXERCISE_DURATION_MS);
       const windowStart = startMs - FOREIGN_MATCH_BUFFER_MS;
       const windowEnd = clampedEndMs + FOREIGN_MATCH_BUFFER_MS;
@@ -503,8 +503,8 @@ function buildOrdinalMap_(rows) {
 // phase, with these rules:
 //
 //   Exercise:
-//     - 'edit'      if firstEditedAt's civil date == row.date AND
-//                   exercisesEditedAt is set. This lets endTime advance
+//     - 'edit'      if exerciseFirstEditedAt's civil date == row.date AND
+//                   exercisesLastEditedAt is set. This lets endTime advance
 //                   during a live workout as more sets are typed in.
 //     - 'prior'     if a previous datapoint is provided. Its interval is
 //                   reused verbatim so an off-date edit (e.g. correcting
@@ -514,9 +514,7 @@ function buildOrdinalMap_(rows) {
 //   Weight (only consumed on the POST path; PATCH preserves sampleTime
 //   server-side by echoing back the prior GET, so the weight resolver
 //   isn't called with a prior):
-//     - 'edit'      if weightSampleAt's civil date == row.date.
-//                   weightSampleAt is weightEditedAt with a legacy
-//                   fallback to firstEditedAt (pre-split schema).
+//     - 'edit'      if weightEditedAt's civil date == row.date.
 //     - 'synthetic' otherwise: noon on row.date.
 //
 // priorExercise is the GET response for the row's existing exercise
@@ -528,11 +526,11 @@ function resolveRowTiming_(row, ordinal, priorExercise) {
 
   let exercise = null;
   let exerciseSource = null;
-  const exerciseEditOnRowDate = row.firstEditedAt && row.exercisesEditedAt
-    && ymd(row.firstEditedAt) === rowDateKey;
+  const exerciseEditOnRowDate = row.exerciseFirstEditedAt && row.exercisesLastEditedAt
+    && ymd(row.exerciseFirstEditedAt) === rowDateKey;
   if (exerciseEditOnRowDate) {
-    const startMs = row.firstEditedAt.getTime();
-    const rawDuration = row.exercisesEditedAt.getTime() - startMs;
+    const startMs = row.exerciseFirstEditedAt.getTime();
+    const rawDuration = row.exercisesLastEditedAt.getTime() - startMs;
     const clampedDuration = Math.min(
       Math.max(rawDuration, MIN_EXERCISE_DURATION_MS),
       MAX_EXERCISE_DURATION_MS
@@ -540,7 +538,7 @@ function resolveRowTiming_(row, ordinal, priorExercise) {
     const endMs = startMs + clampedDuration;
     exercise = {
       startUtcMs: startMs,
-      startOffsetSeconds: getTzOffsetSeconds_(tz, row.firstEditedAt),
+      startOffsetSeconds: getTzOffsetSeconds_(tz, row.exerciseFirstEditedAt),
       endUtcMs: endMs,
       endOffsetSeconds: getTzOffsetSeconds_(tz, new Date(endMs))
     };
@@ -564,11 +562,10 @@ function resolveRowTiming_(row, ordinal, priorExercise) {
 
   let weight;
   let weightSource;
-  const weightSampleAt = row.weightEditedAt || row.firstEditedAt || null;
-  if (weightSampleAt && ymd(weightSampleAt) === rowDateKey) {
+  if (row.weightEditedAt && ymd(row.weightEditedAt) === rowDateKey) {
     weight = {
-      utcMs: weightSampleAt.getTime(),
-      offsetSeconds: getTzOffsetSeconds_(tz, weightSampleAt)
+      utcMs: row.weightEditedAt.getTime(),
+      offsetSeconds: getTzOffsetSeconds_(tz, row.weightEditedAt)
     };
     weightSource = 'edit';
   } else {
@@ -629,8 +626,8 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
   let priorExercise = null;
   let priorWeight = null;
   let priorWeightFetchFailed = false;
-  const exerciseEditOnRowDate = row.firstEditedAt && row.exercisesEditedAt
-    && ymd(row.firstEditedAt) === ymd(row.date);
+  const exerciseEditOnRowDate = row.exerciseFirstEditedAt && row.exercisesLastEditedAt
+    && ymd(row.exerciseFirstEditedAt) === ymd(row.date);
   if (exerciseWillCreate && !exerciseEditOnRowDate && split.exercise.length > 0) {
     try {
       priorExercise = getDataPoint(split.exercise[0]);
@@ -766,21 +763,21 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
   }
 
   // Concurrent-edit guards, phase-isolated. Each phase compares its own
-  // edit-time column (Exercises Edited At / Weight Edited At) against the
-  // value captured at the start of the pass. onEditMarkDirty advances them
-  // only on the matching column class, so this catches edits to the right
-  // phase regardless of whether the cell's value actually changed (covers
-  // the "edit value, edit back" case that a value-comparison guard would
-  // miss). The two phases are independent: a concurrent weight edit
+  // edit-time column (Exercises Last Edited At / Weight Edited At) against
+  // the value captured at the start of the pass. onEditMarkDirty advances
+  // them only on the matching column class, so this catches edits to the
+  // right phase regardless of whether the cell's value actually changed
+  // (covers the "edit value, edit back" case that a value-comparison guard
+  // would miss). The two phases are independent: a concurrent weight edit
   // doesn't defer the exercise stamp and vice versa.
   let exerciseConcurrentEdit = false;
-  if (cols.exercisesEditedAtCol) {
-    const currentEdit = toDate_(getSheet_().getRange(row.rowNum, cols.exercisesEditedAtCol).getValue());
-    const previousMs = row.exercisesEditedAt ? row.exercisesEditedAt.getTime() : null;
+  if (cols.exercisesLastEditedAtCol) {
+    const currentEdit = toDate_(getSheet_().getRange(row.rowNum, cols.exercisesLastEditedAtCol).getValue());
+    const previousMs = row.exercisesLastEditedAt ? row.exercisesLastEditedAt.getTime() : null;
     const currentMs = currentEdit ? currentEdit.getTime() : null;
     if (currentMs !== previousMs) {
-      console.info(tag + ': concurrent exercise edit detected (Exercises Edited At '
-        + humanizeDate_(row.exercisesEditedAt) + ' -> '
+      console.info(tag + ': concurrent exercise edit detected (Exercises Last Edited At '
+        + humanizeDate_(row.exercisesLastEditedAt) + ' -> '
         + (currentEdit ? humanizeDate_(currentEdit) : '<cleared>')
         + '); deferring Exercise Synced At stamp.');
       exerciseConcurrentEdit = true;
