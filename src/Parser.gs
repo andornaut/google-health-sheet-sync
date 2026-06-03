@@ -33,7 +33,7 @@ function parseLine_(line) {
     body = body.slice(1).trim();
   }
   const parts = body.split(/\s*x\s*/i);
-  if (parts.length < 1 || parts.length > 3) return null;
+  if (parts.length > 3) return null;
   const nums = parts.map(p => Number(p));
   if (nums.some(n => !Number.isFinite(n) || n < 0)) return null;
 

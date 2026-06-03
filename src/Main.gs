@@ -219,7 +219,7 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
   let waitingCount = 0;
   let deferredCount = 0;
   try {
-    const { rows, exerciseSyncedAtCol, weightSyncedAtCol, weightCol, healthIdsCol, exercisesLastEditedAtCol, weightEditedAtCol, matchedHealthSessionCol } = readRows();
+    const { rows, exerciseSyncedAtCol, weightSyncedAtCol, healthIdsCol, exercisesLastEditedAtCol, weightEditedAtCol, matchedHealthSessionCol } = readRows();
     if (!exerciseSyncedAtCol || !weightSyncedAtCol || !healthIdsCol) {
       console.error('syncDirtyRows: managed columns missing; run setup().');
       errors = 1;
@@ -297,7 +297,6 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
     const cols = {
       exerciseSyncedAtCol: exerciseSyncedAtCol,
       weightSyncedAtCol: weightSyncedAtCol,
-      weightCol: weightCol,
       healthIdsCol: healthIdsCol,
       exercisesLastEditedAtCol: exercisesLastEditedAtCol,
       weightEditedAtCol: weightEditedAtCol,
@@ -391,9 +390,7 @@ function resolveForeignMatches_(allRows, readyRows) {
   // first-edit + advance last-edit) doesn't produce a multi-day window biased
   // toward the longest unrelated candidate.
   const windows = readyRows
-    .filter(r => r.exercises.length > 0
-      && r.exerciseFirstEditedAt && r.exercisesLastEditedAt
-      && ymd(r.exerciseFirstEditedAt) === ymd(r.date))
+    .filter(r => r.exercises.length > 0 && exerciseEditIsOnRowDate_(r))
     .map(r => {
       const startMs = r.exerciseFirstEditedAt.getTime();
       const clampedEndMs = startMs + clampExerciseDurationMs_(r.exercisesLastEditedAt.getTime() - startMs);
@@ -485,6 +482,16 @@ function clampExerciseDurationMs_(rawDurationMs) {
   return Math.min(rawDurationMs, MAX_EXERCISE_DURATION_MS);
 }
 
+// True when the row's exercise edit timestamps form a trustworthy same-day
+// window: both first/last edit are set AND the first edit's civil date matches
+// the row's Date. This gates the live-workout 'edit' timing path (endTime can
+// advance during a workout) and the foreign-match window — an off-date edit
+// (correcting an old row today) must not anchor timing to today.
+function exerciseEditIsOnRowDate_(row) {
+  return !!(row.exerciseFirstEditedAt && row.exercisesLastEditedAt
+    && ymd(row.exerciseFirstEditedAt) === ymd(row.date));
+}
+
 // Resolve the exercise interval and weight sample time independently, per
 // phase, with these rules:
 //
@@ -517,8 +524,7 @@ function resolveRowTiming_(row, ordinal, priorExercise, foreignInterval) {
 
   let exercise = null;
   let exerciseSource = null;
-  const exerciseEditOnRowDate = row.exerciseFirstEditedAt && row.exercisesLastEditedAt
-    && ymd(row.exerciseFirstEditedAt) === rowDateKey;
+  const exerciseEditOnRowDate = exerciseEditIsOnRowDate_(row);
   if (foreignInterval) {
     exercise = {
       startUtcMs: foreignInterval.startUtcMs,
@@ -607,10 +613,6 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
   // don't surface a misleading "edit/synthetic" label for an interval that
   // will never be sent.
   const exerciseWillCreate = exerciseReady && SYNC_EXERCISES && row.exercises.length > 0;
-  // Only POST creates need timing resolution. The PATCH path (prior weight ID
-  // present + bodyweight set) preserves sampleTime server-side, so no prior
-  // GET and no timing label.
-  const weightWillCreate = weightReady && SYNC_WEIGHT && row.bodyweight !== null && split.weight.length === 0;
 
   // Fetch prior datapoints. Exercise: only when the edit isn't on row.date
   // (otherwise the live-workout endTime-advancement path takes over) — the
@@ -622,8 +624,7 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
   let priorExercise = null;
   let priorWeight = null;
   let priorWeightFetchFailed = false;
-  const exerciseEditOnRowDate = row.exerciseFirstEditedAt && row.exercisesLastEditedAt
-    && ymd(row.exerciseFirstEditedAt) === ymd(row.date);
+  const exerciseEditOnRowDate = exerciseEditIsOnRowDate_(row);
   if (exerciseWillCreate && !foreignMatch && !exerciseEditOnRowDate && split.exercise.length > 0) {
     try {
       priorExercise = getDataPoint(split.exercise[0]);
@@ -636,10 +637,23 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
     try {
       priorWeight = getDataPoint(split.weight[0]);
     } catch (err) {
-      console.warn(tag + ': GET prior weight failed; PATCH will fail and the row will retry: ' + err);
-      priorWeightFetchFailed = true;
+      if (isNotFoundError_(err)) {
+        // The prior weight datapoint is gone server-side (e.g. deleted in the
+        // Health app). Drop the stale ID so the dispatch below falls through to
+        // POST a fresh one instead of PATCHing/GETting a name that 404s forever.
+        console.warn(tag + ': prior weight datapoint not found (404); dropping stale ID and recreating.');
+        split.weight = [];
+      } else {
+        console.warn(tag + ': GET prior weight failed; PATCH will fail and the row will retry: ' + err);
+        priorWeightFetchFailed = true;
+      }
     }
   }
+  // Only POST creates need timing resolution. The PATCH path (prior weight ID
+  // present + bodyweight set) preserves sampleTime server-side, so no prior
+  // GET and no timing label. Computed after the GET block so a 404-dropped
+  // stale ID is reflected here (the row now POSTs rather than PATCHes).
+  const weightWillCreate = weightReady && SYNC_WEIGHT && row.bodyweight !== null && split.weight.length === 0;
 
   let timing;
   try {
@@ -725,9 +739,17 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
         deleteDataPointsByName(split.exercise);
         newExerciseIds = [];
       } catch (err) {
-        console.error(tag + ': delete previous exercise datapoint(s) failed: ' + err);
-        exerciseFailed = true;
-        // Keep newExerciseIds = split.exercise so the next sync retries delete.
+        if (isNotFoundError_(err)) {
+          // Already gone server-side (e.g. deleted in the Health app). Treat as
+          // deleted so the row recreates instead of retrying a delete that
+          // 404s forever.
+          console.warn(tag + ': previous exercise datapoint(s) not found (404); treating as deleted.');
+          newExerciseIds = [];
+        } else {
+          console.error(tag + ': delete previous exercise datapoint(s) failed: ' + err);
+          exerciseFailed = true;
+          // Keep newExerciseIds = split.exercise so the next sync retries delete.
+        }
       }
     } else {
       newExerciseIds = [];
