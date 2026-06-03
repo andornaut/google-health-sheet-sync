@@ -88,12 +88,43 @@ const MAX_EXERCISE_DURATION_MS = 120 * 60 * 1000;
 // sync immediately. Weight phase has no debounce.
 const LAST_EDIT_QUIESCE_MS = 60 * 1000;
 
-// When matching foreign Google Health activities (ones this script didn't
-// create) to a row's edit window, treat STRENGTH_TRAINING datapoints whose
-// interval overlaps [firstEdit - buffer, lastEdit + buffer] as candidates.
-// Picks up watch- or app-logged workouts whose recorded start/end is slightly
-// offset from the spreadsheet edit window so we can recognize them as the
-// same workout and skip writing our own duplicate exercise datapoint.
+// Master switch for foreign-session matching (resolveForeignMatches_).
+//
+// When true, the sync looks for a pre-existing foreign STRENGTH_TRAINING
+// session (e.g. one logged by a watch/Fitbit) that lines up with a row, and
+// SKIPS creating its own exercise datapoint — recording the foreign resource
+// name in Matched Health Session instead. When false (the default), matching
+// is bypassed entirely and every exercise-dirty row creates its own datapoint.
+//
+// Named for the action it enables: skip creating a datapoint that would
+// duplicate an existing foreign session.
+//
+// Defaults to false because of an empirical finding (2026-06-02): when a row's
+// sync-created session and a device's HR-monitored session overlap, the Google
+// Health app merges them server-side into a SINGLE summary card (confirmed via
+// the in-app AI assistant: one card, no visible duplicate). Given that, the
+// old skip-on-match behavior was pure downside — a foreign datapoint can't take
+// our notes (no update path exists for foreign datapoints; see AGENTS.md
+// "Health API: alternative update paths"), so the sets/reps/weight stayed
+// stranded in the sheet and never reached Health. Always-create puts our notes
+// into Health, where they merge with the device session's heart-rate/calorie
+// data in the one card.
+//
+// Set to true to restore the old dedup behavior. Tradeoff either way:
+//   - false (always create): our notes reach Health; but two overlapping
+//     STRENGTH_TRAINING datapoints may both feed daily aggregates
+//     (:dailyRollUp, active minutes) even though they display as one card.
+//   - true (match + skip): exactly one session is counted, but our sets/reps
+//     notes never appear in Health when a foreign session is matched.
+const SKIP_FOREIGN_DUPLICATES = false;
+
+// Only consulted when SKIP_FOREIGN_DUPLICATES is true. When matching foreign
+// Google Health activities (ones this script didn't create) to a row's edit
+// window, treat STRENGTH_TRAINING datapoints whose interval overlaps
+// [firstEdit - buffer, lastEdit + buffer] as candidates. Picks up watch- or
+// app-logged workouts whose recorded start/end is slightly offset from the
+// spreadsheet edit window so we can recognize them as the same workout and
+// skip writing our own duplicate exercise datapoint.
 const FOREIGN_MATCH_BUFFER_MS = 30 * 60 * 1000;
 
 // Toggle which data types this script writes to the Google Health API.
