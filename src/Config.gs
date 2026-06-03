@@ -45,9 +45,9 @@ const POLL_INTERVAL_MIN = 5;
 const LOCK_WAIT_MS = 30 * 1000;
 
 // Cap rows processed per sync pass to stay under Apps Script's 6-minute
-// execution limit. At ~3.3s/row observed, 75 rows leaves a comfortable margin.
+// execution limit. At ~3.3s/row observed, 100 rows leaves a comfortable margin.
 // Remaining dirty rows are deferred to the next pass via PENDING_DIRTY_KEY.
-const MAX_ROWS_PER_SYNC = 75;
+const MAX_ROWS_PER_SYNC = 100;
 
 // Script-properties key. Stores a generation marker (Date.now() string)
 // rather than a boolean: every dirty-marking call writes a fresh value, so
