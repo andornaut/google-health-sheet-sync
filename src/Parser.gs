@@ -13,9 +13,13 @@ function parseExerciseCell(raw) {
       console.warn('Parser: could not parse "' + trimmed + '"');
       continue;
     }
-    // 0 sets or 0 reps means the exercise was not performed: skip it silently
-    // (no log), distinct from an unknown/undefined count (null), which is logged.
-    if (entry.sets === 0 || entry.reps === 0) continue;
+    // 0 sets or 0 reps means the exercise was not performed: skip the entry
+    // (no exercise log), distinct from an unknown/undefined count (null), which
+    // is logged.
+    if (entry.sets === 0 || entry.reps === 0) {
+      console.info('Parser: skipping not-performed entry "' + trimmed + '" (0 sets/reps)');
+      continue;
+    }
     entries.push(entry);
   }
   return entries;
