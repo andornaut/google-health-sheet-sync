@@ -289,15 +289,11 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
       console.info('syncDirtyRows: ' + ready.length + ' ready row(s)');
     }
 
-    // When SKIP_FOREIGN_DUPLICATES is off (the default), every exercise-dirty
-    // row creates its own datapoint — the Google Health app merges overlapping
-    // same-type sessions into one card, so a device-logged session and our
-    // sync-created one coexist without a visible duplicate while our notes
-    // still reach Health. See SKIP_FOREIGN_DUPLICATES in Config.gs.
+    // Every exercise-dirty row creates its own datapoint; the plan only
+    // supplies a foreign session's interval to align timing when one overlaps
+    // the row's edit window. See FOREIGN_MATCH_BUFFER_MS in Config.gs.
     const exerciseReadyRows = ready.filter(r => r.exerciseReady).map(r => r.row);
-    const matchPlan = SKIP_FOREIGN_DUPLICATES
-      ? resolveForeignMatches_(rows, exerciseReadyRows)
-      : {};
+    const matchPlan = resolveForeignMatches_(rows, exerciseReadyRows);
     const cols = {
       exerciseSyncedAtCol: exerciseSyncedAtCol,
       weightSyncedAtCol: weightSyncedAtCol,
@@ -339,20 +335,27 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
   return { ok: ok, errors: errors, deferred: deferredCount };
 }
 
-// Returns rowNum -> foreign Strength Training session for ready rows whose
-// lifting content is already covered by a foreign (non-sync-created) Health
-// datapoint. Two-phase per date: time-range overlap for rows whose edit
-// timestamps fall on row.date (the timestamps anchor a meaningful window),
-// then partial ordinal pairing — min(rows, candidates) sorted by rowNum vs
-// startUtcMs — for everything else (no-timestamp rows AND off-date rows).
+// Returns rowNum -> foreign Strength Training session whose interval should be
+// copied onto the row's created exercise datapoint (timing alignment). The
+// sync never skips its own create; this only supplies a more accurate
+// start/end when a manually-logged foreign session overlaps the row's edit
+// window. Time-overlap only — rows without same-date exercise edit timestamps
+// get no match and fall through to synthetic/prior timing (there is no ordinal
+// fallback).
 //
-// Before matching, candidates the script already accounts for are excluded:
-//   - sync-created: name appears in some row's Created Health IDs (could be
-//     the row itself on a re-sync, or another row).
-//   - matched-elsewhere: name is a non-ready row's Matched Health Session.
-// This prevents a sync-created session from re-matching to itself and
-// prevents two sheet rows from double-claiming the same foreign session
-// across incremental runs.
+// Candidate exclusions (global, keyed by resource name — names are globally
+// unique, so no date keying is needed, and global keying is what lets a
+// neighbor-day candidate be excluded correctly):
+//   - sync-created: name appears in some row's Created Health IDs (our own
+//     datapoint — never align to ourselves, including a row's prior datapoint
+//     on re-sync).
+//   - aligned-elsewhere: name is a non-ready row's Matched Health Session, so
+//     two rows don't borrow the same foreign session's times across runs.
+//
+// Cross-date: candidates are gathered for every civil date any row's window
+// touches (a window near local midnight pulls the neighbor day too), deduped
+// by name. Overlap is computed in absolute UTC, so midnight-crossing workouts
+// match regardless of which civil date the foreign session was logged under.
 //
 // Ordering note: this runs once near the top of syncDirtyRows, before the
 // per-row syncOneRow_ loop. The `allRows` snapshot comes from readRows() at
@@ -364,121 +367,81 @@ function resolveForeignMatches_(allRows, readyRows) {
   const plan = {};
   const readyRowNums = {};
   readyRows.forEach(r => { readyRowNums[r.rowNum] = true; });
-  const accountedFor = {};
-  const markAccountedFor_ = (date, name, reason, rowNum) => {
-    const key = ymd(date);
-    (accountedFor[key] = accountedFor[key] || {})[name] = { reason: reason, rowNum: rowNum };
-  };
+
+  const excluded = {};
   allRows.forEach(r => {
     if (!readyRowNums[r.rowNum] && r.matchedHealthSession) {
-      markAccountedFor_(r.date, r.matchedHealthSession, 'matched-elsewhere', r.rowNum);
+      excluded[r.matchedHealthSession] = true;
     }
-    splitHealthIdsByType_(r.healthIds).exercise.forEach(name => {
-      markAccountedFor_(r.date, name, 'sync-created', r.rowNum);
-    });
+    splitHealthIdsByType_(r.healthIds).exercise.forEach(name => { excluded[name] = true; });
   });
-  const byDate = groupRowsByDate_(readyRows.filter(r => r.exercises.length > 0));
-  Object.keys(byDate).forEach(dateKey => {
-    const dayRows = byDate[dateKey];
-    let candidates;
-    try {
-      candidates = listStrengthOnDate(dayRows[0].date);
-    } catch (err) {
-      console.warn('resolveForeignMatches_: list failed for ' + dateKey + ': ' + err);
-      return;
-    }
-    const reasons = accountedFor[dateKey];
-    if (reasons) {
-      const before = candidates.length;
-      let syncCreatedCount = 0;
-      let matchedElsewhereCount = 0;
-      const ownerRowNums = {};
-      candidates = candidates.filter(c => {
-        const entry = reasons[c.name];
-        if (!entry) return true;
-        if (entry.reason === 'sync-created') syncCreatedCount++;
-        else matchedElsewhereCount++;
-        if (entry.rowNum != null) ownerRowNums[entry.rowNum] = true;
-        return false;
-      });
-      const removed = before - candidates.length;
-      // Quiet the common no-op case where a fully-synced historical date has
-      // exactly one sync-created candidate owned by the row itself. Only
-      // surface exclusions that signal something cross-row: matched-elsewhere
-      // dedup, or more than one sync-created on a single date (multi-workout
-      // day, or stray orphans).
-      const interesting = matchedElsewhereCount > 0 || syncCreatedCount > 1;
-      if (removed > 0 && interesting) {
-        const ownerList = Object.keys(ownerRowNums).sort((a, b) => Number(a) - Number(b));
-        const ownerSuffix = ownerList.length > 0
-          ? ' by row(s) ' + ownerList.join(', ')
-          : '';
-        console.info('resolveForeignMatches_: ' + dateKey + ' excluded ' + removed
-          + ' candidate(s) already accounted for' + ownerSuffix + ' ('
-          + syncCreatedCount + ' sync-created, '
-          + matchedElsewhereCount + ' matched to another row)');
-      }
-    }
-    if (candidates.length === 0) return;
 
-    // Only trust edit timestamps as a foreign-match window when they're on
-    // dateKey (== row.date in script tz). An off-date timestamp pair — e.g. a
-    // backfill edited today for an old workout — produces a window that can't
-    // overlap any same-day candidate, so the row would silently fall through.
-    // Off-date rows go into ordinal pairing instead, same as no-edit-time rows.
-    const isOnRowDate_ = r => r.exerciseFirstEditedAt && r.exercisesLastEditedAt
-      && ymd(r.exerciseFirstEditedAt) === dateKey;
-    const timeRangeRows = dayRows.filter(isOnRowDate_);
-    const ordinalRows = dayRows.filter(r => !isOnRowDate_(r));
-
-    timeRangeRows.forEach(r => {
-      // Clamp to MAX_EXERCISE_DURATION_MS the same way resolveRowTiming_ does
-      // so a row whose exercisesLastEditedAt drifted past exerciseFirstEditedAt
-      // (late corrections to an old row keep sticky exerciseFirstEditedAt +
-      // advance exercisesLastEditedAt) doesn't produce a multi-day window
-      // that biases toward the longest unrelated candidate.
+  // Only rows with on-row-date edit timestamps anchor a trustworthy window.
+  // Clamp to MAX_EXERCISE_DURATION_MS the same way resolveRowTiming_ does so a
+  // row whose exercisesLastEditedAt drifted far past exerciseFirstEditedAt
+  // (late corrections that keep sticky first-edit + advance last-edit) doesn't
+  // produce a multi-day window biased toward the longest unrelated candidate.
+  const windows = readyRows
+    .filter(r => r.exercises.length > 0
+      && r.exerciseFirstEditedAt && r.exercisesLastEditedAt
+      && ymd(r.exerciseFirstEditedAt) === ymd(r.date))
+    .map(r => {
       const startMs = r.exerciseFirstEditedAt.getTime();
       const rawDuration = r.exercisesLastEditedAt.getTime() - startMs;
       const clampedEndMs = startMs + Math.min(rawDuration, MAX_EXERCISE_DURATION_MS);
-      const windowStart = startMs - FOREIGN_MATCH_BUFFER_MS;
-      const windowEnd = clampedEndMs + FOREIGN_MATCH_BUFFER_MS;
-      let bestIdx = -1;
-      let bestOverlap = 0;
-      candidates.forEach((c, i) => {
-        const overlap = Math.min(c.endUtcMs, windowEnd) - Math.max(c.startUtcMs, windowStart);
-        if (overlap > bestOverlap) {
-          bestIdx = i;
-          bestOverlap = overlap;
-        }
-      });
-      if (bestIdx >= 0) {
-        plan[r.rowNum] = candidates[bestIdx];
-        console.info('resolveForeignMatches_: ' + dateKey + ' row ' + r.rowNum
-          + ' time-range matches ' + candidates[bestIdx].name + ' (overlap=' + humanizeMs_(bestOverlap) + ')');
-        candidates.splice(bestIdx, 1);
+      return {
+        rowNum: r.rowNum,
+        windowStart: startMs - FOREIGN_MATCH_BUFFER_MS,
+        windowEnd: clampedEndMs + FOREIGN_MATCH_BUFFER_MS
+      };
+    });
+  if (windows.length === 0) return plan;
+
+  // Gather candidates across every civil date a window touches (start and end
+  // edges — adjacent when a window straddles midnight), deduped by name and
+  // with our own / aligned-elsewhere names dropped.
+  const probeDates = {};
+  windows.forEach(w => {
+    const start = new Date(w.windowStart);
+    const end = new Date(w.windowEnd);
+    probeDates[ymd(start)] = start;
+    probeDates[ymd(end)] = end;
+  });
+  const byName = {};
+  Object.keys(probeDates).forEach(key => {
+    let list;
+    try {
+      list = listStrengthOnDate(probeDates[key]);
+    } catch (err) {
+      console.warn('resolveForeignMatches_: list failed for ' + key + ': ' + err);
+      return;
+    }
+    list.forEach(c => {
+      if (excluded[c.name]) return;
+      byName[c.name] = c;
+    });
+  });
+  const candidates = Object.values(byName);
+  if (candidates.length === 0) return plan;
+
+  // Assign in rowNum order; each row claims its best-overlap remaining
+  // candidate so two rows can't align to the same foreign session.
+  windows.sort((a, b) => a.rowNum - b.rowNum);
+  windows.forEach(w => {
+    let bestIdx = -1;
+    let bestOverlap = 0;
+    candidates.forEach((c, i) => {
+      const overlap = Math.min(c.endUtcMs, w.windowEnd) - Math.max(c.startUtcMs, w.windowStart);
+      if (overlap > bestOverlap) {
+        bestIdx = i;
+        bestOverlap = overlap;
       }
     });
-
-    if (ordinalRows.length === 0 || candidates.length === 0) return;
-    // Partial pairing: pair min(rows, candidates) by sorted order. Extras on
-    // either side go unmatched (extra rows create their own datapoints; extra
-    // candidates remain in Health as-is). Loose pairing is no worse than the
-    // pre-loose alternative — within a date bucket ordinal pairing is already
-    // a sort-and-zip heuristic, so refusing to pair on count mismatch just
-    // missed legitimate matches when one side had a stray row or candidate.
-    ordinalRows.sort((a, b) => a.rowNum - b.rowNum);
-    candidates.sort((a, b) => a.startUtcMs - b.startUtcMs);
-    const pairCount = Math.min(ordinalRows.length, candidates.length);
-    if (ordinalRows.length !== candidates.length) {
-      console.info('resolveForeignMatches_: ' + dateKey + ' has ' + ordinalRows.length
-        + ' ordinal row(s) and ' + candidates.length
-        + ' remaining foreign session(s); pairing ' + pairCount + '.');
-    }
-    for (let i = 0; i < pairCount; i++) {
-      const r = ordinalRows[i];
-      plan[r.rowNum] = candidates[i];
-      console.info('resolveForeignMatches_: ' + dateKey + ' row ' + r.rowNum
-        + ' ordinal[' + i + '] matches ' + candidates[i].name);
+    if (bestIdx >= 0) {
+      plan[w.rowNum] = candidates[bestIdx];
+      console.info('resolveForeignMatches_: row ' + w.rowNum + ' aligns to '
+        + candidates[bestIdx].name + ' (overlap=' + humanizeMs_(bestOverlap) + ')');
+      candidates.splice(bestIdx, 1);
     }
   });
   return plan;
@@ -509,7 +472,10 @@ function buildOrdinalMap_(rows) {
 // Resolve the exercise interval and weight sample time independently, per
 // phase, with these rules:
 //
-//   Exercise:
+//   Exercise (first matching rule wins):
+//     - 'foreign'   if a foreignInterval is provided (an overlapping foreign
+//                   session whose manual start/stop is more accurate than our
+//                   edit-derived window). Its interval is used verbatim.
 //     - 'edit'      if exerciseFirstEditedAt's civil date == row.date AND
 //                   exercisesLastEditedAt is set. This lets endTime advance
 //                   during a live workout as more sets are typed in.
@@ -527,7 +493,9 @@ function buildOrdinalMap_(rows) {
 // priorExercise is the GET response for the row's existing exercise
 // datapoint (or null if first-sync, or null if the GET failed — in which
 // case we fall through to the edit/synthetic path rather than erroring).
-function resolveRowTiming_(row, ordinal, priorExercise) {
+// foreignInterval is an overlapping foreign session (from
+// resolveForeignMatches_) whose start/end should be borrowed, or null.
+function resolveRowTiming_(row, ordinal, priorExercise, foreignInterval) {
   const tz = getTz_();
   const rowDateKey = ymd(row.date);
 
@@ -535,7 +503,15 @@ function resolveRowTiming_(row, ordinal, priorExercise) {
   let exerciseSource = null;
   const exerciseEditOnRowDate = row.exerciseFirstEditedAt && row.exercisesLastEditedAt
     && ymd(row.exerciseFirstEditedAt) === rowDateKey;
-  if (exerciseEditOnRowDate) {
+  if (foreignInterval) {
+    exercise = {
+      startUtcMs: foreignInterval.startUtcMs,
+      startOffsetSeconds: foreignInterval.startUtcOffsetSeconds,
+      endUtcMs: foreignInterval.endUtcMs,
+      endOffsetSeconds: foreignInterval.endUtcOffsetSeconds
+    };
+    exerciseSource = 'foreign';
+  } else if (exerciseEditOnRowDate) {
     const startMs = row.exerciseFirstEditedAt.getTime();
     const rawDuration = row.exercisesLastEditedAt.getTime() - startMs;
     const clampedDuration = Math.min(
@@ -594,8 +570,9 @@ function resolveRowTiming_(row, ordinal, priorExercise) {
 //     stamps Weight Synced At on success.
 //   - Exercise phase runs only when the caller passed exerciseReady=true
 //     (i.e. quiesce passed or no exercise content). It reconciles exercise
-//     IDs with the sheet's exercises (or matches a foreign session) and
-//     stamps Exercise Synced At on success.
+//     IDs with the sheet's exercises (delete + recreate, optionally aligning
+//     the interval to an overlapping foreign session) and stamps Exercise
+//     Synced At on success.
 // Returns true if the pass made forward progress on the row without errors
 // (including the case where the row stays dirty because the other phase is
 // still pending). Returns false if any attempted phase failed.
@@ -608,16 +585,16 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
   console.info(tag + ': starting phases=[' + phases.join(',') + '] (exercises=' + row.exercises.length
     + ', bodyweight=' + (row.bodyweight === null ? 'none' : row.bodyweight)
     + ', oldIds=' + row.healthIds.length
-    + (match ? ', match=' + match.name : '') + ')');
+    + (match ? ', align=' + match.name : '') + ')');
 
   const split = splitHealthIdsByType_(row.healthIds);
 
   // Phases that will actually issue a create (and thus need a resolved
   // interval/sampleTime). Delete-only phases don't need timing. The
-  // timing log line shows only the phases listed here, so weight-only or
-  // foreign-matched rows don't surface misleading "edit/synthetic" labels
-  // for an interval that will never be sent.
-  const exerciseWillCreate = exerciseReady && !match && SYNC_EXERCISES && row.exercises.length > 0;
+  // timing log line shows only the phases listed here, so weight-only rows
+  // don't surface a misleading "edit/synthetic" label for an interval that
+  // will never be sent.
+  const exerciseWillCreate = exerciseReady && SYNC_EXERCISES && row.exercises.length > 0;
   // Only POST creates need timing resolution. The PATCH path (prior weight ID
   // present + bodyweight set) preserves sampleTime server-side, so no prior
   // GET and no timing label.
@@ -635,7 +612,7 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
   let priorWeightFetchFailed = false;
   const exerciseEditOnRowDate = row.exerciseFirstEditedAt && row.exercisesLastEditedAt
     && ymd(row.exerciseFirstEditedAt) === ymd(row.date);
-  if (exerciseWillCreate && !exerciseEditOnRowDate && split.exercise.length > 0) {
+  if (exerciseWillCreate && !match && !exerciseEditOnRowDate && split.exercise.length > 0) {
     try {
       priorExercise = getDataPoint(split.exercise[0]);
     } catch (err) {
@@ -654,7 +631,9 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
 
   let timing;
   try {
-    timing = resolveRowTiming_(row, ordinal, priorExercise);
+    // `match`, when set, is an overlapping foreign session whose interval the
+    // resolver borrows verbatim ('foreign' wins over edit/prior/synthetic).
+    timing = resolveRowTiming_(row, ordinal, priorExercise, match);
   } catch (err) {
     console.error(tag + ': resolveRowTiming_ failed: ' + err);
     return false;
@@ -741,25 +720,21 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
       newExerciseIds = [];
     }
     if (!exerciseFailed && SYNC_EXERCISES && row.exercises.length > 0) {
-      if (match) {
-        console.info(tag + ': skipping exercise create; matched foreign ' + match.name);
-      } else {
-        try {
-          const ex = timing.exercise;
-          const notes = buildNotes(row.exercises);
-          const name = createExerciseAt(ex.startUtcMs, ex.startOffsetSeconds,
-            ex.endUtcMs, ex.endOffsetSeconds, notes);
-          if (name) {
-            newExerciseIds.push(name);
-            // Same rationale as the weight write above: persist before any
-            // later step can fail and leave the datapoint untracked.
-            writeHealthIds(row.rowNum, cols.healthIdsCol, newWeightIds.concat(newExerciseIds).concat(split.other));
-          }
-          console.info(tag + ': createExerciseAt -> ' + (name || '<no name>'));
-        } catch (err) {
-          console.error(tag + ': createExerciseAt failed: ' + err);
-          exerciseFailed = true;
+      try {
+        const ex = timing.exercise;
+        const notes = buildNotes(row.exercises);
+        const name = createExerciseAt(ex.startUtcMs, ex.startOffsetSeconds,
+          ex.endUtcMs, ex.endOffsetSeconds, notes);
+        if (name) {
+          newExerciseIds.push(name);
+          // Same rationale as the weight write above: persist before any
+          // later step can fail and leave the datapoint untracked.
+          writeHealthIds(row.rowNum, cols.healthIdsCol, newWeightIds.concat(newExerciseIds).concat(split.other));
         }
+        console.info(tag + ': createExerciseAt -> ' + (name || '<no name>'));
+      } catch (err) {
+        console.error(tag + ': createExerciseAt failed: ' + err);
+        exerciseFailed = true;
       }
     }
   }

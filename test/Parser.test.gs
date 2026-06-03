@@ -487,83 +487,78 @@ function runParserTests() {
     });
   });
 
-  t('resolveForeignMatches_ off-date row skips time-range, falls into ordinal pairing', () => {
-    // Row dated 2026-01-15 but edited 2026-01-20. Under the old logic this
-    // landed in timeRangeRows and silently failed (zero overlap). New logic
-    // sends it to ordinalRows so 1-row-1-candidate cases pair correctly.
+  t('resolveForeignMatches_ matches across a civil-date boundary (midnight-crossing workout)', () => {
+    // Edits 11:45pm EST Jan 15 -> 12:15am EST Jan 16 (exerciseFirstEditedAt is
+    // still on row.date Jan 15). The window straddles midnight, so candidates
+    // are probed for both Jan 15 and Jan 16. The foreign session was logged
+    // just after midnight (12:00-12:30am EST Jan 16) — a different civil date
+    // than the row — and must still match on absolute-UTC overlap.
+    const row = fRow_({
+      rowNum: 10,
+      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 16, 4, 45, 0)),   // 11:45pm EST Jan 15
+      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 16, 5, 15, 0))    // 12:15am EST Jan 16
+    });
+    const cand = fCand_('foreign/after-midnight',
+      Date.UTC(2026, 0, 16, 5, 0, 0), Date.UTC(2026, 0, 16, 5, 30, 0));   // 12:00-12:30am EST Jan 16
+    withStubbedList(() => [cand], () => {
+      const plan = resolveForeignMatches_([row], [row]);
+      eq(plan[10] && plan[10].name, 'foreign/after-midnight');
+    });
+  });
+
+  t('resolveForeignMatches_ off-date row gets no match (no ordinal fallback)', () => {
+    // Row dated Jan 15 but edited Jan 20: off-date timestamps anchor no
+    // trustworthy window. With the ordinal fallback removed the row gets no
+    // alignment and falls through to its own synthetic/prior timing.
     const row = fRow_({
       exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 20, 22, 0, 0)),
       exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 20, 23, 0, 0))
     });
     const cand = fCand_('foreign/A',
-      Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
+      Date.UTC(2026, 0, 20, 22, 0, 0), Date.UTC(2026, 0, 20, 23, 0, 0));
     withStubbedList(() => [cand], () => {
       const plan = resolveForeignMatches_([row], [row]);
-      eq(plan[10] && plan[10].name, 'foreign/A');
+      eq(plan[10], undefined);
     });
   });
 
-  t('resolveForeignMatches_ no-timestamp row pairs via ordinal when counts match', () => {
+  t('resolveForeignMatches_ no-timestamp row gets no match (no ordinal fallback)', () => {
     const row = fRow_({ rowNum: 10 });
     const cand = fCand_('foreign/A',
       Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
     withStubbedList(() => [cand], () => {
       const plan = resolveForeignMatches_([row], [row]);
-      eq(plan[10] && plan[10].name, 'foreign/A');
+      eq(plan[10], undefined);
     });
   });
 
-  t('resolveForeignMatches_ ordinal pairs N rows to N candidates sorted asc', () => {
-    const rowA = fRow_({ rowNum: 5 });
-    const rowB = fRow_({ rowNum: 10 });
-    const candEarly = fCand_('foreign/early',
-      Date.UTC(2026, 0, 15, 15, 0, 0), Date.UTC(2026, 0, 15, 16, 0, 0));
-    const candLate = fCand_('foreign/late',
-      Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
-    withStubbedList(() => [candLate, candEarly], () => {   // unsorted input
-      const plan = resolveForeignMatches_([rowA, rowB], [rowA, rowB]);
-      eq(plan[5] && plan[5].name, 'foreign/early');         // lowest rowNum -> earliest cand
-      eq(plan[10] && plan[10].name, 'foreign/late');
-    });
-  });
-
-  t('resolveForeignMatches_ ordinal partial-pairs when rows > candidates (lowest rowNum wins)', () => {
-    const rowA = fRow_({ rowNum: 5 });
-    const rowB = fRow_({ rowNum: 10 });
-    const cand = fCand_('foreign/A',
-      Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
-    withStubbedList(() => [cand], () => {
-      const plan = resolveForeignMatches_([rowA, rowB], [rowA, rowB]);
-      eq(plan[5] && plan[5].name, 'foreign/A');
-      eq(plan[10], undefined);   // extra row goes unmatched, creates its own datapoint
-    });
-  });
-
-  t('resolveForeignMatches_ ordinal partial-pairs when candidates > rows (earliest cand wins)', () => {
-    const row = fRow_({ rowNum: 10 });
-    const candEarly = fCand_('foreign/early',
-      Date.UTC(2026, 0, 15, 15, 0, 0), Date.UTC(2026, 0, 15, 16, 0, 0));
-    const candLate = fCand_('foreign/late',
-      Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
-    withStubbedList(() => [candLate, candEarly], () => {
-      const plan = resolveForeignMatches_([row], [row]);
-      eq(plan[10] && plan[10].name, 'foreign/early');
-    });
-  });
-
-  t('resolveForeignMatches_ excludes sync-created candidates (self-owned name)', () => {
+  t('resolveForeignMatches_ excludes sync-created candidates (own datapoint not realigned)', () => {
+    // On-date row whose window overlaps the candidate — but the candidate IS
+    // the row's own prior datapoint, so it must be excluded rather than
+    // aligned to itself on re-sync.
     const ownName = 'users/me/dataTypes/exercise/dataPoints/123';
-    const row = fRow_({ rowNum: 10, healthIds: [ownName] });
+    const row = fRow_({
+      rowNum: 10,
+      healthIds: [ownName],
+      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),
+      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0))
+    });
     const cand = fCand_(ownName,
       Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
     withStubbedList(() => [cand], () => {
       const plan = resolveForeignMatches_([row], [row]);
-      eq(plan[10], undefined);   // own datapoint not re-matched to self
+      eq(plan[10], undefined);
     });
   });
 
-  t('resolveForeignMatches_ excludes candidates already matched-elsewhere by a non-ready row', () => {
-    const readyRow = fRow_({ rowNum: 10 });
+  t('resolveForeignMatches_ excludes candidates already aligned-elsewhere by a non-ready row', () => {
+    // The ready row's window overlaps the candidate (so it would align absent
+    // the exclusion), but a non-ready row already aligned to it.
+    const readyRow = fRow_({
+      rowNum: 10,
+      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),
+      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0))
+    });
     const nonReadyRow = fRow_({ rowNum: 5, matchedHealthSession: 'foreign/A' });
     const cand = fCand_('foreign/A',
       Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
@@ -590,11 +585,9 @@ function runParserTests() {
       Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
     withStubbedList(() => [cand], () => {
       const plan = resolveForeignMatches_([row], [row]);
-      // No time-range match (clamped window doesn't reach 5pm). Falls into
-      // ordinal pairing instead — and since the row IS on-date for
-      // exerciseFirstEditedAt, it's in timeRangeRows, not ordinalRows. So
-      // no match. (If clamping were absent, plan[10] would have been
-      // 'foreign/late'.)
+      // Clamped window (9am + 2h + 30min buffer = 12:30pm cutoff) doesn't
+      // reach the 5pm candidate, so no overlap and no alignment. (If clamping
+      // were absent, the 5-day window would have caught 'foreign/late'.)
       eq(plan[10], undefined);
     });
   });
