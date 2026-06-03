@@ -38,7 +38,10 @@ function runParserTests() {
     [{ weight: 135, reps: 5, sets: 3, assisted: false }]));
   t('junk line skipped', () => eq(parseExerciseCell('garbage\n135x5'),
     [{ weight: 135, reps: 5, sets: null, assisted: false }]));
-  t('zero reps rejected', () => eq(parseExerciseCell('135x0'), []));
+  t('zero reps skipped silently "135x0" (not performed)', () => eq(parseExerciseCell('135x0'), []));
+  t('zero sets skipped silently "90x6x0" (not performed)', () => eq(parseExerciseCell('90x6x0'), []));
+  t('zero-count entry dropped, valid entries kept', () => eq(parseExerciseCell('135x5x3, 90x6x0, 95x0'),
+    [{ weight: 135, reps: 5, sets: 3, assisted: false }]));
   t('negative weight rejected', () => eq(parseExerciseCell('-5'), []));
   t('decimal weight allowed "22.5" (reps/sets unknown)', () => eq(parseExerciseCell('22.5'),
     [{ weight: 22.5, reps: null, sets: null, assisted: false }]));
