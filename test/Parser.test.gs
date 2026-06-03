@@ -309,10 +309,15 @@ function runParserTests() {
     eq(r.startUtcMs, Date.UTC(2026, 0, 15, 18, 0, 0));
     eq(r.endUtcMs, Date.UTC(2026, 0, 15, 19, 0, 0));
   });
-  t('syntheticExerciseInterval_ throws when end spills past midnight', () => {
-    let threw = false;
-    try { syntheticExerciseInterval_(JAN_15_NOON_UTC, 12); } catch (e) { threw = true; }
-    if (!threw) throw new Error('expected throw for ordinal 12 (startHour=24, endHour=25)');
+  t('syntheticExerciseInterval_ clamps to final slot when end would spill past midnight', () => {
+    // ordinal 12 would yield startHour=24/endHour=25; instead of throwing, it
+    // clamps into the last 1h slot of the day (23:00-24:00 local = 4-5am UTC
+    // next day in EST).
+    const r = syntheticExerciseInterval_(JAN_15_NOON_UTC, 12);
+    eq(r.startUtcMs, Date.UTC(2026, 0, 16, 4, 0, 0));
+    eq(r.endUtcMs, Date.UTC(2026, 0, 16, 5, 0, 0));
+    eq(r.startOffsetSeconds, EST);
+    eq(r.endOffsetSeconds, EST);
   });
 
   t('resolveRowTiming_ edit source preserves interval within bounds', () => {

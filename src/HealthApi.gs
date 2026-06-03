@@ -46,6 +46,7 @@ function httpJson_(method, url, payload) {
         return body ? JSON.parse(body) : {};
       }
       lastErr = new Error('Health API ' + method + ' ' + url + ' -> ' + code + ': ' + body);
+      lastErr.statusCode = code;
       transient = code === 429 || (code >= 500 && code < 600);
     }
     const isLastAttempt = attempt === maxAttempts - 1;
@@ -59,6 +60,26 @@ function httpJson_(method, url, payload) {
     Utilities.sleep(backoffMs);
   }
   throw lastErr;
+}
+
+// True when a thrown httpJson_ error carries an HTTP 404 (the datapoint is
+// gone server-side — e.g. deleted in the Health app). Callers use this to
+// recover (recreate weight, treat an exercise delete as already done) instead
+// of retrying a GET/DELETE that will never succeed and wedging the row.
+function isNotFoundError_(err) {
+  return !!(err && err.statusCode === 404);
+}
+
+// Canonical datapoint resource name, e.g.
+//   users/{user}/dataTypes/{type}/dataPoints/{id}
+// Capture group 1 is the data type. No /g flag, so .exec is stateless and the
+// shared instance is safe to reuse.
+const DATAPOINT_NAME_RE_ = /^users\/[^/]+\/dataTypes\/([^/]+)\/dataPoints\/[^/]+$/;
+
+// Rewrite a stored resource name's numeric user id to the literal `me` the
+// API requires on GET/PATCH/batchDelete URLs.
+function toMeName_(name) {
+  return String(name).replace(/^users\/[^/]+\//, 'users/me/');
 }
 
 // POST/create response is a Long-Running Operation wrapper:
@@ -79,8 +100,7 @@ function extractDataPointName_(createResponse) {
 // the client (matches the literal-`me` requirement already documented for
 // batchDelete).
 function getDataPoint(name) {
-  const meName = String(name).replace(/^users\/[^/]+\//, 'users/me/');
-  const url = HEALTH_API_BASE + '/' + meName;
+  const url = HEALTH_API_BASE + '/' + toMeName_(name);
   return httpJson_('GET', url);
 }
 
@@ -180,13 +200,17 @@ function buildSampleTimeFromUtc_(utcMs, offsetSeconds) {
 // ordinal among rows on that date. Used as the fallback when a row has no
 // edit-derived timing (legacy rows, or rows imported in bulk).
 function syntheticExerciseInterval_(date, ordinal) {
-  const startHour = SYNTHETIC_START_HOUR + ordinal;
-  const endHour = startHour + SYNTHETIC_DURATION_HOURS;
+  let startHour = SYNTHETIC_START_HOUR + ordinal;
+  let endHour = startHour + SYNTHETIC_DURATION_HOURS;
   if (endHour > 24) {
-    throw new Error('syntheticExerciseInterval_: ordinal ' + ordinal + ' yields endHour '
-      + endHour + ' which spills past midnight (SYNTHETIC_START_HOUR='
-      + SYNTHETIC_START_HOUR + ', SYNTHETIC_DURATION_HOURS='
-      + SYNTHETIC_DURATION_HOURS + ').');
+    // More same-date rows than there are distinct hours left in the day. Rather
+    // than error the row (which would re-fail every pass), clamp it into the
+    // final slot. Synthetic timing is the bulk-import fallback, so overlapping
+    // a few rows at end-of-day is acceptable — the goal is a valid interval.
+    console.warn('syntheticExerciseInterval_: ordinal ' + ordinal + ' would spill past '
+      + 'midnight; clamping to the final ' + SYNTHETIC_DURATION_HOURS + 'h slot of the day.');
+    endHour = 24;
+    startHour = endHour - SYNTHETIC_DURATION_HOURS;
   }
   const tz = getTz_();
   const p = civilDateParts_(tz, date);
@@ -244,7 +268,7 @@ function listStrengthOnDate(date) {
 function splitHealthIdsByType_(names) {
   const out = { weight: [], exercise: [], other: [] };
   (names || []).forEach(n => {
-    const m = /^users\/[^/]+\/dataTypes\/([^/]+)\/dataPoints\/[^/]+$/.exec(n);
+    const m = DATAPOINT_NAME_RE_.exec(n);
     if (!m) {
       out.other.push(n);
       return;
@@ -309,8 +333,7 @@ function createWeightAt(sampleUtcMs, sampleOffsetSeconds, lbs) {
 // preserved server-side. See AGENTS.md "Health API: PATCH on dataPoints"
 // for the full probe matrix.
 function patchWeight(name, sampleTime, lbs) {
-  const meName = String(name).replace(/^users\/[^/]+\//, 'users/me/');
-  const url = HEALTH_API_BASE + '/' + meName;
+  const url = HEALTH_API_BASE + '/' + toMeName_(name);
   const grams = Math.round(lbs * GRAMS_PER_LB);
   const payload = {
     weight: { sampleTime: sampleTime, weightGrams: grams }
@@ -332,7 +355,7 @@ function deleteDataPointsByName(names) {
   if (!names || names.length === 0) return;
   const byType = {};
   names.forEach(n => {
-    const m = /^users\/[^/]+\/dataTypes\/([^/]+)\/dataPoints\/[^/]+$/.exec(n);
+    const m = DATAPOINT_NAME_RE_.exec(n);
     if (!m) {
       console.warn('deleteDataPointsByName: unparseable name "' + n + '"; skipping.');
       return;
