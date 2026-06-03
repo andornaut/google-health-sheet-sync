@@ -293,7 +293,7 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
     // supplies a foreign session's interval to align timing when one overlaps
     // the row's edit window. See FOREIGN_MATCH_BUFFER_MS in Config.gs.
     const exerciseReadyRows = ready.filter(r => r.exerciseReady).map(r => r.row);
-    const matchPlan = resolveForeignMatches_(rows, exerciseReadyRows);
+    const alignmentPlan = resolveForeignMatches_(rows, exerciseReadyRows);
     const cols = {
       exerciseSyncedAtCol: exerciseSyncedAtCol,
       weightSyncedAtCol: weightSyncedAtCol,
@@ -306,8 +306,8 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
     for (let i = 0; i < ready.length; i++) {
       const entry = ready[i];
       const ordinal = ordinalByRowNum[entry.row.rowNum];
-      const match = matchPlan[entry.row.rowNum] || null;
-      if (syncOneRow_(entry.row, ordinal, match, entry.weightReady, entry.exerciseReady, cols, i + 1, ready.length)) ok++;
+      const foreignMatch = alignmentPlan[entry.row.rowNum] || null;
+      if (syncOneRow_(entry.row, ordinal, foreignMatch, entry.weightReady, entry.exerciseReady, cols, i + 1, ready.length)) ok++;
       else errors++;
     }
   } finally {
@@ -330,6 +330,14 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
     } else if (!concurrentEdit) {
       props.deleteProperty(PENDING_DIRTY_KEY);
     }
+    // Bookend the pass: outcome counts plus whether the dirty flag survives
+    // (so a reader knows if another poll will follow without inspecting it).
+    const willRetry = workRemaining || concurrentEdit;
+    console.info('syncDirtyRows: pass complete — ' + ok + ' synced, ' + errors + ' error(s)'
+      + (deferredCount ? ', ' + deferredCount + ' deferred' : '')
+      + (waitingCount ? ', ' + waitingCount + ' debouncing' : '')
+      + (concurrentEdit ? ', concurrent edit landed' : '')
+      + (willRetry ? '; pending flag kept, next poll will retry.' : '; queue drained.'));
     lock.releaseLock();
   }
   return { ok: ok, errors: errors, deferred: deferredCount };
@@ -377,18 +385,18 @@ function resolveForeignMatches_(allRows, readyRows) {
   });
 
   // Only rows with on-row-date edit timestamps anchor a trustworthy window.
-  // Clamp to MAX_EXERCISE_DURATION_MS the same way resolveRowTiming_ does so a
-  // row whose exercisesLastEditedAt drifted far past exerciseFirstEditedAt
-  // (late corrections that keep sticky first-edit + advance last-edit) doesn't
-  // produce a multi-day window biased toward the longest unrelated candidate.
+  // clampExerciseDurationMs_ caps the window the same way resolveRowTiming_
+  // caps the recorded interval, so a row whose exercisesLastEditedAt drifted
+  // far past exerciseFirstEditedAt (late corrections that keep sticky
+  // first-edit + advance last-edit) doesn't produce a multi-day window biased
+  // toward the longest unrelated candidate.
   const windows = readyRows
     .filter(r => r.exercises.length > 0
       && r.exerciseFirstEditedAt && r.exercisesLastEditedAt
       && ymd(r.exerciseFirstEditedAt) === ymd(r.date))
     .map(r => {
       const startMs = r.exerciseFirstEditedAt.getTime();
-      const rawDuration = r.exercisesLastEditedAt.getTime() - startMs;
-      const clampedEndMs = startMs + Math.min(rawDuration, MAX_EXERCISE_DURATION_MS);
+      const clampedEndMs = startMs + clampExerciseDurationMs_(r.exercisesLastEditedAt.getTime() - startMs);
       return {
         rowNum: r.rowNum,
         windowStart: startMs - FOREIGN_MATCH_BUFFER_MS,
@@ -469,6 +477,14 @@ function buildOrdinalMap_(rows) {
   return ordinalByRowNum;
 }
 
+// Cap an edit-derived exercise duration at MAX_EXERCISE_DURATION_MS. Shared by
+// resolveRowTiming_'s 'edit' interval (which first applies the MIN floor) and
+// the foreign-match window in resolveForeignMatches_, so the upper bound stays
+// consistent between the recorded interval and the window we match against.
+function clampExerciseDurationMs_(rawDurationMs) {
+  return Math.min(rawDurationMs, MAX_EXERCISE_DURATION_MS);
+}
+
 // Resolve the exercise interval and weight sample time independently, per
 // phase, with these rules:
 //
@@ -514,11 +530,7 @@ function resolveRowTiming_(row, ordinal, priorExercise, foreignInterval) {
   } else if (exerciseEditOnRowDate) {
     const startMs = row.exerciseFirstEditedAt.getTime();
     const rawDuration = row.exercisesLastEditedAt.getTime() - startMs;
-    const clampedDuration = Math.min(
-      Math.max(rawDuration, MIN_EXERCISE_DURATION_MS),
-      MAX_EXERCISE_DURATION_MS
-    );
-    const endMs = startMs + clampedDuration;
+    const endMs = startMs + clampExerciseDurationMs_(Math.max(rawDuration, MIN_EXERCISE_DURATION_MS));
     exercise = {
       startUtcMs: startMs,
       startOffsetSeconds: getTzOffsetSeconds_(tz, row.exerciseFirstEditedAt),
@@ -576,7 +588,7 @@ function resolveRowTiming_(row, ordinal, priorExercise, foreignInterval) {
 // Returns true if the pass made forward progress on the row without errors
 // (including the case where the row stays dirty because the other phase is
 // still pending). Returns false if any attempted phase failed.
-function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, doneIdx, total) {
+function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, cols, doneIdx, total) {
   const dateKey = ymd(row.date);
   const tag = '[' + doneIdx + '/' + total + '] ' + dateKey + ' row ' + row.rowNum;
   const phases = [];
@@ -585,7 +597,7 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
   console.info(tag + ': starting phases=[' + phases.join(',') + '] (exercises=' + row.exercises.length
     + ', bodyweight=' + (row.bodyweight === null ? 'none' : row.bodyweight)
     + ', oldIds=' + row.healthIds.length
-    + (match ? ', align=' + match.name : '') + ')');
+    + (foreignMatch ? ', align=' + foreignMatch.name : '') + ')');
 
   const split = splitHealthIdsByType_(row.healthIds);
 
@@ -612,7 +624,7 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
   let priorWeightFetchFailed = false;
   const exerciseEditOnRowDate = row.exerciseFirstEditedAt && row.exercisesLastEditedAt
     && ymd(row.exerciseFirstEditedAt) === ymd(row.date);
-  if (exerciseWillCreate && !match && !exerciseEditOnRowDate && split.exercise.length > 0) {
+  if (exerciseWillCreate && !foreignMatch && !exerciseEditOnRowDate && split.exercise.length > 0) {
     try {
       priorExercise = getDataPoint(split.exercise[0]);
     } catch (err) {
@@ -631,9 +643,10 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
 
   let timing;
   try {
-    // `match`, when set, is an overlapping foreign session whose interval the
-    // resolver borrows verbatim ('foreign' wins over edit/prior/synthetic).
-    timing = resolveRowTiming_(row, ordinal, priorExercise, match);
+    // `foreignMatch`, when set, is an overlapping foreign session whose
+    // interval the resolver borrows verbatim ('foreign' wins over
+    // edit/prior/synthetic).
+    timing = resolveRowTiming_(row, ordinal, priorExercise, foreignMatch);
   } catch (err) {
     console.error(tag + ': resolveRowTiming_ failed: ' + err);
     return false;
@@ -731,7 +744,8 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
           // later step can fail and leave the datapoint untracked.
           writeHealthIds(row.rowNum, cols.healthIdsCol, newWeightIds.concat(newExerciseIds).concat(split.other));
         }
-        console.info(tag + ': createExerciseAt -> ' + (name || '<no name>'));
+        console.info(tag + ': createExerciseAt' + (foreignMatch ? ' (foreign-aligned)' : '')
+          + ' -> ' + (name || '<no name>'));
       } catch (err) {
         console.error(tag + ': createExerciseAt failed: ' + err);
         exerciseFailed = true;
@@ -741,7 +755,7 @@ function syncOneRow_(row, ordinal, match, weightReady, exerciseReady, cols, done
 
   writeHealthIds(row.rowNum, cols.healthIdsCol, newWeightIds.concat(newExerciseIds).concat(split.other));
   if (exerciseReady) {
-    writeMatchedHealthSession(row.rowNum, cols.matchedHealthSessionCol, match ? match.name : '');
+    writeMatchedHealthSession(row.rowNum, cols.matchedHealthSessionCol, foreignMatch ? foreignMatch.name : '');
   }
 
   // Concurrent-edit guards, phase-isolated. Each phase compares its own
