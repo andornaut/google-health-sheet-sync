@@ -289,8 +289,15 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
       console.info('syncDirtyRows: ' + ready.length + ' ready row(s)');
     }
 
+    // When SKIP_FOREIGN_DUPLICATES is off (the default), every exercise-dirty
+    // row creates its own datapoint — the Google Health app merges overlapping
+    // same-type sessions into one card, so a device-logged session and our
+    // sync-created one coexist without a visible duplicate while our notes
+    // still reach Health. See SKIP_FOREIGN_DUPLICATES in Config.gs.
     const exerciseReadyRows = ready.filter(r => r.exerciseReady).map(r => r.row);
-    const matchPlan = resolveForeignMatches_(rows, exerciseReadyRows);
+    const matchPlan = SKIP_FOREIGN_DUPLICATES
+      ? resolveForeignMatches_(rows, exerciseReadyRows)
+      : {};
     const cols = {
       exerciseSyncedAtCol: exerciseSyncedAtCol,
       weightSyncedAtCol: weightSyncedAtCol,
