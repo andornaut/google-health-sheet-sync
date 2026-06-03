@@ -13,6 +13,9 @@ function parseExerciseCell(raw) {
       console.warn('Parser: could not parse "' + trimmed + '"');
       continue;
     }
+    // 0 sets or 0 reps means the exercise was not performed: skip it silently
+    // (no log), distinct from an unknown/undefined count (null), which is logged.
+    if (entry.sets === 0 || entry.reps === 0) continue;
     entries.push(entry);
   }
   return entries;
@@ -33,8 +36,8 @@ function parseLine_(line) {
   const weight = nums[0];
   const reps = parts.length >= 2 ? nums[1] : null;
   const sets = parts.length === 3 ? nums[2] : null;
-  if (reps !== null && (!Number.isInteger(reps) || reps < 1)) return null;
-  if (sets !== null && (!Number.isInteger(sets) || sets < 1)) return null;
+  if (reps !== null && (!Number.isInteger(reps) || reps < 0)) return null;
+  if (sets !== null && (!Number.isInteger(sets) || sets < 0)) return null;
 
   return { weight: weight, reps: reps, sets: sets, assisted: assisted };
 }
