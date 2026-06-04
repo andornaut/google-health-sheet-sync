@@ -95,8 +95,8 @@ function runParserTests() {
     'Pull up, 25 lbs (assisted)'
   ));
 
-  t('buildNotes one line per entry', () => {
-    const notes = buildNotes([
+  t('buildNotes one line per entry, session suffix on last line', () => {
+    const notes = buildNotes(45 * 60 * 1000, [
       { name: 'Bench press', entries: [
         { weight: 135, reps: 5, sets: 3, assisted: false },
         { weight: 145, reps: 3, sets: 2, assisted: false }
@@ -106,7 +106,21 @@ function runParserTests() {
     eq(notes,
       'Bench press, 135 lbs, 3 sets of 5\n'
       + 'Bench press, 145 lbs, 2 sets of 3\n'
-      + 'Squat, 225 lbs, 3 sets of 5');
+      + 'Squat, 225 lbs, 3 sets of 5, 45 minute session');
+  });
+
+  t('buildNotes matches foreign single-entry example', () => {
+    const notes = buildNotes(2700 * 1000, [
+      { name: 'Bench press', entries: [{ weight: 190, reps: 5, sets: 5, assisted: false }] }
+    ]);
+    eq(notes, 'Bench press, 190 lbs, 5 sets of 5, 45 minute session');
+  });
+
+  t('buildNotes rounds duration to nearest minute', () => {
+    const notes = buildNotes(29 * 1000, [
+      { name: 'Bench press', entries: [{ weight: 190, reps: 5, sets: 5, assisted: false }] }
+    ]);
+    eq(notes, 'Bench press, 190 lbs, 5 sets of 5');
   });
 
   t('parseHealthIds_ empty/null', () => {

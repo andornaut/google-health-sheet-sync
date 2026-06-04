@@ -4,14 +4,19 @@
 // itself has no structured slot for per-set strength data
 // (Exercise.exerciseMetadata only carries hasGps / poolLengthMillimeters),
 // so the notes field is the only lever we have.
-function buildNotes(parsedExercises) {
+function buildNotes(durationMs, parsedExercises) {
   const lines = [];
   for (const ex of parsedExercises) {
     for (const entry of ex.entries) {
       lines.push(formatEntryNote_(ex.name, entry));
     }
   }
-  return lines.join('\n');
+  let notes = lines.join('\n');
+  const minutes = Math.round(durationMs / 60000);
+  if (minutes > 0) {
+    notes += (notes ? ', ' : '') + minutes + ' minute session';
+  }
+  return notes;
 }
 
 function formatEntryNote_(exerciseName, entry) {

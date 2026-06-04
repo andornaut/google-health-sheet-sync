@@ -757,7 +757,7 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
     if (!exerciseFailed && SYNC_EXERCISES && row.exercises.length > 0) {
       try {
         const ex = timing.exercise;
-        const notes = buildNotes(row.exercises);
+        const notes = buildNotes(ex.endUtcMs - ex.startUtcMs, row.exercises);
         const name = createExerciseAt(ex.startUtcMs, ex.startOffsetSeconds,
           ex.endUtcMs, ex.endOffsetSeconds, notes);
         if (name) {
