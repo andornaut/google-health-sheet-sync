@@ -57,6 +57,9 @@ function runParserTests() {
   t('bodyweight empty -> null', () => eq(parseBodyweight(''), null));
   t('bodyweight junk -> null', () => eq(parseBodyweight('heavy'), null));
   t('bodyweight zero -> null', () => eq(parseBodyweight('0'), null));
+  t('bodyweight at cap "999" -> 999', () => eq(parseBodyweight('999'), 999));
+  t('bodyweight above cap "1000" -> null', () => eq(parseBodyweight('1000'), null));
+  t('bodyweight typo "1850" -> null (implausible)', () => eq(parseBodyweight('1850'), null));
 
   t('formatEntryNote_ multiple sets', () => eq(
     formatEntryNote_('Bench press', { weight: 190, reps: 5, sets: 5, assisted: false }),
@@ -234,6 +237,44 @@ function runParserTests() {
       weight: ['users/me/dataTypes/weight/dataPoints/ok'],
       exercise: [],
       other: ['not-a-resource-name']
+    }
+  ));
+
+  t('toMeName_ rewrites numeric user id to me', () => eq(
+    toMeName_('users/1234567890/dataTypes/weight/dataPoints/abc'),
+    'users/me/dataTypes/weight/dataPoints/abc'
+  ));
+  t('toMeName_ leaves an already-me name unchanged', () => eq(
+    toMeName_('users/me/dataTypes/exercise/dataPoints/xyz'),
+    'users/me/dataTypes/exercise/dataPoints/xyz'
+  ));
+
+  t('isNotFoundError_ true for 404', () => eq(isNotFoundError_({ statusCode: 404 }), true));
+  t('isNotFoundError_ false for 500', () => eq(isNotFoundError_({ statusCode: 500 }), false));
+  t('isNotFoundError_ false for null', () => eq(isNotFoundError_(null), false));
+
+  t('clampExerciseDurationMs_ leaves sub-max durations untouched', () => eq(
+    clampExerciseDurationMs_(30 * 60 * 1000), 30 * 60 * 1000
+  ));
+  t('clampExerciseDurationMs_ caps at MAX_EXERCISE_DURATION_MS', () => eq(
+    clampExerciseDurationMs_(10 * 60 * 60 * 1000), MAX_EXERCISE_DURATION_MS
+  ));
+
+  t('humanizeMs_ sub-second -> ms', () => eq(humanizeMs_(500), '500ms'));
+  t('humanizeMs_ seconds rounds', () => eq(humanizeMs_(1500), '2s'));
+  t('humanizeMs_ exact minute', () => eq(humanizeMs_(60 * 1000), '1m'));
+  t('humanizeMs_ minutes + seconds', () => eq(humanizeMs_(90 * 1000), '1m 30s'));
+  t('humanizeMs_ negative clamps to 0ms', () => eq(humanizeMs_(-5), '0ms'));
+
+  t('buildSampleTimeFromUtc_ formats physical + civil time', () => eq(
+    buildSampleTimeFromUtc_(Date.UTC(2026, 0, 15, 17, 0, 0), -18000),
+    {
+      physicalTime: '2026-01-15T17:00:00Z',
+      utcOffset: '-18000s',
+      civilTime: {
+        date: { year: 2026, month: 1, day: 15 },
+        time: { hours: 12, minutes: 0, seconds: 0 }
+      }
     }
   ));
 

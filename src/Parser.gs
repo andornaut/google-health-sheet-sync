@@ -52,5 +52,11 @@ function parseBodyweight(raw) {
   if (text === '') return null;
   const n = Number(text);
   if (!Number.isFinite(n) || n <= 0) return null;
+  // Reject implausible values (likely typos, e.g. 1850 for 185.0). Returning
+  // null treats the cell as no-bodyweight rather than syncing a bad value.
+  if (n > MAX_BODYWEIGHT_LB) {
+    console.warn('Parser: ignoring implausible bodyweight "' + text + '" (> ' + MAX_BODYWEIGHT_LB + ' lb)');
+    return null;
+  }
   return n;
 }

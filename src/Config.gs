@@ -114,11 +114,6 @@ const LAST_EDIT_QUIESCE_MS = 60 * 1000;
 // they display as one card.
 const FOREIGN_MATCH_BUFFER_MS = 30 * 60 * 1000;
 
-// Toggle which data types this script writes to the Google Health API.
-// Both default to true; flip off to debug or to disable a category temporarily.
-const SYNC_EXERCISES = true;
-const SYNC_WEIGHT = true;
-
 const HEALTH_OAUTH_CLIENT_ID_KEY = 'HEALTH_OAUTH_CLIENT_ID';
 const HEALTH_OAUTH_CLIENT_SECRET_KEY = 'HEALTH_OAUTH_CLIENT_SECRET';
 const HEALTH_SERVICE_NAME = 'googlehealth';
@@ -132,3 +127,7 @@ const HEALTH_OAUTH_SCOPES = [
 const HEALTH_API_BASE = 'https://health.googleapis.com/v4';
 
 const GRAMS_PER_LB = 453.59237;
+
+// Reject bodyweight values above this as fat-finger typos (e.g. 1850 for
+// 185.0). Without the cap the Health API accepts and syncs the bad value.
+const MAX_BODYWEIGHT_LB = 999;

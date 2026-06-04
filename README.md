@@ -21,7 +21,7 @@ Google Apps Script to sync strength-training and bodyweight data from Google She
 
 ## Spreadsheet Layout
 
-The script always operates on the first tab of the spreadsheet (leftmost; name doesn't matter). Columns are auto-detected by header name and position doesn't matter — any header that isn't `Date`, `Weight`, or a managed column is treated as an exercise. Recommended layout:
+The script always operates on the first tab of the spreadsheet (leftmost; name doesn't matter). It is selected purely by position, so reordering tabs to move a different sheet into the leftmost slot silently redirects the sync to that sheet — keep your data tab leftmost. Columns are auto-detected by header name and position doesn't matter — any header that isn't `Date`, `Weight`, or a managed column is treated as an exercise. Recommended layout:
 
 - **`Date`** (leftmost)
 - **Exercise Columns** (middle; headers are used as exercise names)
@@ -141,10 +141,10 @@ Edit [Config.gs](src/Config.gs) to customize:
 - `SYNTHETIC_START_HOUR` / `SYNTHETIC_DURATION_HOURS` (default `12` / `1`): synthetic session start hour and duration when edit-derived timing is unavailable (legacy/backfill rows).
 - `LAST_EDIT_QUIESCE_MS` (default 60 sec): edit-burst "still typing" guard for the exercise phase. A row whose `Exercises Last Edited At` is within this window is skipped on the current poll and retried on the next, so a poll firing mid-edit doesn't push a half-typed row. Weight phase has no debounce.
 - `MIN_EXERCISE_DURATION_MS` / `MAX_EXERCISE_DURATION_MS` (defaults 5 min / 120 min): bounds for the edit-derived interval duration. The floor satisfies the Health API's "endTime must be strictly after startTime" requirement when only a single edit has happened; the ceiling caps multi-hour-spanning rows at a plausible workout length.
-- `FOREIGN_MATCH_BUFFER_MS` (default 30 min): when checking whether a non-sync-created Strength Training activity matches a row's edit window, allow this much slack on either side. If a foreign activity overlaps, the row is treated as already represented in Health (no own exercise written) and the foreign datapoint's resource name is recorded in the `Matched Health Session` column.
+- `FOREIGN_MATCH_BUFFER_MS` (default 30 min): when checking whether a non-sync-created Strength Training activity (e.g. one logged by a watch/Fitbit) overlaps a row's edit window, allow this much slack on either side. The row **always** writes its own exercise datapoint; an overlapping foreign session only supplies its start/end interval for timing alignment (the manual start/stop is more accurate than the edit-derived window), and the foreign datapoint's resource name is recorded in the `Matched Health Session` column. Rows without same-date exercise edit timestamps get no match and fall through to synthetic/prior timing.
 - `POLL_INTERVAL_MIN` (default 5): trigger cadence for `flushIfPending`. Apps Script's minimum is 1 minute.
-- `MAX_ROWS_PER_SYNC` (default 75): maximum rows processed per sync pass. Rows are processed newest-first; anything over the cap is deferred to the next poll. At ~3.3s/row this leaves comfortable margin under Apps Script's 6-minute execution limit.
-- `SYNC_EXERCISES` / `SYNC_WEIGHT` (default `true`): toggle which datapoint types are written.
+- `MAX_ROWS_PER_SYNC` (default 90): maximum rows processed per sync pass. Rows are processed newest-first; anything over the cap is deferred to the next poll. At ~3.5s/row this leaves comfortable margin under Apps Script's 6-minute execution limit.
+- `MAX_BODYWEIGHT_LB` (default 999): bodyweight values above this are treated as typos and ignored.
 
 Run **Sync ▸ Run setup** after editing timing configurations.
 
@@ -165,3 +165,4 @@ Run **Sync ▸ Run setup** after editing timing configurations.
 - **403: Could not mint UberMint from GaiaMint**: The token contains mixed scopes. Re-run **Sync ▸ Authorize Health API** using the menu.
 - **`Health OAuth not configured`**: Ensure `HEALTH_OAUTH_CLIENT_ID` and `HEALTH_OAUTH_CLIENT_SECRET` are set in Apps Script Properties.
 - **Redirect URI Mismatch**: Verify the redirect URL in GCP credentials matches your Script ID.
+- **Failure emails**: An unrecoverable configuration error (missing required columns, duplicate exercise headers) throws out of the `flushIfPending` trigger, so Apps Script emails the script owner about the failed execution automatically. The dirty flag is left set, so once you fix the misconfig the next poll syncs the backlog without needing an edit or manual sync. While it stays broken the trigger fails every poll; throttle repeat emails by setting the cadence under **Apps Script ▸ Triggers ▸ notifications** (e.g. daily). Transient per-row Health API errors are not unrecoverable; they retry automatically and are visible in the Apps Script **Executions** log.
