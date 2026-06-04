@@ -218,12 +218,15 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
   let errors = 0;
   let waitingCount = 0;
   let deferredCount = 0;
+  // Set when the pass hits a misconfiguration that retrying can't fix (missing
+  // columns, duplicate headers, or any other throw out of the body). The catch
+  // emails the owner; the finally clears the dirty flag so we don't re-run and
+  // re-email every poll. A later edit or manual sync re-triggers.
+  let unrecoverable = false;
   try {
     const { rows, exerciseSyncedAtCol, weightSyncedAtCol, healthIdsCol, exercisesLastEditedAtCol, weightEditedAtCol, matchedHealthSessionCol } = readRows();
     if (!exerciseSyncedAtCol || !weightSyncedAtCol || !healthIdsCol) {
-      console.error('syncDirtyRows: managed columns missing; run setup().');
-      errors = 1;
-      return { ok: 0, errors: errors };
+      throw new Error('Managed columns missing; run "Run setup" from the Sync menu before syncing.');
     }
     const dirty = rows.filter(r => !r.exerciseSyncedAt || !r.weightSyncedAt);
     if (dirty.length === 0) {
@@ -309,34 +312,56 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
       if (syncOneRow_(entry.row, ordinal, foreignMatch, entry.weightReady, entry.exerciseReady, cols, i + 1, ready.length)) ok++;
       else errors++;
     }
+  } catch (err) {
+    // Unrecoverable: a throw out of the sync body (missing required columns,
+    // duplicate exercise headers, etc.). Per-row API failures never reach here
+    // — syncOneRow_ catches them and they retry. Re-throw so the failure
+    // propagates uncaught: Apps Script then emails the script owner about the
+    // failed trigger execution (no MailApp needed), and manual entry points
+    // still toast and land the error in Executions. The finally LEAVES the
+    // dirty flag set (see below) so the next poll retries automatically once
+    // the misconfig is fixed — clearing it would orphan already-dirty rows
+    // until some future edit. Repeated failure emails are throttled via the
+    // trigger's notification cadence (Apps Script ▸ Triggers ▸ notifications),
+    // not by suppressing the retry.
+    unrecoverable = true;
+    console.error('syncDirtyRows: unrecoverable error: ' + err);
+    throw err;
   } finally {
-    // End-of-pass flag resolution:
-    //   - If work remains (quiescing, errors, deferred): ensure the flag is
-    //     set so a future poll picks it up. If a concurrent edit advanced
-    //     the generation already, its value is fine; otherwise write a fresh
-    //     one. (syncOneRow_ also calls markPendingDirty_ for partial-progress
-    //     rows, so ok-counted rows can leave the flag set too.)
-    //   - If no work remains AND the generation hasn't moved: the pass fully
-    //     drained the queue, safe to clear.
-    //   - If no work remains BUT the generation moved: an edit landed during
-    //     the pass that this pass didn't see (readRows snapshotted before it).
-    //     Leave the new generation in place so the next poll runs.
-    const genAtEnd = props.getProperty(PENDING_DIRTY_KEY);
-    const concurrentEdit = genAtEnd !== genAtStart;
-    const workRemaining = waitingCount > 0 || errors > 0 || deferredCount > 0;
-    if (workRemaining) {
-      if (!concurrentEdit) markPendingDirty_();
-    } else if (!concurrentEdit) {
-      props.deleteProperty(PENDING_DIRTY_KEY);
+    // NB: no `return` in this finally — a finally-return would swallow the
+    // re-thrown unrecoverable error and defeat the manual-path toast.
+    if (unrecoverable) {
+      // Leave the dirty flag untouched (still set) so the backlog syncs on the
+      // next poll after the misconfig is fixed. Just release the lock.
+    } else {
+      // End-of-pass flag resolution:
+      //   - If work remains (quiescing, errors, deferred): ensure the flag is
+      //     set so a future poll picks it up. If a concurrent edit advanced
+      //     the generation already, its value is fine; otherwise write a fresh
+      //     one. (syncOneRow_ also calls markPendingDirty_ for partial-progress
+      //     rows, so ok-counted rows can leave the flag set too.)
+      //   - If no work remains AND the generation hasn't moved: the pass fully
+      //     drained the queue, safe to clear.
+      //   - If no work remains BUT the generation moved: an edit landed during
+      //     the pass that this pass didn't see (readRows snapshotted before it).
+      //     Leave the new generation in place so the next poll runs.
+      const genAtEnd = props.getProperty(PENDING_DIRTY_KEY);
+      const concurrentEdit = genAtEnd !== genAtStart;
+      const workRemaining = waitingCount > 0 || errors > 0 || deferredCount > 0;
+      if (workRemaining) {
+        if (!concurrentEdit) markPendingDirty_();
+      } else if (!concurrentEdit) {
+        props.deleteProperty(PENDING_DIRTY_KEY);
+      }
+      // Bookend the pass: outcome counts plus whether the dirty flag survives
+      // (so a reader knows if another poll will follow without inspecting it).
+      const willRetry = workRemaining || concurrentEdit;
+      console.info('syncDirtyRows: pass complete — ' + ok + ' synced, ' + errors + ' error(s)'
+        + (deferredCount ? ', ' + deferredCount + ' deferred' : '')
+        + (waitingCount ? ', ' + waitingCount + ' debouncing' : '')
+        + (concurrentEdit ? ', concurrent edit landed' : '')
+        + (willRetry ? '; pending flag kept, next poll will retry.' : '; queue drained.'));
     }
-    // Bookend the pass: outcome counts plus whether the dirty flag survives
-    // (so a reader knows if another poll will follow without inspecting it).
-    const willRetry = workRemaining || concurrentEdit;
-    console.info('syncDirtyRows: pass complete — ' + ok + ' synced, ' + errors + ' error(s)'
-      + (deferredCount ? ', ' + deferredCount + ' deferred' : '')
-      + (waitingCount ? ', ' + waitingCount + ' debouncing' : '')
-      + (concurrentEdit ? ', concurrent edit landed' : '')
-      + (willRetry ? '; pending flag kept, next poll will retry.' : '; queue drained.'));
     lock.releaseLock();
   }
   return { ok: ok, errors: errors, deferred: deferredCount };
@@ -612,7 +637,7 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
   // timing log line shows only the phases listed here, so weight-only rows
   // don't surface a misleading "edit/synthetic" label for an interval that
   // will never be sent.
-  const exerciseWillCreate = exerciseReady && SYNC_EXERCISES && row.exercises.length > 0;
+  const exerciseWillCreate = exerciseReady && row.exercises.length > 0;
 
   // Fetch prior datapoints. Exercise: only when the edit isn't on row.date
   // (otherwise the live-workout endTime-advancement path takes over) — the
@@ -632,7 +657,7 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
       console.warn(tag + ': GET prior exercise failed; will recompute timing: ' + err);
     }
   }
-  const weightWillPatch = weightReady && SYNC_WEIGHT && row.bodyweight !== null && split.weight.length > 0;
+  const weightWillPatch = weightReady && row.bodyweight !== null && split.weight.length > 0;
   if (weightWillPatch) {
     try {
       priorWeight = getDataPoint(split.weight[0]);
@@ -653,7 +678,7 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
   // present + bodyweight set) preserves sampleTime server-side, so no prior
   // GET and no timing label. Computed after the GET block so a 404-dropped
   // stale ID is reflected here (the row now POSTs rather than PATCHes).
-  const weightWillCreate = weightReady && SYNC_WEIGHT && row.bodyweight !== null && split.weight.length === 0;
+  const weightWillCreate = weightReady && row.bodyweight !== null && split.weight.length === 0;
 
   let timing;
   try {
@@ -675,7 +700,7 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
   let exerciseFailed = false;
 
   if (weightReady) {
-    const hasBodyweight = SYNC_WEIGHT && row.bodyweight !== null;
+    const hasBodyweight = row.bodyweight !== null;
     if (split.weight.length > 0 && hasBodyweight) {
       // PATCH in place. Preserves sampleTime (echoed back from the prior
       // GET — the API rejects PATCH bodies without sampleTime), createTime,
@@ -754,7 +779,7 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
     } else {
       newExerciseIds = [];
     }
-    if (!exerciseFailed && SYNC_EXERCISES && row.exercises.length > 0) {
+    if (!exerciseFailed && row.exercises.length > 0) {
       try {
         const ex = timing.exercise;
         const notes = buildNotes(ex.endUtcMs - ex.startUtcMs, row.exercises);
