@@ -8,8 +8,8 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Sync')
     .addItem('Run now', 'runSyncNow')
-    .addItem('Force resync current row', 'forceResyncCurrentRow')
-    .addItem('Force resync all rows', 'forceResyncAllRows')
+    .addItem('Resync selected rows', 'resyncSelectedRows')
+    .addItem('Resync all rows', 'resyncAllRows')
     .addSeparator()
     .addItem('Run setup', 'setup')
     .addItem('Authorize Health API', 'authorizeHealthApi')
@@ -106,10 +106,8 @@ function runSyncAndToast_(verb) {
   toastSyncResult_(result, verb);
 }
 
-function forceResyncCurrentRow() {
+function resyncSelectedRows() {
   const sheet = getSheet_();
-  const row = sheet.getActiveCell().getRow();
-  if (row < 2) return;
   const { map } = getHeaderMap_(sheet);
   const exerciseCol = map[EXERCISE_SYNCED_AT_COLUMN_HEADER];
   if (!exerciseCol) {
@@ -121,14 +119,30 @@ function forceResyncCurrentRow() {
     toast_('Weight Synced At column missing. Run setup.', 30);
     return;
   }
-  clearRowExerciseSynced(row, exerciseCol);
-  clearRowWeightSynced(row, weightSyncedAtCol);
+  const rows = {};
+  const ranges = sheet.getActiveRangeList().getRanges();
+  for (const range of ranges) {
+    const start = range.getRow();
+    const end = start + range.getNumRows() - 1;
+    for (let row = start; row <= end; row++) {
+      if (row >= 2) rows[row] = true;
+    }
+  }
+  const rowNums = Object.keys(rows);
+  if (rowNums.length === 0) {
+    toast_('No data rows selected.', 10);
+    return;
+  }
+  for (const row of rowNums) {
+    clearRowExerciseSynced(Number(row), exerciseCol);
+    clearRowWeightSynced(Number(row), weightSyncedAtCol);
+  }
   SpreadsheetApp.flush();
   markPendingDirty_();
   runSyncAndToast_('Resynced');
 }
 
-function forceResyncAllRows() {
+function resyncAllRows() {
   const sheet = getSheet_();
   const { map } = getHeaderMap_(sheet);
   const exerciseCol = map[EXERCISE_SYNCED_AT_COLUMN_HEADER];
@@ -738,15 +752,15 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
       newWeightIds = [];
       try {
         const wt = timing.weight;
+        // createWeightAt throws if the create returns no resource name, so a
+        // returned name is always usable here.
         const name = createWeightAt(wt.utcMs, wt.offsetSeconds, row.bodyweight);
-        if (name) {
-          newWeightIds.push(name);
-          // Persist immediately so a 6-minute kill before the end-of-row
-          // write can't orphan a freshly-created datapoint we no longer
-          // have a sheet reference for.
-          writeHealthIds(row.rowNum, cols.healthIdsCol, newWeightIds.concat(newExerciseIds).concat(split.other));
-        }
-        console.info(tag + ': createWeightAt(' + row.bodyweight + ' lb) -> ' + (name || '<no name>'));
+        newWeightIds.push(name);
+        // Persist immediately so a 6-minute kill before the end-of-row
+        // write can't orphan a freshly-created datapoint we no longer
+        // have a sheet reference for.
+        writeHealthIds(row.rowNum, cols.healthIdsCol, newWeightIds.concat(newExerciseIds).concat(split.other));
+        console.info(tag + ': createWeightAt(' + row.bodyweight + ' lb) -> ' + name);
       } catch (err) {
         console.error(tag + ': createWeightAt failed: ' + err);
         weightFailed = true;
@@ -783,16 +797,16 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
       try {
         const ex = timing.exercise;
         const notes = buildNotes(ex.endUtcMs - ex.startUtcMs, row.exercises);
+        // createExerciseAt throws if the create returns no resource name, so a
+        // returned name is always usable here.
         const name = createExerciseAt(ex.startUtcMs, ex.startOffsetSeconds,
           ex.endUtcMs, ex.endOffsetSeconds, notes);
-        if (name) {
-          newExerciseIds.push(name);
-          // Same rationale as the weight write above: persist before any
-          // later step can fail and leave the datapoint untracked.
-          writeHealthIds(row.rowNum, cols.healthIdsCol, newWeightIds.concat(newExerciseIds).concat(split.other));
-        }
+        newExerciseIds.push(name);
+        // Same rationale as the weight write above: persist before any
+        // later step can fail and leave the datapoint untracked.
+        writeHealthIds(row.rowNum, cols.healthIdsCol, newWeightIds.concat(newExerciseIds).concat(split.other));
         console.info(tag + ': createExerciseAt' + (foreignMatch ? ' (foreign-aligned)' : '')
-          + ' -> ' + (name || '<no name>'));
+          + ' -> ' + name);
       } catch (err) {
         console.error(tag + ': createExerciseAt failed: ' + err);
         exerciseFailed = true;

@@ -304,7 +304,15 @@ function createExerciseAt(startUtcMs, startOffsetSeconds, endUtcMs, endOffsetSec
     }
   };
   const resp = httpJson_('POST', url, payload);
-  return extractDataPointName_(resp);
+  const name = extractDataPointName_(resp);
+  if (!name) {
+    // POST returned 2xx but no parseable resource name. We can't track an
+    // untracked datapoint (no ID to delete/re-sync later), so treat it as a
+    // failed create: throw so the caller retries instead of silently stamping
+    // the row synced and orphaning whatever may have been created server-side.
+    throw new Error('createExerciseAt: create returned no datapoint name: ' + JSON.stringify(resp));
+  }
+  return name;
 }
 
 // Returns the created datapoint's resource name.
@@ -319,7 +327,13 @@ function createWeightAt(sampleUtcMs, sampleOffsetSeconds, lbs) {
     }
   };
   const resp = httpJson_('POST', url, payload);
-  return extractDataPointName_(resp);
+  const name = extractDataPointName_(resp);
+  if (!name) {
+    // See createExerciseAt: a create with no parseable resource name is a
+    // failed create, not a no-op success. Throw so the row retries.
+    throw new Error('createWeightAt: create returned no datapoint name: ' + JSON.stringify(resp));
+  }
+  return name;
 }
 
 // Update an existing weight datapoint's weightGrams in place. The body MUST

@@ -112,8 +112,8 @@ In Apps Script **Project Settings (⚙)**, set the project time zone to your loc
 The **Sync** menu also exposes:
 
 - **Run now**: sync dirty rows immediately, bypassing the 60-second edit-burst debounce.
-- **Force resync current row**: clears both `Exercise Synced At` and `Weight Synced At` on the active row and resyncs (bypasses debounce).
-- **Force resync all rows**: clears both `Synced At` columns for every row and re-uploads everything to Google Health (bypasses debounce). Runs immediately with no confirmation. If the row count exceeds the per-pass cap, the remainder is deferred to the next poll.
+- **Resync selected rows**: clears both `Exercise Synced At` and `Weight Synced At` on every selected data row (supports multi-range selections) and resyncs (bypasses debounce).
+- **Resync all rows**: clears both `Synced At` columns for every row and re-uploads everything to Google Health (bypasses debounce). Runs immediately with no confirmation. If the row count exceeds the per-pass cap, the remainder is deferred to the next poll.
 - **Revoke Health API**: clears the stored token.
 - **Run setup**: append any missing managed columns and rebuild triggers (after editing timing constants).
 - **Run tests**: execute the parser tests inside Apps Script.
