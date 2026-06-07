@@ -88,6 +88,16 @@ const MAX_EXERCISE_DURATION_MS = 120 * 60 * 1000;
 const BACKSTOP_LOOKBACK_DAYS = 2;
 const BACKSTOP_HOUR = 4;
 
+// Orphan reconciliation (reconcileExerciseOrphans_, run from dailyBackstop):
+// how many civil days back to scan for sync-created exercise datapoints that no
+// row's Created Health IDs references. These are leaked by the two accepted
+// create-orphan windows (a create POST that succeeds server-side but times out
+// client-side and is retried; a 6-minute hard kill landing after the POST
+// returns but before the ID is persisted). A wider lookback than the
+// foreign-match backstop since an orphan can sit indefinitely and is only ever
+// removed here; bounded so the daily scan stays cheap (one list call per day).
+const ORPHAN_RECONCILE_LOOKBACK_DAYS = 7;
+
 // Per-row "still typing" guard. A dirty row whose Exercises Last Edited At
 // is within this window is skipped on the current poll and picked up by the
 // next one. Without it, a poll firing mid-edit would push out a half-typed
@@ -140,3 +150,10 @@ const GRAMS_PER_LB = 453.59237;
 // Reject bodyweight values above this as fat-finger typos (e.g. 1850 for
 // 185.0). Without the cap the Health API accepts and syncs the bad value.
 const MAX_BODYWEIGHT_LB = 999;
+
+// Reject bodyweight values below this as mis-entries — typically a rep count or
+// set count accidentally typed into the Weight column (e.g. "5"). A real adult
+// bodyweight never lands here, so treating sub-floor values as no-bodyweight
+// avoids syncing a 5 lb "weight" datapoint. Symmetric counterpart to
+// MAX_BODYWEIGHT_LB.
+const MIN_BODYWEIGHT_LB = 50;
