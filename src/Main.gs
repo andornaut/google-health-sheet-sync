@@ -46,7 +46,7 @@ function revokeHealthApi() {
 }
 
 function installTriggers() {
-  const handlers = new Set(['onEditTrigger', 'flushIfPending']);
+  const handlers = new Set(['onEditTrigger', 'flushIfPending', 'dailyBackstop']);
   ScriptApp.getProjectTriggers().forEach(t => {
     if (handlers.has(t.getHandlerFunction())) ScriptApp.deleteTrigger(t);
   });
@@ -54,6 +54,7 @@ function installTriggers() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   ScriptApp.newTrigger('onEditTrigger').forSpreadsheet(ss).onEdit().create();
   ScriptApp.newTrigger('flushIfPending').timeBased().everyMinutes(POLL_INTERVAL_MIN).create();
+  ScriptApp.newTrigger('dailyBackstop').timeBased().atHour(BACKSTOP_HOUR).everyDays(1).create();
 }
 
 function onEditTrigger(e) {
@@ -74,12 +75,70 @@ function flushIfPending() {
   syncDirtyRows(false, 0);
 }
 
+// Select rows the daily backstop should re-review. A row qualifies when its
+// Date falls within the last `lookbackDays` civil days, it has sendable
+// exercise content, and it has not yet been aligned to a foreign session
+// (empty Matched Health Session). Already-matched rows are stable — their
+// foreign interval won't change — so re-checking them only churns datapoints;
+// only unmatched rows can still benefit from a foreign session that synced
+// late. Pure (date keys via ymd, which honors the script time zone).
+function selectBackstopRows_(rows, nowMs, lookbackDays) {
+  const recentKeys = new Set();
+  for (let i = 0; i < lookbackDays; i++) {
+    recentKeys.add(ymd(new Date(nowMs - i * 24 * 60 * 60 * 1000)));
+  }
+  // Order by cost: the free already-matched test, then the ymd date-key lookup
+  // (a timezone op), then the nested-loop hasSendableExercises_ last so it runs
+  // only on rows that already qualify.
+  return rows.filter(r =>
+    !r.matchedHealthSession
+    && recentKeys.has(ymd(r.date))
+    && hasSendableExercises_(r.exercises));
+}
+
+// Daily trigger: re-dirty recent unmatched exercise rows so a foreign session
+// that synced AFTER the row was already pushed can re-align it on the next
+// poll. Clearing Exercise Synced At + advancing the dirty generation makes
+// flushIfPending re-run the normal sync (including resolveForeignMatches_),
+// which lets a now-present overlapping foreign session win and delete+recreate
+// the datapoint with the borrowed interval. No-arg so it's editor-runnable.
+function dailyBackstop() {
+  const { rows, exerciseSyncedAtCol } = readRows();
+  if (!exerciseSyncedAtCol) {
+    console.warn('dailyBackstop: Exercise Synced At column missing; run "Run setup".');
+    return;
+  }
+  const targets = selectBackstopRows_(rows, Date.now(), BACKSTOP_LOOKBACK_DAYS);
+  if (targets.length === 0) {
+    console.info('dailyBackstop: no recent unmatched exercise rows to re-review.');
+    return;
+  }
+  reDirtyRows_(targets.map(r => r.rowNum), { exerciseCol: exerciseSyncedAtCol });
+  console.info('dailyBackstop: re-dirtied ' + targets.length
+    + ' recent unmatched exercise row(s) for foreign-match re-review.');
+}
+
 // Write a fresh generation marker into PENDING_DIRTY_KEY. The value matters
 // (syncDirtyRows compares start vs end to detect concurrent edits), so always
 // advance it — never just re-write the same string.
 function markPendingDirty_() {
   PropertiesService.getScriptProperties()
     .setProperty(PENDING_DIRTY_KEY, String(Date.now()));
+}
+
+// Re-dirty a set of rows: clear the requested synced stamp(s), persist the
+// writes, and advance the dirty generation so the next sync pass re-processes
+// them. Shared by the manual selective resync and the daily backstop; pass
+// cols.exerciseCol and/or cols.weightCol for the phase(s) to re-dirty. (The
+// "resync all rows" path clears its columns in a single batched setValues
+// instead, so it doesn't route through here.)
+function reDirtyRows_(rowNums, cols) {
+  rowNums.forEach(rowNum => {
+    if (cols.exerciseCol) clearRowExerciseSynced(rowNum, cols.exerciseCol);
+    if (cols.weightCol) clearRowWeightSynced(rowNum, cols.weightCol);
+  });
+  SpreadsheetApp.flush();
+  markPendingDirty_();
 }
 
 // "Run now" is an explicit manual action: bypasses the exercise edit-burst
@@ -133,12 +192,7 @@ function resyncSelectedRows() {
     toast_('No data rows selected.', 10);
     return;
   }
-  for (const row of rowNums) {
-    clearRowExerciseSynced(Number(row), exerciseCol);
-    clearRowWeightSynced(Number(row), weightSyncedAtCol);
-  }
-  SpreadsheetApp.flush();
-  markPendingDirty_();
+  reDirtyRows_(rowNums.map(Number), { exerciseCol: exerciseCol, weightCol: weightSyncedAtCol });
   runSyncAndToast_('Resynced');
 }
 
@@ -263,7 +317,7 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
       let exerciseReady = false;
       let remainingMs = 0;
       if (!r.exerciseSyncedAt) {
-        if (bypassQuiesce || !r.exercisesLastEditedAt || r.exercises.length === 0) {
+        if (bypassQuiesce || !r.exercisesLastEditedAt || !hasSendableExercises_(r.exercises)) {
           exerciseReady = true;
         } else {
           const sinceMs = now - r.exercisesLastEditedAt.getTime();
@@ -429,7 +483,7 @@ function resolveForeignMatches_(allRows, readyRows) {
   // first-edit + advance last-edit) doesn't produce a multi-day window biased
   // toward the longest unrelated candidate.
   const windows = readyRows
-    .filter(r => r.exercises.length > 0 && exerciseEditIsOnRowDate_(r))
+    .filter(r => hasSendableExercises_(r.exercises) && exerciseEditIsOnRowDate_(r))
     .map(r => {
       const startMs = r.exerciseFirstEditedAt.getTime();
       const clampedEndMs = startMs + clampExerciseDurationMs_(r.exercisesLastEditedAt.getTime() - startMs);
@@ -513,10 +567,11 @@ function buildOrdinalMap_(rows) {
   return ordinalByRowNum;
 }
 
-// Cap an edit-derived exercise duration at MAX_EXERCISE_DURATION_MS. Shared by
-// resolveRowTiming_'s 'edit' interval (which first applies the MIN floor) and
-// the foreign-match window in resolveForeignMatches_, so the upper bound stays
-// consistent between the recorded interval and the window we match against.
+// Cap an edit-derived exercise duration at MAX_EXERCISE_DURATION_MS. Used by
+// the foreign-match window in resolveForeignMatches_ to keep its upper bound
+// consistent with editDerivedDurationMs_ (which the recorded 'edit' interval
+// uses, and which applies the same MAX cap plus a MIN floor / start-only
+// default).
 function clampExerciseDurationMs_(rawDurationMs) {
   return Math.min(rawDurationMs, MAX_EXERCISE_DURATION_MS);
 }
@@ -529,6 +584,15 @@ function clampExerciseDurationMs_(rawDurationMs) {
 function exerciseEditIsOnRowDate_(row) {
   return !!(row.exerciseFirstEditedAt && row.exercisesLastEditedAt
     && ymd(row.exerciseFirstEditedAt) === ymd(row.date));
+}
+
+// Map a raw edit-derived duration (last edit - first edit) to the recorded
+// exercise duration by clamping to [MIN_EXERCISE_DURATION_MS,
+// MAX_EXERCISE_DURATION_MS]. A single-edit row has raw <= 0 (start == last
+// edit, no observed end), which the MIN floor turns into the start-only default
+// — so the start-only case needs no special handling.
+function editDerivedDurationMs_(rawDurationMs) {
+  return Math.min(Math.max(rawDurationMs, MIN_EXERCISE_DURATION_MS), MAX_EXERCISE_DURATION_MS);
 }
 
 // Resolve the exercise interval and weight sample time independently, per
@@ -575,7 +639,10 @@ function resolveRowTiming_(row, ordinal, priorExercise, foreignInterval) {
   } else if (exerciseEditOnRowDate) {
     const startMs = row.exerciseFirstEditedAt.getTime();
     const rawDuration = row.exercisesLastEditedAt.getTime() - startMs;
-    const endMs = startMs + clampExerciseDurationMs_(Math.max(rawDuration, MIN_EXERCISE_DURATION_MS));
+    // A single edit (start == last, rawDuration <= 0) has no observed end;
+    // editDerivedDurationMs_'s MIN floor gives it the start-only default. A
+    // second edit produces a real span (clamped to [MIN, MAX]).
+    const endMs = startMs + editDerivedDurationMs_(rawDuration);
     exercise = {
       startUtcMs: startMs,
       startOffsetSeconds: getTzOffsetSeconds_(tz, row.exerciseFirstEditedAt),
@@ -651,7 +718,7 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
   // timing log line shows only the phases listed here, so weight-only rows
   // don't surface a misleading "edit/synthetic" label for an interval that
   // will never be sent.
-  const exerciseWillCreate = exerciseReady && row.exercises.length > 0;
+  const exerciseWillCreate = exerciseReady && hasSendableExercises_(row.exercises);
 
   // Fetch prior datapoints. Exercise: only when the edit isn't on row.date
   // (otherwise the live-workout endTime-advancement path takes over) — the
@@ -793,7 +860,7 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
     } else {
       newExerciseIds = [];
     }
-    if (!exerciseFailed && row.exercises.length > 0) {
+    if (!exerciseFailed && hasSendableExercises_(row.exercises)) {
       try {
         const ex = timing.exercise;
         const notes = buildNotes(ex.endUtcMs - ex.startUtcMs, row.exercises);

@@ -70,14 +70,23 @@ const PENDING_DIRTY_KEY = 'pendingDirty';
 const SYNTHETIC_START_HOUR = 12;
 const SYNTHETIC_DURATION_HOURS = 1;
 
-// Bounds for edit-derived exercise interval duration. A row edited just once
-// produces a zero-span interval that the Health API 500s on; a row edited
-// across days (or weeks) produces a multi-hour "workout" that's wrong on the
-// other end. Clamp to [min, max] so the duration stays plausible. The floor
-// also gives a freshly-created row a sensible initial endTime on its first
-// sync, before subsequent edits push it forward.
-const MIN_EXERCISE_DURATION_MS = 5 * 60 * 1000;
+// Bounds for edit-derived exercise interval duration. The MIN floor doubles as
+// the start-only default: a single-edit row (start == last edit, no observed
+// end) has a zero/negative raw span that floors to MIN, and two near-instant
+// edits (which would otherwise produce a span the Health API 500s on) floor to
+// the same value, so every edit-derived exercise is at least MIN. The MAX cap
+// keeps a row edited across days (late corrections) from recording a multi-hour
+// "workout". See editDerivedDurationMs_.
+const MIN_EXERCISE_DURATION_MS = 10 * 60 * 1000;
 const MAX_EXERCISE_DURATION_MS = 120 * 60 * 1000;
+
+// Daily backstop (dailyBackstop): re-reviews recent exercise rows so a foreign
+// session that synced AFTER the row was already pushed can still re-align the
+// row's interval. LOOKBACK covers today + yesterday so a late-night workout
+// whose foreign session lands the next morning is caught; HOUR is when the
+// daily time-based trigger fires.
+const BACKSTOP_LOOKBACK_DAYS = 2;
+const BACKSTOP_HOUR = 4;
 
 // Per-row "still typing" guard. A dirty row whose Exercises Last Edited At
 // is within this window is skipped on the current poll and picked up by the

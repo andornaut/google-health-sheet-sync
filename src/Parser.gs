@@ -13,11 +13,16 @@ function parseExerciseCell(raw) {
       console.warn('Parser: could not parse "' + trimmed + '"');
       continue;
     }
-    // 0 sets or 0 reps means the exercise was not performed: skip the entry
-    // (no exercise log), distinct from an unknown/undefined count (null), which
-    // is logged.
-    if (entry.sets === 0 || entry.reps === 0) {
-      console.info('Parser: skipping not-performed entry "' + trimmed + '" (0 sets/reps)');
+    // 0 reps means the exercise was not performed: skip the entry (no exercise
+    // log), distinct from an unknown/undefined count (null), which is logged.
+    // 0 sets (e.g. "200x5x0") is RETAINED — it marks the start of an exercise
+    // that hasn't been completed yet, so the row counts as a real exercise edit
+    // (anchoring the start time / foreign-match window). The notes layer
+    // suppresses zero-set entries from the Health notes (see hasSendableExercises_
+    // and buildNotes), so a row whose only entries are zero-set produces no
+    // datapoint but still records its timing.
+    if (entry.reps === 0) {
+      console.info('Parser: skipping not-performed entry "' + trimmed + '" (0 reps)');
       continue;
     }
     entries.push(entry);
