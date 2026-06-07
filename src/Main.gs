@@ -103,19 +103,120 @@ function selectBackstopRows_(rows, nowMs, lookbackDays) {
 // which lets a now-present overlapping foreign session win and delete+recreate
 // the datapoint with the borrowed interval. No-arg so it's editor-runnable.
 function dailyBackstop() {
-  const { rows, exerciseSyncedAtCol } = readRows();
-  if (!exerciseSyncedAtCol) {
-    console.warn('dailyBackstop: Exercise Synced At column missing; run "Run setup".');
+  // Take the script lock for the whole run. Orphan reconciliation deletes
+  // exercise datapoints no row references; without the lock it could race an
+  // in-flight syncOneRow_ that has POSTed a datapoint but not yet persisted its
+  // ID, and delete a legitimately-fresh datapoint. The lock also guarantees the
+  // readRows snapshot reflects every persisted ID, so the "known" set is
+  // complete. If a sync holds the lock, skip — tomorrow's backstop retries.
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(LOCK_WAIT_MS)) {
+    console.warn('dailyBackstop: another run holds the lock; skipping this run.');
     return;
   }
-  const targets = selectBackstopRows_(rows, Date.now(), BACKSTOP_LOOKBACK_DAYS);
-  if (targets.length === 0) {
-    console.info('dailyBackstop: no recent unmatched exercise rows to re-review.');
+  try {
+    const { rows, exerciseSyncedAtCol } = readRows();
+
+    // Reconcile orphans first, while the rows snapshot is unmodified. (reDirty
+    // below doesn't touch Created Health IDs, so order is not load-bearing, but
+    // reconciling against the clean snapshot keeps the intent obvious.)
+    try {
+      reconcileExerciseOrphans_(rows, Date.now(), ORPHAN_RECONCILE_LOOKBACK_DAYS);
+    } catch (err) {
+      console.warn('dailyBackstop: orphan reconciliation failed (continuing): ' + err);
+    }
+
+    if (!exerciseSyncedAtCol) {
+      console.warn('dailyBackstop: Exercise Synced At column missing; run "Run setup".');
+      return;
+    }
+    const targets = selectBackstopRows_(rows, Date.now(), BACKSTOP_LOOKBACK_DAYS);
+    if (targets.length === 0) {
+      console.info('dailyBackstop: no recent unmatched exercise rows to re-review.');
+      return;
+    }
+    reDirtyRows_(targets.map(r => r.rowNum), { exerciseCol: exerciseSyncedAtCol });
+    console.info('dailyBackstop: re-dirtied ' + targets.length
+      + ' recent unmatched exercise row(s) for foreign-match re-review.');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Given STRENGTH_TRAINING candidates listed across the reconciliation window
+// and the set of exercise datapoint names already tracked in some row's Created
+// Health IDs (an object used as a name -> true set), return the candidate names
+// safe to delete as orphans: created by the SAME web client that owns our
+// tracked datapoints, but referenced by no row.
+//
+// "Our client" is derived from the candidates themselves — the
+// googleWebClientId of any candidate that IS tracked — rather than from a
+// configured value, so we only ever delete datapoints from the exact client
+// that created the ones we still track. Foreign device / first-party / in-app-
+// assistant sessions (null googleWebClientId) and any other web app are never
+// selected. If no tracked candidate is present we can't attribute ownership,
+// so nothing is returned. Pure (no API/sheet access).
+function selectOrphanExerciseNames_(candidates, knownExerciseNames) {
+  const ourClientIds = {};
+  candidates.forEach(c => {
+    if (c.googleWebClientId && knownExerciseNames[c.name]) {
+      ourClientIds[c.googleWebClientId] = true;
+    }
+  });
+  const orphans = [];
+  candidates.forEach(c => {
+    if (knownExerciseNames[c.name]) return;
+    if (c.googleWebClientId && ourClientIds[c.googleWebClientId]) {
+      orphans.push(c.name);
+    }
+  });
+  return orphans;
+}
+
+// Delete sync-created exercise datapoints that no row's Created Health IDs
+// references — orphans leaked by the two accepted create windows (a create POST
+// that succeeded server-side but timed out client-side and was retried; a
+// 6-minute hard kill after the POST returned but before the ID was persisted).
+// Scans the last `lookbackDays` civil days, derives ownership from the listed
+// datapoints (see selectOrphanExerciseNames_), and deletes the orphans. Each
+// delete is independent: a failure (including a 403 if a name turns out to be
+// foreign) is logged and skipped, never aborting the rest. Must run under the
+// script lock (see dailyBackstop) so an in-flight sync's not-yet-persisted
+// create can't be mistaken for an orphan.
+function reconcileExerciseOrphans_(rows, nowMs, lookbackDays) {
+  const known = {};
+  rows.forEach(r => {
+    splitHealthIdsByType_(r.healthIds).exercise.forEach(n => { known[n] = true; });
+  });
+
+  const candidates = [];
+  for (let i = 0; i < lookbackDays; i++) {
+    const date = new Date(nowMs - i * 24 * 60 * 60 * 1000);
+    try {
+      listStrengthOnDate(date).forEach(c => candidates.push(c));
+    } catch (err) {
+      console.warn('reconcileExerciseOrphans_: list failed for ' + ymd(date) + ': ' + err);
+    }
+  }
+
+  const orphans = selectOrphanExerciseNames_(candidates, known);
+  if (orphans.length === 0) {
+    console.info('reconcileExerciseOrphans_: no orphans found ('
+      + candidates.length + ' session(s) scanned).');
     return;
   }
-  reDirtyRows_(targets.map(r => r.rowNum), { exerciseCol: exerciseSyncedAtCol });
-  console.info('dailyBackstop: re-dirtied ' + targets.length
-    + ' recent unmatched exercise row(s) for foreign-match re-review.');
+  let deleted = 0;
+  orphans.forEach(name => {
+    try {
+      deleteDataPointsByName([name]);
+      deleted++;
+      console.info('reconcileExerciseOrphans_: deleted orphan ' + name);
+    } catch (err) {
+      console.warn('reconcileExerciseOrphans_: delete failed for ' + name + ': ' + err);
+    }
+  });
+  console.info('reconcileExerciseOrphans_: removed ' + deleted + ' of ' + orphans.length
+    + ' orphan datapoint(s).');
 }
 
 // Write a fresh generation marker into PENDING_DIRTY_KEY. The value matters

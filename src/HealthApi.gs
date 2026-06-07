@@ -236,6 +236,12 @@ function syntheticWeightSample_(date) {
 // (resolveForeignMatches_) is responsible for excluding any name it
 // already accounts for (sync-created or matched to another row).
 // Returned candidates are sorted ascending by startUtcMs.
+//
+// `googleWebClientId` is the OAuth web-client identifier attributed to the
+// datapoint (dataSource.application.googleWebClientId), or null for
+// device/first-party/in-app-assistant sessions (whose `application` is null).
+// reconcileExerciseOrphans_ uses it to tell our own sync-created datapoints
+// apart from foreign ones without trusting a configured client id.
 function listStrengthOnDate(date) {
   const points = listExercisesOnDate(date);
   const out = [];
@@ -248,12 +254,14 @@ function listStrengthOnDate(date) {
     const pStartMs = new Date(interval.startTime).getTime();
     const pEndMs = new Date(interval.endTime).getTime();
     if (isNaN(pStartMs) || isNaN(pEndMs)) continue;
+    const app = p.dataSource && p.dataSource.application;
     out.push({
       name: p.name,
       startUtcMs: pStartMs,
       endUtcMs: pEndMs,
       startUtcOffsetSeconds: parseOffsetSeconds_(interval.startUtcOffset),
-      endUtcOffsetSeconds: parseOffsetSeconds_(interval.endUtcOffset)
+      endUtcOffsetSeconds: parseOffsetSeconds_(interval.endUtcOffset),
+      googleWebClientId: (app && app.googleWebClientId) || null
     });
   }
   // Already sorted by startUtcMs because listExercisesOnDate sorts by the

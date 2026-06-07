@@ -63,5 +63,11 @@ function parseBodyweight(raw) {
     console.warn('Parser: ignoring implausible bodyweight "' + text + '" (> ' + MAX_BODYWEIGHT_LB + ' lb)');
     return null;
   }
+  // Reject sub-floor values (likely a rep/set count typed into the Weight
+  // column, e.g. "5"). Treat as no-bodyweight rather than syncing it.
+  if (n < MIN_BODYWEIGHT_LB) {
+    console.warn('Parser: ignoring implausible bodyweight "' + text + '" (< ' + MIN_BODYWEIGHT_LB + ' lb)');
+    return null;
+  }
   return n;
 }
