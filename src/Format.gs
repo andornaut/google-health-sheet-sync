@@ -8,6 +8,8 @@ function buildNotes(durationMs, parsedExercises) {
   const lines = [];
   for (const ex of parsedExercises) {
     for (const entry of ex.entries) {
+      // Non-sendable (zero-set "not yet performed") entries produce no note.
+      if (!exerciseEntryIsSendable_(entry)) continue;
       lines.push(formatEntryNote_(ex.name, entry));
     }
   }
@@ -17,6 +19,27 @@ function buildNotes(durationMs, parsedExercises) {
     notes += (notes ? ', ' : '') + minutes + ' minute session';
   }
   return notes;
+}
+
+// A parsed entry is "sendable" when it represents a performed set rather than a
+// zero-set "not yet performed" start marker (e.g. "200x5x0"). This is the one
+// place the zero-set rule is defined; buildNotes and hasSendableExercises_ both
+// consult it.
+function exerciseEntryIsSendable_(entry) {
+  return entry.sets !== 0;
+}
+
+// True when the parsed exercises contain at least one sendable entry. A row
+// whose only entries are zero-set has timing but nothing to send to Health, so
+// callers gate datapoint creation and foreign-match windows on this rather than
+// on a bare entry count.
+function hasSendableExercises_(parsedExercises) {
+  for (const ex of parsedExercises) {
+    for (const entry of ex.entries) {
+      if (exerciseEntryIsSendable_(entry)) return true;
+    }
+  }
+  return false;
 }
 
 function formatEntryNote_(exerciseName, entry) {

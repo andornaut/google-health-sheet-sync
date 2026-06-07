@@ -39,9 +39,10 @@ function runParserTests() {
   t('junk line skipped', () => eq(parseExerciseCell('garbage\n135x5'),
     [{ weight: 135, reps: 5, sets: null, assisted: false }]));
   t('zero reps skipped silently "135x0" (not performed)', () => eq(parseExerciseCell('135x0'), []));
-  t('zero sets skipped silently "90x6x0" (not performed)', () => eq(parseExerciseCell('90x6x0'), []));
-  t('zero-count entry dropped, valid entries kept', () => eq(parseExerciseCell('135x5x3, 90x6x0, 95x0'),
-    [{ weight: 135, reps: 5, sets: 3, assisted: false }]));
+  t('zero sets retained "90x6x0" (start-only marker, suppressed in notes)', () => eq(parseExerciseCell('90x6x0'),
+    [{ weight: 90, reps: 6, sets: 0, assisted: false }]));
+  t('zero-reps dropped, zero-sets retained, valid kept', () => eq(parseExerciseCell('135x5x3, 90x6x0, 95x0'),
+    [{ weight: 135, reps: 5, sets: 3, assisted: false }, { weight: 90, reps: 6, sets: 0, assisted: false }]));
   t('negative weight rejected', () => eq(parseExerciseCell('-5'), []));
   t('decimal weight allowed "22.5" (reps/sets unknown)', () => eq(parseExerciseCell('22.5'),
     [{ weight: 22.5, reps: null, sets: null, assisted: false }]));
@@ -110,6 +111,23 @@ function runParserTests() {
       'Bench press, 135 lbs, 3 sets of 5\n'
       + 'Bench press, 145 lbs, 2 sets of 3\n'
       + 'Squat, 225 lbs, 3 sets of 5, 45 minute session');
+  });
+
+  t('buildNotes suppresses zero-set entries (start-only markers)', () => {
+    const notes = buildNotes(10 * 60 * 1000, [
+      { name: 'Bench press', entries: [
+        { weight: 200, reps: 5, sets: 0, assisted: false },
+        { weight: 200, reps: 5, sets: 2, assisted: false }
+      ] }
+    ]);
+    eq(notes, 'Bench press, 200 lbs, 2 sets of 5, 10 minute session');
+  });
+
+  t('buildNotes with only zero-set entries -> just the session suffix', () => {
+    const notes = buildNotes(10 * 60 * 1000, [
+      { name: 'Bench press', entries: [{ weight: 200, reps: 5, sets: 0, assisted: false }] }
+    ]);
+    eq(notes, '10 minute session');
   });
 
   t('buildNotes matches foreign single-entry example', () => {
@@ -387,11 +405,11 @@ function runParserTests() {
     eq(r.exercise.endOffsetSeconds, EST);
     eq(r.weight, { utcMs: first.getTime(), offsetSeconds: EST });
   });
-  t('resolveRowTiming_ edit source clamps too-short duration to MIN (5 min)', () => {
+  t('resolveRowTiming_ edit source clamps too-short duration to MIN (10 min)', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
     const last = new Date(first.getTime() + 60 * 1000);
     const r = resolveRowTiming_({ exerciseFirstEditedAt: first, exercisesLastEditedAt: last, date: JAN_15_NOON_UTC }, 0, null);
-    eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 5 * 60 * 1000);
+    eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 10 * 60 * 1000);
   });
   t('resolveRowTiming_ edit source clamps too-long duration to MAX (120 min)', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
@@ -504,6 +522,59 @@ function runParserTests() {
     }, 0, { exercise: {} });
     eq(r.exerciseSource, 'synthetic');
     eq(r.exercise.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
+  });
+
+  t('resolveRowTiming_ single edit (start-only) -> 10 min default duration', () => {
+    // Only one exercise edit: first == last, no observed end. The MIN floor
+    // (10 min) doubles as the start-only default.
+    const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
+    const r = resolveRowTiming_({ exerciseFirstEditedAt: first, exercisesLastEditedAt: first, date: JAN_15_NOON_UTC }, 0, null);
+    eq(r.exerciseSource, 'edit');
+    eq(r.exercise.startUtcMs, first.getTime());
+    eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 10 * 60 * 1000);
+  });
+
+  // editDerivedDurationMs_: maps raw (last - first) to recorded duration. The
+  // MIN floor (10 min) is also the start-only default (raw <= 0).
+  t('editDerivedDurationMs_ zero (single edit / start-only) -> MIN (10 min)', () =>
+    eq(editDerivedDurationMs_(0), 10 * 60 * 1000));
+  t('editDerivedDurationMs_ negative -> MIN (10 min)', () =>
+    eq(editDerivedDurationMs_(-1000), 10 * 60 * 1000));
+  t('editDerivedDurationMs_ short span clamps up to MIN (10 min)', () =>
+    eq(editDerivedDurationMs_(60 * 1000), 10 * 60 * 1000));
+  t('editDerivedDurationMs_ mid span passes through', () =>
+    eq(editDerivedDurationMs_(30 * 60 * 1000), 30 * 60 * 1000));
+  t('editDerivedDurationMs_ long span clamps to MAX (120 min)', () =>
+    eq(editDerivedDurationMs_(5 * 60 * 60 * 1000), 120 * 60 * 1000));
+
+  // hasSendableExercises_: a zero-set-only row has nothing to send.
+  t('hasSendableExercises_ false for empty', () => eq(hasSendableExercises_([]), false));
+  t('hasSendableExercises_ false when all entries are zero-set', () => eq(
+    hasSendableExercises_([{ name: 'Bench', entries: [{ weight: 200, reps: 5, sets: 0, assisted: false }] }]), false));
+  t('hasSendableExercises_ true for a real set', () => eq(
+    hasSendableExercises_([{ name: 'Bench', entries: [{ weight: 200, reps: 5, sets: 1, assisted: false }] }]), true));
+  t('hasSendableExercises_ true for unknown-sets entry (sets null)', () => eq(
+    hasSendableExercises_([{ name: 'Bench', entries: [{ weight: 200, reps: 5, sets: null, assisted: false }] }]), true));
+  t('hasSendableExercises_ true when mixed zero-set and real', () => eq(
+    hasSendableExercises_([{ name: 'Bench', entries: [
+      { weight: 200, reps: 5, sets: 0, assisted: false },
+      { weight: 200, reps: 5, sets: 2, assisted: false }
+    ] }]), true));
+
+  // selectBackstopRows_: recent + sendable + not-yet-matched rows only.
+  const bsNow = Date.UTC(2026, 0, 15, 17, 0, 0);   // noon EST Jan 15
+  const bsDate = ymd => new Date(Date.UTC(2026, 0, ymd, 17, 0, 0));
+  const sendable = [{ name: 'Bench', entries: [{ weight: 200, reps: 5, sets: 2, assisted: false }] }];
+  const zeroOnly = [{ name: 'Bench', entries: [{ weight: 200, reps: 5, sets: 0, assisted: false }] }];
+  t('selectBackstopRows_ picks recent unmatched sendable rows, drops matched/old/empty', () => {
+    const rows = [
+      { rowNum: 2, date: bsDate(15), exercises: sendable, matchedHealthSession: '' },        // today, unmatched -> pick
+      { rowNum: 3, date: bsDate(14), exercises: sendable, matchedHealthSession: '' },        // yesterday, unmatched -> pick
+      { rowNum: 4, date: bsDate(15), exercises: sendable, matchedHealthSession: 'foreign/x' }, // matched -> skip
+      { rowNum: 5, date: bsDate(13), exercises: sendable, matchedHealthSession: '' },        // 2 days back (outside lookback=2) -> skip
+      { rowNum: 6, date: bsDate(15), exercises: zeroOnly, matchedHealthSession: '' }          // no sendable content -> skip
+    ];
+    eq(selectBackstopRows_(rows, bsNow, 2).map(r => r.rowNum), [2, 3]);
   });
 
   // resolveForeignMatches_ tests. listStrengthOnDate is stubbed per-test so
