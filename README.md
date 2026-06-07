@@ -7,12 +7,12 @@ Google Apps Script to sync strength-training and bodyweight data from Google She
 - **Strength Exercises**: Parses lifts (e.g., `135x5x3`, `*135x5x3` for assisted) and logs them as `STRENGTH_TRAINING` sessions.
 - **Bodyweight**: Logs weight data points.
 - **Delete+recreate sync**: Each sync pass rebuilds the row's Health datapoint(s) from current cell content. Edits to a synced row clear the `Synced At` stamps and the row is reprocessed on the next poll, with `endTime`, `activeDuration`, and notes refreshed from the current state. (The Google Health API has no functional update mechanism for exercise datapoints — `PATCH` is a server-side no-op and `PUT`/POST-to-resource don't exist; delete+POST is the only path.)
-- **Edit-derived timing, date-aware**: The activity's start/end times come from when you first/last edited the row, so the Google Health session reflects when you actually did the workout. Edit timestamps are only trusted when their civil date matches the row's `Date` column — editing an old row today won't shift its Health datapoint to today. On re-sync, the prior datapoint's interval/sample time is fetched and preserved (the content updates but the timing stays put). Rows without edit timestamps (e.g. backfill) fall back to a synthetic noon-ordinal slot on the row's `Date`.
-- **Foreign-activity matching**: If a Strength Training session you logged on a watch or in another app already covers the same workout (overlapping edit window when the row's edit timestamps fall on its `Date`, or ordinal pairing among same-date rows and candidates otherwise), the script skips writing its own duplicate exercise datapoint and records the matched session in the row's `Matched Health Session` column. The foreign datapoint is left untouched — its calories, heart rate, and recording method are preserved. (The API enforces this anyway — DELETE on a non-script-owned datapoint returns `403 DATA_POINT_NOT_OWNED_BY_CLIENT`.) Bodyweight still syncs as normal.
+- **Edit-derived timing, date-aware**: The activity's start/end times come from when you first/last edited the row, so the Google Health session reflects when you actually did the workout. A single edit (start only — e.g. you've typed the first set but not finished the workout) records a default-length session; a second edit records the real end time, so `endTime` grows as you log more sets during a live workout (clamped to `[MIN, MAX]`, default 10 min – 2 h). Edit timestamps are only trusted when their civil date matches the row's `Date` column — editing an old row today won't shift its Health datapoint to today. On re-sync, the prior datapoint's interval/sample time is fetched and preserved (the content updates but the timing stays put). Rows without edit timestamps (e.g. backfill) fall back to a synthetic noon-ordinal slot on the row's `Date`.
+- **Foreign-activity matching**: If a Strength Training session you logged on a watch or in another app overlaps the same workout (the row's edit timestamps fall on its `Date` and overlap the foreign session's interval, with 30 minutes of slack), the script borrows that session's start/end times for the datapoint it writes — the manual start/stop is more accurate than the edit-derived window — and records the matched session in the row's `Matched Health Session` column. The script **always writes its own exercise datapoint** (carrying the reps/sets notes); the foreign datapoint is left untouched, so its calories, heart rate, and recording method are preserved. (The API enforces this anyway — DELETE/PATCH on a non-script-owned datapoint returns `403 DATA_POINT_NOT_OWNED_BY_CLIENT`.) A daily backstop re-reviews recent unmatched rows so a foreign session that synced *after* the row was already pushed can still re-align it. Bodyweight always syncs as normal.
 - **Two-phase sync**: Weight and exercise sync independently with their own `Synced At` stamps and column-aware dirty tracking. Editing only the Weight column re-pushes just the weight datapoint and leaves the exercise interval untouched; editing only an exercise column re-pushes just the exercise datapoint. Editing the Date column alone on an otherwise-empty row is a no-op (nothing to sync until exercise or weight content lands).
 - **Edit-burst debounce**: A dirty row whose `Exercises Last Edited At` is within 60 seconds is skipped on the current poll and retried on the next, so a poll firing mid-edit doesn't push a half-typed row. The weight phase has no debounce — `Weight Edited At` advances on every weight cell edit and the weight datapoint pushes on the next poll.
-- **Automated**: Polls every 5 minutes for dirty rows past the debounce.
-- **Per-pass cap**: Each sync processes up to 75 rows (newest dates first) to stay under Apps Script's 6-minute execution limit. Remaining rows are picked up on the next poll.
+- **Automated**: Polls every 5 minutes for dirty rows past the debounce. A daily backstop re-dirties recent unmatched exercise rows so late-arriving foreign sessions get picked up.
+- **Per-pass cap**: Each sync processes up to 90 rows (newest dates first) to stay under Apps Script's 6-minute execution limit. Remaining rows are picked up on the next poll.
 
 > [!NOTE]
 > The Google Health API enforces strict ownership. Datapoints logged by this script live side-by-side with sessions recorded by your watch (e.g., Pixel Watch, Fitbit).
@@ -36,10 +36,13 @@ One entry per line (newline, comma, or semicolon separated):
 | `135` | 135 lb (reps and sets unspecified) |
 | `135x5` | 5 reps at 135 lb (sets unspecified) |
 | `135x5x3` | 5 reps × 3 sets at 135 lb |
+| `135x5x0` | Start marker — 0 sets done yet; retained to anchor the workout's start time but not shown in notes |
 | `*135x5x3` | Assisted reps |
 | `135x5x3, 145x3x2` | Multiple distinct sets/exercises in one cell |
 
 Unspecified fields are omitted from the Google Health notes. For example, a `Bench press` cell containing `135` renders as `Bench press, 135 lbs`; `135x5` renders as `Bench press, 135 lbs, 5 reps`; `135x5x3` renders as `Bench press, 135 lbs, 3 sets of 5`.
+
+A zero-set entry (`x0`, e.g. `135x5x0`) is **retained but suppressed** from the notes: it marks the start of an exercise you haven't completed yet, so the row anchors its start time and can match a foreign session, but no datapoint is written until you log a real set (and a row whose only entries are zero-set never produces a datapoint). A zero-rep entry (`x0` in the reps position, e.g. `135x0`) is dropped entirely as "not performed".
 
 ### Example
 
@@ -52,9 +55,9 @@ Trimmed to a few exercise columns and the most relevant managed columns. Health 
 | Jan 18, 2026 |             | 295x4x6          | 187.5  | 2026-01-18T17:45:00Z | 2026-01-18T17:00:00Z | [ex/005, wt/006]   |                        |
 | Jan 24, 2026 | *225        |                  |        | 2026-01-24T18:00:00Z |                      | [ex/007]           |                        |
 | Apr 25, 2026 |             | 325x5x3, 335x5x2 |        | 2026-04-25T19:30:00Z |                      | [ex/008]           |                        |
-| May 24, 2026 |             | 335x5x5          | 182.4  | 2026-05-24T18:00:00Z | 2026-05-24T17:15:00Z | [wt/009]           | ex/010                 |
+| May 24, 2026 |             | 335x5x5          | 182.4  | 2026-05-24T18:00:00Z | 2026-05-24T17:15:00Z | [ex/010, wt/009]   | ex/777                 |
 
-The last row's strength session was logged on a watch first; the script skipped writing its own exercise datapoint and recorded the foreign session in `Matched Health Session`. Only the bodyweight was written by the script (see `Created Health IDs`).
+The last row's strength session was also logged on a watch. The script still wrote its own exercise datapoint (`ex/010`, carrying the reps/sets notes) but borrowed the watch session's start/end times for it, and recorded the watch session's resource name (`ex/777`) in `Matched Health Session`. The watch datapoint itself is left untouched.
 
 ---
 
@@ -106,7 +109,7 @@ In Apps Script **Project Settings (⚙)**, set the project time zone to your loc
 
 ### 6. Initialize & Authorize
 
-1. In the Apps Script editor, open the `Main` file, select the `setup` function, and click **Run**. The first run prompts for sheet access; approve it. `setup` installs triggers (`onEditTrigger`, `flushIfPending`) and appends the managed columns (`Exercise Synced At`, `Weight Synced At`, `Created Health IDs`, `Exercise First Edited At`, `Exercises Last Edited At`, `Weight Edited At`, `Matched Health Session`) to the first tab.
+1. In the Apps Script editor, open the `Main` file, select the `setup` function, and click **Run**. The first run prompts for sheet access; approve it. `setup` installs triggers (`onEditTrigger`, `flushIfPending`, `dailyBackstop`) and appends the managed columns (`Exercise Synced At`, `Weight Synced At`, `Created Health IDs`, `Exercise First Edited At`, `Exercises Last Edited At`, `Weight Edited At`, `Matched Health Session`) to the first tab.
 2. Refresh your spreadsheet, then select **Sync ▸ Authorize Health API** from the menu. Complete the OAuth consent flow.
 
 The **Sync** menu also exposes:
@@ -140,8 +143,9 @@ Edit [Config.gs](src/Config.gs) to customize:
 
 - `SYNTHETIC_START_HOUR` / `SYNTHETIC_DURATION_HOURS` (default `12` / `1`): synthetic session start hour and duration when edit-derived timing is unavailable (legacy/backfill rows).
 - `LAST_EDIT_QUIESCE_MS` (default 60 sec): edit-burst "still typing" guard for the exercise phase. A row whose `Exercises Last Edited At` is within this window is skipped on the current poll and retried on the next, so a poll firing mid-edit doesn't push a half-typed row. Weight phase has no debounce.
-- `MIN_EXERCISE_DURATION_MS` / `MAX_EXERCISE_DURATION_MS` (defaults 5 min / 120 min): bounds for the edit-derived interval duration. The floor satisfies the Health API's "endTime must be strictly after startTime" requirement when only a single edit has happened; the ceiling caps multi-hour-spanning rows at a plausible workout length.
+- `MIN_EXERCISE_DURATION_MS` / `MAX_EXERCISE_DURATION_MS` (defaults 10 min / 120 min): bounds for the edit-derived interval duration. The floor doubles as the start-only default — a single-edit row (start only, no observed end) records a `MIN`-length session, which also satisfies the Health API's "endTime must be strictly after startTime" requirement; the ceiling caps multi-hour-spanning rows at a plausible workout length.
 - `FOREIGN_MATCH_BUFFER_MS` (default 30 min): when checking whether a non-sync-created Strength Training activity (e.g. one logged by a watch/Fitbit) overlaps a row's edit window, allow this much slack on either side. The row **always** writes its own exercise datapoint; an overlapping foreign session only supplies its start/end interval for timing alignment (the manual start/stop is more accurate than the edit-derived window), and the foreign datapoint's resource name is recorded in the `Matched Health Session` column. Rows without same-date exercise edit timestamps get no match and fall through to synthetic/prior timing.
+- `BACKSTOP_LOOKBACK_DAYS` / `BACKSTOP_HOUR` (defaults 2 / 4): the daily backstop trigger re-dirties exercise rows from the last `BACKSTOP_LOOKBACK_DAYS` days (by the row's `Date`) that haven't matched a foreign session yet, so a foreign session that synced late can re-align them on the next poll. `BACKSTOP_HOUR` is the local hour the daily trigger fires.
 - `POLL_INTERVAL_MIN` (default 5): trigger cadence for `flushIfPending`. Apps Script's minimum is 1 minute.
 - `MAX_ROWS_PER_SYNC` (default 90): maximum rows processed per sync pass. Rows are processed newest-first; anything over the cap is deferred to the next poll. At ~3.5s/row this leaves comfortable margin under Apps Script's 6-minute execution limit.
 - `MAX_BODYWEIGHT_LB` (default 999): bodyweight values above this are treated as typos and ignored.
