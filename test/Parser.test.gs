@@ -58,8 +58,8 @@ function runParserTests() {
   t('bodyweight empty -> null', () => eq(parseBodyweight(''), null));
   t('bodyweight junk -> null', () => eq(parseBodyweight('heavy'), null));
   t('bodyweight zero -> null', () => eq(parseBodyweight('0'), null));
-  t('bodyweight at cap "999" -> 999', () => eq(parseBodyweight('999'), 999));
-  t('bodyweight above cap "1000" -> null', () => eq(parseBodyweight('1000'), null));
+  t('bodyweight at cap "499" -> 499', () => eq(parseBodyweight('499'), 499));
+  t('bodyweight above cap "500" -> null', () => eq(parseBodyweight('500'), null));
   t('bodyweight typo "1850" -> null (implausible)', () => eq(parseBodyweight('1850'), null));
   t('bodyweight at floor "50" -> 50', () => eq(parseBodyweight('50'), 50));
   t('bodyweight below floor "49" -> null', () => eq(parseBodyweight('49'), null));

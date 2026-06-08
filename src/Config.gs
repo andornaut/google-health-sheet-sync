@@ -149,7 +149,7 @@ const GRAMS_PER_LB = 453.59237;
 
 // Reject bodyweight values above this as fat-finger typos (e.g. 1850 for
 // 185.0). Without the cap the Health API accepts and syncs the bad value.
-const MAX_BODYWEIGHT_LB = 999;
+const MAX_BODYWEIGHT_LB = 499;
 
 // Reject bodyweight values below this as mis-entries — typically a rep count or
 // set count accidentally typed into the Weight column (e.g. "5"). A real adult
