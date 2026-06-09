@@ -4,9 +4,11 @@ const vm = require('vm');
 
 const root = path.resolve(__dirname, '..');
 const srcFiles = ['Config.gs', 'Parser.gs', 'Format.gs', 'Sheet.gs', 'HealthApi.gs', 'Main.gs'];
-const testFiles = ['Parser.test.gs'];
+const testFiles = ['Parser.test.gs', 'Sync.test.gs'];
 
-const quietConsole = Object.assign({}, console, { warn: () => {} });
+// Silence the code's diagnostic chatter (warn/info) so the suite output is just
+// the PASS/FAIL lines, which are emitted via console.log and captured below.
+const quietConsole = Object.assign({}, console, { warn: () => {}, info: () => {} });
 
 // Minimal Utilities.formatDate stub backed by Node's Intl. Covers the format
 // strings used in src/*.gs; throws on anything else so a new usage shows up
@@ -50,12 +52,130 @@ const Session = {
   getScriptTimeZone: () => scriptTimeZone
 };
 
+// ---------------------------------------------------------------------------
+// Minimal in-memory fakes for the Apps Script services the orchestration code
+// (syncDirtyRows, syncOneRow_, onEditMarkDirty) touches. These let Sync.test.gs
+// exercise the stateful glue — dirty-flag lifecycle, phase dispatch, idempotency
+// — that the pure-helper tests can't reach. The Health API functions themselves
+// are stubbed per-test via globalThis (same pattern as listStrengthOnDate), so
+// no UrlFetchApp fake is needed. Exposed to the sandbox as SYNC_TEST_HARNESS_.
+// ---------------------------------------------------------------------------
+function makeFakeSheet(sheetId) {
+  let grid = []; // grid[r0][c0], 0-indexed; auto-grows on write
+  const isEmpty = v => v === '' || v === null || v === undefined;
+  const ensure = (r0, c0) => {
+    while (grid.length <= r0) grid.push([]);
+    for (const row of grid) while (row.length <= c0) row.push('');
+  };
+  const getCell = (r0, c0) => (grid[r0] && grid[r0][c0] !== undefined ? grid[r0][c0] : '');
+  const setCell = (r0, c0, v) => { ensure(r0, c0); grid[r0][c0] = v; };
+
+  const sheet = {
+    _setGrid(rows) { grid = rows.map(r => r.slice()); },
+    getSheetId: () => sheetId,
+    hideColumns: () => {},
+    getLastRow() {
+      let last = 0;
+      for (let r0 = 0; r0 < grid.length; r0++) {
+        if (grid[r0].some(v => !isEmpty(v))) last = r0 + 1;
+      }
+      return last;
+    },
+    getLastColumn() {
+      let last = 0;
+      for (let r0 = 0; r0 < grid.length; r0++) {
+        for (let c0 = (grid[r0] || []).length - 1; c0 >= 0; c0--) {
+          if (!isEmpty(grid[r0][c0])) { if (c0 + 1 > last) last = c0 + 1; break; }
+        }
+      }
+      return last;
+    },
+    getRange(row, col, numRows, numCols) {
+      numRows = numRows || 1;
+      numCols = numCols || 1;
+      return {
+        getRow: () => row,
+        getColumn: () => col,
+        getNumRows: () => numRows,
+        getLastRow: () => row + numRows - 1,
+        getLastColumn: () => col + numCols - 1,
+        getSheet: () => sheet,
+        getValue: () => getCell(row - 1, col - 1),
+        setValue: v => { setCell(row - 1, col - 1, v); },
+        getValues: () => {
+          const out = [];
+          for (let i = 0; i < numRows; i++) {
+            const r = [];
+            for (let j = 0; j < numCols; j++) r.push(getCell(row - 1 + i, col - 1 + j));
+            out.push(r);
+          }
+          return out;
+        },
+        setValues: vals => {
+          for (let i = 0; i < numRows; i++) {
+            for (let j = 0; j < numCols; j++) setCell(row - 1 + i, col - 1 + j, vals[i][j]);
+          }
+        }
+      };
+    }
+  };
+  return sheet;
+}
+
+function makeFakeStore() {
+  let m = {};
+  return {
+    getProperty: k => (k in m ? m[k] : null),
+    setProperty: (k, v) => { m[k] = String(v); },
+    deleteProperty: k => { delete m[k]; },
+    _clear: () => { m = {}; }
+  };
+}
+
+const fakeSheet = makeFakeSheet(1);
+const fakeSpreadsheet = {
+  getSheets: () => [fakeSheet],
+  toast: () => {},
+  getUi: () => { throw new Error('no UI'); }
+};
+const scriptProps = makeFakeStore();
+const lockState = { held: false };
+const makeLock = () => {
+  let owned = false;
+  return {
+    tryLock: () => {
+      if (lockState.held && !owned) return false;
+      lockState.held = true;
+      owned = true;
+      return true;
+    },
+    releaseLock: () => { if (owned) { lockState.held = false; owned = false; } }
+  };
+};
+
+const SpreadsheetApp = {
+  getActiveSpreadsheet: () => fakeSpreadsheet,
+  getUi: () => { throw new Error('no UI'); },
+  flush: () => {}
+};
+const PropertiesService = {
+  getScriptProperties: () => scriptProps,
+  getUserProperties: () => makeFakeStore()
+};
+const LockService = {
+  getScriptLock: makeLock,
+  getUserLock: makeLock
+};
+
 const sandbox = {
   console: quietConsole,
-  SpreadsheetApp: { getUi: () => { throw new Error('no UI'); } },
+  SpreadsheetApp: SpreadsheetApp,
+  PropertiesService: PropertiesService,
+  LockService: LockService,
   Utilities: Utilities,
   Session: Session,
-  setTestTimeZone: tz => { scriptTimeZone = tz; }
+  setTestTimeZone: tz => { scriptTimeZone = tz; },
+  SYNC_TEST_HARNESS_: { sheet: fakeSheet, scriptProps: scriptProps, lockState: lockState }
 };
 vm.createContext(sandbox);
 
@@ -73,6 +193,7 @@ const origLog = quietConsole.log;
 quietConsole.log = (...args) => { logs.push(args.join(' ')); origLog(...args); };
 try {
   vm.runInContext('runParserTests();', sandbox);
+  vm.runInContext('runSyncTests();', sandbox);
 } finally {
   quietConsole.log = origLog;
 }

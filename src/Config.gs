@@ -83,22 +83,23 @@ const SYNTHETIC_DURATION_HOURS = 1;
 const MIN_EXERCISE_DURATION_MS = 10 * 60 * 1000;
 const MAX_EXERCISE_DURATION_MS = 120 * 60 * 1000;
 
-// Daily backstop (dailyBackstop): re-reviews recent exercise rows so a foreign
-// session that synced AFTER the row was already pushed can still re-align the
-// row's interval. LOOKBACK covers today + yesterday so a late-night workout
-// whose foreign session lands the next morning is caught; HOUR is when the
-// daily time-based trigger fires.
+// Backstop (backstop): re-reviews recent exercise rows so a foreign session that
+// synced AFTER the row was already pushed can still re-align the row's interval.
+// LOOKBACK covers today + yesterday so a late-night workout whose foreign session
+// lands the next morning is caught; INTERVAL_HOURS is the time-based trigger
+// cadence (it runs off the 5-min poll so foreign re-review doesn't query the
+// Health API every 5 minutes; a late foreign session aligns within this interval).
 const BACKSTOP_LOOKBACK_DAYS = 2;
-const BACKSTOP_HOUR = 4;
+const BACKSTOP_INTERVAL_HOURS = 4;
 
-// Orphan reconciliation (reconcileExerciseOrphans_, run from dailyBackstop):
+// Orphan reconciliation (reconcileExerciseOrphans_, run from backstop):
 // how many civil days back to scan for sync-created exercise datapoints that no
 // row's Created Health IDs references. These are leaked by the two accepted
 // create-orphan windows (a create POST that succeeds server-side but times out
 // client-side and is retried; a 6-minute hard kill landing after the POST
 // returns but before the ID is persisted). A wider lookback than the
-// foreign-match backstop since an orphan can sit indefinitely and is only ever
-// removed here; bounded so the daily scan stays cheap (one list call per day).
+// foreign-match lookback since an orphan can sit indefinitely and is only ever
+// removed here; bounded so each scan stays cheap (one list call per day scanned).
 const ORPHAN_RECONCILE_LOOKBACK_DAYS = 7;
 
 // Foreign-session timing alignment (resolveForeignMatches_).
@@ -124,7 +125,7 @@ const ORPHAN_RECONCILE_LOOKBACK_DAYS = 7;
 // Caveat: two overlapping STRENGTH_TRAINING datapoints (ours + the device's)
 // may both feed daily aggregates (:dailyRollUp, active minutes) even though
 // they display as one card.
-const FOREIGN_MATCH_BUFFER_MS = 30 * 60 * 1000;
+const FOREIGN_MATCH_BUFFER_MS = 10 * 60 * 1000;
 
 const HEALTH_OAUTH_CLIENT_ID_KEY = 'HEALTH_OAUTH_CLIENT_ID';
 const HEALTH_OAUTH_CLIENT_SECRET_KEY = 'HEALTH_OAUTH_CLIENT_SECRET';
