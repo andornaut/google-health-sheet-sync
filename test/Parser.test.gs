@@ -580,6 +580,35 @@ function runParserTests() {
     eq(selectBackstopRows_(rows, bsNow, 2).map(r => r.rowNum), [2, 3]);
   });
 
+  t('selectBackstopRows_ wantMatched=true picks recent matched sendable rows, drops unmatched/old/empty', () => {
+    const rows = [
+      { rowNum: 2, date: bsDate(15), exercises: sendable, matchedHealthSession: 'foreign/a' },  // today, matched -> pick
+      { rowNum: 3, date: bsDate(14), exercises: sendable, matchedHealthSession: 'foreign/b' },  // yesterday, matched -> pick
+      { rowNum: 4, date: bsDate(15), exercises: sendable, matchedHealthSession: '' },           // unmatched -> skip
+      { rowNum: 5, date: bsDate(13), exercises: sendable, matchedHealthSession: 'foreign/c' },  // outside lookback -> skip
+      { rowNum: 6, date: bsDate(15), exercises: zeroOnly, matchedHealthSession: 'foreign/d' }   // no sendable content -> skip
+    ];
+    eq(selectBackstopRows_(rows, bsNow, 2, true).map(r => r.rowNum), [2, 3]);
+  });
+
+  // exerciseUnchanged_: skip the recreate only when interval + notes all match.
+  const priorEx = (startIso, endIso, notes) => ({
+    exercise: { interval: { startTime: startIso, endTime: endIso }, notes: notes }
+  });
+  const exStart = Date.UTC(2026, 0, 15, 17, 0, 0);
+  const exEnd = Date.UTC(2026, 0, 15, 17, 30, 0);
+  t('exerciseUnchanged_ true when interval and notes all match', () => eq(
+    exerciseUnchanged_(priorEx('2026-01-15T17:00:00Z', '2026-01-15T17:30:00Z', 'Bench: 200x5x2'),
+      exStart, exEnd, 'Bench: 200x5x2'), true));
+  t('exerciseUnchanged_ false when endTime differs', () => eq(
+    exerciseUnchanged_(priorEx('2026-01-15T17:00:00Z', '2026-01-15T17:30:00Z', 'Bench: 200x5x2'),
+      exStart, exEnd + 60000, 'Bench: 200x5x2'), false));
+  t('exerciseUnchanged_ false when notes differ', () => eq(
+    exerciseUnchanged_(priorEx('2026-01-15T17:00:00Z', '2026-01-15T17:30:00Z', 'Bench: 200x5x2'),
+      exStart, exEnd, 'Bench: 200x5x3'), false));
+  t('exerciseUnchanged_ false when interval missing', () => eq(
+    exerciseUnchanged_({ exercise: { notes: 'x' } }, exStart, exEnd, 'x'), false));
+
   // selectOrphanExerciseNames_: delete untracked datapoints from our own web
   // client, leave tracked / foreign / other-client / unattributable ones alone.
   const oCand = (name, clientId) => ({ name: name, googleWebClientId: clientId || null });

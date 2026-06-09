@@ -59,49 +59,89 @@ function installTriggers() {
 
 function onEditTrigger(e) {
   try {
-    onEditMarkDirty(e);
+    // onEditMarkDirty does the fast, lock-free work (clear stamps, advance edit
+    // timestamps, bump the dirty generation) and reports whether anything was
+    // marked dirty. If so, attempt an immediate sync of the dirty row(s) under
+    // a non-blocking lock (lockWaitMs=0): if another sync holds the lock this
+    // tick skips and the row stays dirty for the next flushIfPending poll. An
+    // unrecoverable throw is logged here (vs. re-thrown for an owner email as in
+    // flushIfPending) since onEdit fires constantly; the poll handles the email.
+    if (onEditMarkDirty(e)) {
+      syncDirtyRows(0);
+    }
   } catch (err) {
     console.error('onEditTrigger error: ' + err);
   }
 }
 
 function flushIfPending() {
+  // Re-dirty recent UNMATCHED exercise rows so a Fitbit session that synced
+  // after the row was already pushed (with no further edit to trigger onEdit)
+  // aligns on this pass. Cheap: the exercise re-sync is idempotent, so a row
+  // with no new overlapping foreign session resolves to a GET + no-op rather
+  // than a delete+recreate. (The daily backstop handles the matched complement
+  // — foreign intervals extended after the last edit.) A readRows failure here
+  // is non-fatal; the flush below re-reads and surfaces any misconfig.
+  try {
+    const { rows, exerciseSyncedAtCol } = readRows();
+    if (exerciseSyncedAtCol) {
+      const targets = selectBackstopRows_(rows, Date.now(), BACKSTOP_LOOKBACK_DAYS, false);
+      if (targets.length > 0) {
+        reDirtyRows_(targets.map(r => r.rowNum), { exerciseCol: exerciseSyncedAtCol });
+        console.info('flushIfPending: re-dirtied ' + targets.length
+          + ' recent unmatched exercise row(s) for foreign-match re-review.');
+      }
+    }
+  } catch (err) {
+    console.warn('flushIfPending: unmatched re-dirty failed (continuing to flush): ' + err);
+  }
+
   const props = PropertiesService.getScriptProperties();
   if (!props.getProperty(PENDING_DIRTY_KEY)) {
     console.info('flushIfPending: no pending edits, skipping');
     return;
   }
   console.info('flushIfPending: pending edits detected, syncing');
-  syncDirtyRows(false, 0);
+  syncDirtyRows(0);
 }
 
-// Select rows the daily backstop should re-review. A row qualifies when its
-// Date falls within the last `lookbackDays` civil days, it has sendable
-// exercise content, and it has not yet been aligned to a foreign session
-// (empty Matched Health Session). Already-matched rows are stable — their
-// foreign interval won't change — so re-checking them only churns datapoints;
-// only unmatched rows can still benefit from a foreign session that synced
-// late. Pure (date keys via ymd, which honors the script time zone).
-function selectBackstopRows_(rows, nowMs, lookbackDays) {
+// Select recent exercise rows to re-review, split by foreign-match state:
+//   - wantMatched=false (poll): rows NOT yet aligned to a foreign session
+//     (empty Matched Health Session). Re-dirtying these lets a Fitbit session
+//     that synced late align the row on the next pass.
+//   - wantMatched=true (daily backstop): rows already aligned. Re-dirtying these
+//     re-borrows the foreign session's CURRENT interval, catching a foreign
+//     session whose end was extended after the last sheet edit.
+// In both cases a row qualifies only when its Date falls within the last
+// `lookbackDays` civil days and it has sendable exercise content. Re-dirtying is
+// cheap because the exercise re-sync is idempotent (syncOneRow_ skips the
+// recreate when nothing changed), so an unmatched row with no new session or a
+// matched row with an unchanged interval resolves to a GET + no-op. Pure (date
+// keys via ymd, which honors the script time zone).
+function selectBackstopRows_(rows, nowMs, lookbackDays, wantMatched) {
   const recentKeys = new Set();
   for (let i = 0; i < lookbackDays; i++) {
     recentKeys.add(ymd(new Date(nowMs - i * 24 * 60 * 60 * 1000)));
   }
-  // Order by cost: the free already-matched test, then the ymd date-key lookup
+  // Order by cost: the free matched-state test, then the ymd date-key lookup
   // (a timezone op), then the nested-loop hasSendableExercises_ last so it runs
   // only on rows that already qualify.
   return rows.filter(r =>
-    !r.matchedHealthSession
+    (wantMatched ? !!r.matchedHealthSession : !r.matchedHealthSession)
     && recentKeys.has(ymd(r.date))
     && hasSendableExercises_(r.exercises));
 }
 
-// Daily trigger: re-dirty recent unmatched exercise rows so a foreign session
-// that synced AFTER the row was already pushed can re-align it on the next
-// poll. Clearing Exercise Synced At + advancing the dirty generation makes
-// flushIfPending re-run the normal sync (including resolveForeignMatches_),
-// which lets a now-present overlapping foreign session win and delete+recreate
-// the datapoint with the borrowed interval. No-arg so it's editor-runnable.
+// Daily trigger: re-dirty recent MATCHED exercise rows so a foreign session
+// whose interval was extended/changed AFTER the row was last synced gets
+// re-borrowed. Clearing Exercise Synced At + advancing the dirty generation
+// makes the next flushIfPending re-run the normal sync (including
+// resolveForeignMatches_), which re-matches the same foreign session and picks
+// up its current interval. (Unmatched rows are handled frequently by
+// flushIfPending itself, so the daily pass only covers the matched complement.)
+// The exercise re-sync is idempotent, so a matched row whose foreign interval
+// did not change resolves to a GET + no-op rather than churning the datapoint.
+// Also reconciles orphans. No-arg so it's editor-runnable.
 function dailyBackstop() {
   // Take the script lock for the whole run. Orphan reconciliation deletes
   // exercise datapoints no row references; without the lock it could race an
@@ -130,14 +170,14 @@ function dailyBackstop() {
       console.warn('dailyBackstop: Exercise Synced At column missing; run "Run setup".');
       return;
     }
-    const targets = selectBackstopRows_(rows, Date.now(), BACKSTOP_LOOKBACK_DAYS);
+    const targets = selectBackstopRows_(rows, Date.now(), BACKSTOP_LOOKBACK_DAYS, true);
     if (targets.length === 0) {
-      console.info('dailyBackstop: no recent unmatched exercise rows to re-review.');
+      console.info('dailyBackstop: no recent matched exercise rows to re-review.');
       return;
     }
     reDirtyRows_(targets.map(r => r.rowNum), { exerciseCol: exerciseSyncedAtCol });
     console.info('dailyBackstop: re-dirtied ' + targets.length
-      + ' recent unmatched exercise row(s) for foreign-match re-review.');
+      + ' recent matched exercise row(s) for foreign-interval re-review.');
   } finally {
     lock.releaseLock();
   }
@@ -242,11 +282,10 @@ function reDirtyRows_(rowNums, cols) {
   markPendingDirty_();
 }
 
-// "Run now" is an explicit manual action: bypasses the exercise edit-burst
-// debounce so the user sees results immediately. Weight phase has no
-// debounce, so this only changes behavior for exercise content. If they
-// keep editing afterward, the row goes dirty again and the next sync
-// replaces the Health datapoint(s).
+// "Run now" is an explicit manual action: syncs all dirty rows immediately,
+// waiting for the script lock (unlike the automatic triggers, which skip when
+// the lock is held). If the user keeps editing afterward, the row goes dirty
+// again and the next sync reconciles the Health datapoint(s).
 function runSyncNow() {
   runSyncAndToast_('Synced');
 }
@@ -258,7 +297,7 @@ function runSyncNow() {
 function runSyncAndToast_(verb) {
   let result;
   try {
-    result = syncDirtyRows(true, LOCK_WAIT_MS);
+    result = syncDirtyRows(LOCK_WAIT_MS);
   } catch (err) {
     toast_('Sync failed: ' + String(err.message || err), 30);
     throw err;
@@ -364,7 +403,7 @@ function humanizeDate_(date) {
   return Utilities.formatDate(date, getTz_(), 'yyyy-MM-dd HH:mm:ss');
 }
 
-function syncDirtyRows(bypassQuiesce, lockWaitMs) {
+function syncDirtyRows(lockWaitMs) {
   const lock = LockService.getScriptLock();
   const waitMs = (lockWaitMs === undefined || lockWaitMs === null) ? LOCK_WAIT_MS : lockWaitMs;
   if (!lock.tryLock(waitMs)) {
@@ -385,7 +424,6 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
   const genAtStart = props.getProperty(PENDING_DIRTY_KEY);
   let ok = 0;
   let errors = 0;
-  let waitingCount = 0;
   let deferredCount = 0;
   // Set when the pass hits a misconfiguration that retrying can't fix (missing
   // columns, duplicate headers, or any other throw out of the body). The catch
@@ -404,46 +442,24 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
 
     const ordinalByRowNum = buildOrdinalMap_(rows);
 
-    // Per-row phase readiness:
-    //   - Weight phase: always ready when the row is weight-dirty (no debounce).
-    //   - Exercise phase: ready iff bypassed, or the row has no Exercises
-    //     Edited At timestamp, or the debounce window has elapsed since the
-    //     last exercise edit. Rows with no exercise content also pass
-    //     instantly since there's nothing to time.
-    const now = Date.now();
+    // Per-row phase readiness (no debounce — onEdit syncs immediately and the
+    // poll/backstop retry): a row's weight phase is ready when weight-dirty, its
+    // exercise phase when exercise-dirty. There is no "still typing" wait; a
+    // poll firing mid-burst just re-pushes current state, and the idempotent
+    // exercise re-sync (syncOneRow_) skips the recreate when nothing changed.
     const ready = [];
-    let maxRemainingMs = 0;
     dirty.forEach(r => {
       const weightReady = !r.weightSyncedAt;
-      let exerciseReady = false;
-      let remainingMs = 0;
-      if (!r.exerciseSyncedAt) {
-        if (bypassQuiesce || !r.exercisesLastEditedAt || !hasSendableExercises_(r.exercises)) {
-          exerciseReady = true;
-        } else {
-          const sinceMs = now - r.exercisesLastEditedAt.getTime();
-          exerciseReady = sinceMs >= LAST_EDIT_QUIESCE_MS;
-          remainingMs = LAST_EDIT_QUIESCE_MS - sinceMs;
-        }
-      }
+      const exerciseReady = !r.exerciseSyncedAt;
       if (weightReady || exerciseReady) {
         ready.push({ row: r, weightReady: weightReady, exerciseReady: exerciseReady });
-      } else {
-        waitingCount++;
-        if (remainingMs > maxRemainingMs) maxRemainingMs = remainingMs;
       }
     });
 
-    if (waitingCount > 0) {
-      console.info('syncDirtyRows: ' + waitingCount + ' row(s) still in edit-debounce window ('
-        + humanizeMs_(maxRemainingMs) + ' remaining of ' + humanizeMs_(LAST_EDIT_QUIESCE_MS)
-        + '); will retry next pass.');
-    }
     if (ready.length === 0) {
       console.info('syncDirtyRows: no rows ready to sync.');
       return { ok: 0, errors: 0 };
     }
-    if (bypassQuiesce) console.info('syncDirtyRows: bypassQuiesce=true');
 
     // Newest-first so recent edits land in Health quickly when the cap defers
     // some of the backlog. Tie-break by rowNum descending for stable ordering
@@ -504,11 +520,11 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
       // next poll after the misconfig is fixed. Just release the lock.
     } else {
       // End-of-pass flag resolution:
-      //   - If work remains (quiescing, errors, deferred): ensure the flag is
-      //     set so a future poll picks it up. If a concurrent edit advanced
-      //     the generation already, its value is fine; otherwise write a fresh
-      //     one. (syncOneRow_ also calls markPendingDirty_ for partial-progress
-      //     rows, so ok-counted rows can leave the flag set too.)
+      //   - If work remains (errors, deferred): ensure the flag is set so a
+      //     future poll picks it up. If a concurrent edit advanced the
+      //     generation already, its value is fine; otherwise write a fresh one.
+      //     (syncOneRow_ also calls markPendingDirty_ for partial-progress rows,
+      //     so ok-counted rows can leave the flag set too.)
       //   - If no work remains AND the generation hasn't moved: the pass fully
       //     drained the queue, safe to clear.
       //   - If no work remains BUT the generation moved: an edit landed during
@@ -516,7 +532,7 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
       //     Leave the new generation in place so the next poll runs.
       const genAtEnd = props.getProperty(PENDING_DIRTY_KEY);
       const concurrentEdit = genAtEnd !== genAtStart;
-      const workRemaining = waitingCount > 0 || errors > 0 || deferredCount > 0;
+      const workRemaining = errors > 0 || deferredCount > 0;
       if (workRemaining) {
         if (!concurrentEdit) markPendingDirty_();
       } else if (!concurrentEdit) {
@@ -527,7 +543,6 @@ function syncDirtyRows(bypassQuiesce, lockWaitMs) {
       const willRetry = workRemaining || concurrentEdit;
       console.info('syncDirtyRows: pass complete — ' + ok + ' synced, ' + errors + ' error(s)'
         + (deferredCount ? ', ' + deferredCount + ' deferred' : '')
-        + (waitingCount ? ', ' + waitingCount + ' debouncing' : '')
         + (concurrentEdit ? ', concurrent edit landed' : '')
         + (willRetry ? '; pending flag kept, next poll will retry.' : '; queue drained.'));
     }
@@ -788,16 +803,33 @@ function resolveRowTiming_(row, ordinal, priorExercise, foreignInterval) {
   };
 }
 
+// True when an existing exercise datapoint (the GET response) already carries
+// the target interval and notes, so a re-sync can skip the delete+recreate and
+// keep its resource name (no churn). Compares interval start/end in absolute ms
+// (the offsets are derived from the same instants, so ms equality suffices) and
+// the notes string exactly. A missing interval/endpoint counts as changed so
+// the row recreates. Pure (no API/sheet access).
+function exerciseUnchanged_(prior, targetStartUtcMs, targetEndUtcMs, targetNotes) {
+  const ex = prior && prior.exercise;
+  const i = ex && ex.interval;
+  if (!i || !i.startTime || !i.endTime) return false;
+  if (new Date(i.startTime).getTime() !== targetStartUtcMs) return false;
+  if (new Date(i.endTime).getTime() !== targetEndUtcMs) return false;
+  return (ex.notes || '') === (targetNotes || '');
+}
+
 // Sync a single row in two independent phases (weight, exercise). Either or
 // both phases may run on a given pass:
 //   - Weight phase runs whenever the row's Weight Synced At is cleared. It
 //     reconciles weight IDs with the sheet's bodyweight (write/delete) and
 //     stamps Weight Synced At on success.
-//   - Exercise phase runs only when the caller passed exerciseReady=true
-//     (i.e. quiesce passed or no exercise content). It reconciles exercise
-//     IDs with the sheet's exercises (delete + recreate, optionally aligning
-//     the interval to an overlapping foreign session) and stamps Exercise
-//     Synced At on success.
+//   - Exercise phase runs whenever the caller passed exerciseReady=true (the
+//     row's Exercise Synced At is cleared). It reconciles exercise IDs with the
+//     sheet's exercises (delete + recreate, optionally aligning the interval to
+//     an overlapping foreign session) and stamps Exercise Synced At on success.
+//     The recreate is skipped when the existing datapoint already matches the
+//     freshly-computed interval + notes (see exerciseUnchanged_), so a re-sync
+//     of an unchanged row keeps its resource name and costs only a GET.
 // Returns true if the pass made forward progress on the row without errors
 // (including the case where the row stays dirty because the other phase is
 // still pending). Returns false if any attempted phase failed.
@@ -821,22 +853,25 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
   // will never be sent.
   const exerciseWillCreate = exerciseReady && hasSendableExercises_(row.exercises);
 
-  // Fetch prior datapoints. Exercise: only when the edit isn't on row.date
-  // (otherwise the live-workout endTime-advancement path takes over) — the
-  // timing resolver reuses the prior interval verbatim. Weight: when we'll
-  // PATCH (i.e. prior weight ID exists AND bodyweight is set) — the PATCH
-  // body requires sampleTime, which is read from this GET. Exercise GET
-  // failure is non-fatal (timing falls through to edit/synthetic); weight
+  // Fetch prior datapoints. Exercise: whenever the row has a prior exercise id
+  // and the phase will create — the GET serves two purposes now. (1) The 'prior'
+  // timing source reuses its interval verbatim when neither foreign-match nor
+  // same-date editing applies (the resolver ignores it for foreign/edit, which
+  // win). (2) The idempotency check compares the prior interval + notes to the
+  // freshly-computed ones to skip an unchanged recreate. Weight: when we'll
+  // PATCH (i.e. prior weight ID exists AND bodyweight is set) — the PATCH body
+  // requires sampleTime, read from this GET. Exercise GET failure is non-fatal
+  // (timing falls through to edit/synthetic and the recreate proceeds); weight
   // GET failure forces the PATCH to fail and the row to retry next pass.
   let priorExercise = null;
   let priorWeight = null;
   let priorWeightFetchFailed = false;
   const exerciseEditOnRowDate = exerciseEditIsOnRowDate_(row);
-  if (exerciseWillCreate && !foreignMatch && !exerciseEditOnRowDate && split.exercise.length > 0) {
+  if (exerciseWillCreate && split.exercise.length > 0) {
     try {
       priorExercise = getDataPoint(split.exercise[0]);
     } catch (err) {
-      console.warn(tag + ': GET prior exercise failed; will recompute timing: ' + err);
+      console.warn(tag + ': GET prior exercise failed; will recompute timing and recreate: ' + err);
     }
   }
   const weightWillPatch = weightReady && row.bodyweight !== null && split.weight.length > 0;
@@ -940,44 +975,60 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
   }
 
   if (exerciseReady) {
-    if (split.exercise.length > 0) {
-      console.info(tag + ': deleting ' + split.exercise.length + ' previous exercise datapoint(s)');
-      try {
-        deleteDataPointsByName(split.exercise);
-        newExerciseIds = [];
-      } catch (err) {
-        if (isNotFoundError_(err)) {
-          // Already gone server-side (e.g. deleted in the Health app). Treat as
-          // deleted so the row recreates instead of retrying a delete that
-          // 404s forever.
-          console.warn(tag + ': previous exercise datapoint(s) not found (404); treating as deleted.');
-          newExerciseIds = [];
-        } else {
-          console.error(tag + ': delete previous exercise datapoint(s) failed: ' + err);
-          exerciseFailed = true;
-          // Keep newExerciseIds = split.exercise so the next sync retries delete.
-        }
-      }
+    const ex = timing.exercise;
+    const wantCreate = hasSendableExercises_(row.exercises);
+    const notes = wantCreate ? buildNotes(ex.endUtcMs - ex.startUtcMs, row.exercises) : null;
+
+    // Idempotency: if the row's single existing exercise datapoint already
+    // carries the target interval + notes, skip the delete+recreate entirely
+    // and keep its resource name. This is what makes the per-poll / per-day
+    // re-dirty cheap — an unchanged row costs just the prior GET, no write and
+    // no resource-name churn. Only applies when there's exactly one prior id
+    // (multiple priors are consolidated by recreating).
+    const unchanged = wantCreate && split.exercise.length === 1 && priorExercise
+      && exerciseUnchanged_(priorExercise, ex.startUtcMs, ex.endUtcMs, notes);
+
+    if (unchanged) {
+      console.info(tag + ': exercise unchanged; skip recreate -> ' + split.exercise[0]);
+      newExerciseIds = split.exercise;
     } else {
-      newExerciseIds = [];
-    }
-    if (!exerciseFailed && hasSendableExercises_(row.exercises)) {
-      try {
-        const ex = timing.exercise;
-        const notes = buildNotes(ex.endUtcMs - ex.startUtcMs, row.exercises);
-        // createExerciseAt throws if the create returns no resource name, so a
-        // returned name is always usable here.
-        const name = createExerciseAt(ex.startUtcMs, ex.startOffsetSeconds,
-          ex.endUtcMs, ex.endOffsetSeconds, notes);
-        newExerciseIds.push(name);
-        // Same rationale as the weight write above: persist before any
-        // later step can fail and leave the datapoint untracked.
-        writeHealthIds(row.rowNum, cols.healthIdsCol, newWeightIds.concat(newExerciseIds).concat(split.other));
-        console.info(tag + ': createExerciseAt' + (foreignMatch ? ' (foreign-aligned)' : '')
-          + ' -> ' + name);
-      } catch (err) {
-        console.error(tag + ': createExerciseAt failed: ' + err);
-        exerciseFailed = true;
+      if (split.exercise.length > 0) {
+        console.info(tag + ': deleting ' + split.exercise.length + ' previous exercise datapoint(s)');
+        try {
+          deleteDataPointsByName(split.exercise);
+          newExerciseIds = [];
+        } catch (err) {
+          if (isNotFoundError_(err)) {
+            // Already gone server-side (e.g. deleted in the Health app). Treat as
+            // deleted so the row recreates instead of retrying a delete that
+            // 404s forever.
+            console.warn(tag + ': previous exercise datapoint(s) not found (404); treating as deleted.');
+            newExerciseIds = [];
+          } else {
+            console.error(tag + ': delete previous exercise datapoint(s) failed: ' + err);
+            exerciseFailed = true;
+            // Keep newExerciseIds = split.exercise so the next sync retries delete.
+          }
+        }
+      } else {
+        newExerciseIds = [];
+      }
+      if (!exerciseFailed && wantCreate) {
+        try {
+          // createExerciseAt throws if the create returns no resource name, so a
+          // returned name is always usable here.
+          const name = createExerciseAt(ex.startUtcMs, ex.startOffsetSeconds,
+            ex.endUtcMs, ex.endOffsetSeconds, notes);
+          newExerciseIds.push(name);
+          // Same rationale as the weight write above: persist before any
+          // later step can fail and leave the datapoint untracked.
+          writeHealthIds(row.rowNum, cols.healthIdsCol, newWeightIds.concat(newExerciseIds).concat(split.other));
+          console.info(tag + ': createExerciseAt' + (foreignMatch ? ' (foreign-aligned)' : '')
+            + ' -> ' + name);
+        } catch (err) {
+          console.error(tag + ': createExerciseAt failed: ' + err);
+          exerciseFailed = true;
+        }
       }
     }
   }
