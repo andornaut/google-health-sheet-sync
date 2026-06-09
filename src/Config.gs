@@ -36,7 +36,7 @@ const MANAGED_COLUMN_HEADERS = [
   MATCHED_HEALTH_SESSION_COLUMN_HEADER
 ];
 
-// How often the polling trigger (flushIfPending) fires. onEdit syncs the edited
+// How often the polling trigger (flushPending) fires. onEdit syncs the edited
 // row(s) immediately; this poll is the retry net for edits that hit lock
 // contention or a transient failure, and the pass that re-aligns recent
 // unmatched rows once a late foreign session arrives. Apps Script has no
@@ -60,7 +60,7 @@ const MAX_ROWS_PER_SYNC = 100;
 // only at end-of-pass when (a) no work remains AND (b) the generation has
 // not advanced. This avoids the early-clear / hard-kill orphan window:
 // an Apps Script 6-minute timeout (or any uncaught throw) before the finally
-// block runs leaves the flag set, so the next flushIfPending retries the
+// block runs leaves the flag set, so the next flushPending retries the
 // remaining dirty rows instead of stalling until a new edit.
 const PENDING_DIRTY_KEY = 'pendingDirty';
 

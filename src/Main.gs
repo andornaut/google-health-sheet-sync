@@ -46,35 +46,35 @@ function revokeHealthApi() {
 }
 
 function installTriggers() {
-  const handlers = new Set(['onEditTrigger', 'flushIfPending', 'backstop']);
+  const handlers = new Set(['syncOnEdit', 'flushPending', 'backstop']);
   ScriptApp.getProjectTriggers().forEach(t => {
     if (handlers.has(t.getHandlerFunction())) ScriptApp.deleteTrigger(t);
   });
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  ScriptApp.newTrigger('onEditTrigger').forSpreadsheet(ss).onEdit().create();
-  ScriptApp.newTrigger('flushIfPending').timeBased().everyMinutes(POLL_INTERVAL_MIN).create();
+  ScriptApp.newTrigger('syncOnEdit').forSpreadsheet(ss).onEdit().create();
+  ScriptApp.newTrigger('flushPending').timeBased().everyMinutes(POLL_INTERVAL_MIN).create();
   ScriptApp.newTrigger('backstop').timeBased().everyHours(BACKSTOP_INTERVAL_HOURS).create();
 }
 
-function onEditTrigger(e) {
+function syncOnEdit(e) {
   try {
     // onEditMarkDirty does the fast, lock-free work (clear stamps, advance edit
     // timestamps, bump the dirty generation) and reports whether anything was
     // marked dirty. If so, attempt an immediate sync of the dirty row(s) under
     // a non-blocking lock (lockWaitMs=0): if another sync holds the lock this
-    // tick skips and the row stays dirty for the next flushIfPending poll. An
+    // tick skips and the row stays dirty for the next flushPending poll. An
     // unrecoverable throw is logged here (vs. re-thrown for an owner email as in
-    // flushIfPending) since onEdit fires constantly; the poll handles the email.
+    // flushPending) since onEdit fires constantly; the poll handles the email.
     if (onEditMarkDirty(e)) {
       syncDirtyRows(0);
     }
   } catch (err) {
-    console.error('onEditTrigger error: ' + err);
+    console.error('syncOnEdit error: ' + err);
   }
 }
 
-function flushIfPending() {
+function flushPending() {
   // Sync only when there is pending work. No foreign-match re-review here: the
   // backstop re-dirties recent exercise rows (matched AND unmatched) for
   // foreign alignment, so the 5-min poll issues no Health API calls unless an
@@ -83,10 +83,10 @@ function flushIfPending() {
   // every 5 minutes.
   const props = PropertiesService.getScriptProperties();
   if (!props.getProperty(PENDING_DIRTY_KEY)) {
-    console.info('flushIfPending: no pending edits, skipping');
+    console.info('flushPending: no pending edits, skipping');
     return;
   }
-  console.info('flushIfPending: pending edits detected, syncing');
+  console.info('flushPending: pending edits detected, syncing');
   syncDirtyRows(0);
 }
 
@@ -121,7 +121,7 @@ function selectBackstopRows_(rows, nowMs, lookbackDays, wantMatched) {
 
 // Backstop trigger (every BACKSTOP_INTERVAL_HOURS): re-dirty recent exercise rows
 // (BOTH matched and unmatched) for foreign-match re-review. Clearing Exercise
-// Synced At + advancing the dirty generation makes the next flushIfPending re-run
+// Synced At + advancing the dirty generation makes the next flushPending re-run
 // the normal sync (including resolveForeignMatches_):
 //   - unmatched rows: a Fitbit session that synced after the row was pushed (no
 //     further edit to fire onEdit) gets aligned;

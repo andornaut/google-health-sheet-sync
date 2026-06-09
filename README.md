@@ -105,7 +105,7 @@ In Apps Script **Project Settings (⚙)**, set the project time zone to your loc
 
 ### 6. Initialize & Authorize
 
-1. In the Apps Script editor, open `Main`, select `setup`, and **Run**. Approve the sheet-access prompt. `setup` installs triggers (`onEditTrigger`, `flushIfPending`, `backstop`) and appends the managed columns to the first tab.
+1. In the Apps Script editor, open `Main`, select `setup`, and **Run**. Approve the sheet-access prompt. `setup` installs triggers (`syncOnEdit`, `flushPending`, `backstop`) and appends the managed columns to the first tab.
 2. Refresh the spreadsheet, then **Sync ▸ Authorize Health API** and complete the OAuth flow.
 
 The **Sync** menu also exposes:
@@ -142,7 +142,7 @@ Edit [Config.gs](src/Config.gs) to customize:
 - `FOREIGN_MATCH_BUFFER_MS` (10 min): slack on either side when checking whether a foreign Strength Training session overlaps a row's edit window. An overlapping session only supplies its interval (the script always writes its own datapoint), and its name is recorded in `Matched Health Session`.
 - `BACKSTOP_LOOKBACK_DAYS` / `BACKSTOP_INTERVAL_HOURS` (2 / 4): how many days back the backstop's foreign-match re-review reaches, and how often it runs. It re-dirties recent exercise rows (matched and unmatched); the next poll re-syncs them. Cheap because the re-sync is idempotent (an unchanged row is a read, not a recreate).
 - `ORPHAN_RECONCILE_LOOKBACK_DAYS` (7): the backstop scans this many days back for sync-created datapoints no row references and deletes them. Ownership is derived from the datapoints themselves, so foreign sessions are never touched.
-- `POLL_INTERVAL_MIN` (5): cadence for `flushIfPending` (Apps Script minimum is 1).
+- `POLL_INTERVAL_MIN` (5): cadence for `flushPending` (Apps Script minimum is 1).
 - `MAX_ROWS_PER_SYNC` (100): max rows per pass (newest first); overflow defers to the next poll. ~2.83s/row leaves margin under the 6-minute limit.
 - `MAX_BODYWEIGHT_LB` / `MIN_BODYWEIGHT_LB` (499 / 50): values above `MAX` (typos like `1850`) or below `MIN` (a rep count typed into Weight) are treated as no-bodyweight.
 
@@ -165,4 +165,4 @@ Run **Sync ▸ Run setup** after editing timing constants.
 - **403: Could not mint UberMint from GaiaMint**: Mixed scopes in the token. Re-run **Sync ▸ Authorize Health API**.
 - **`Health OAuth not configured`**: Set `HEALTH_OAUTH_CLIENT_ID` and `HEALTH_OAUTH_CLIENT_SECRET` in Script Properties.
 - **Redirect URI Mismatch**: Verify the redirect URL in GCP credentials matches your Script ID.
-- **Failure emails**: An unrecoverable config error (missing columns, duplicate exercise headers) throws out of `flushIfPending`, so Apps Script emails the owner. The dirty flag stays set, so the backlog syncs once you fix the misconfig. Throttle repeat emails under **Apps Script ▸ Triggers ▸ notifications**. Transient per-row API errors retry automatically and appear in the **Executions** log.
+- **Failure emails**: An unrecoverable config error (missing columns, duplicate exercise headers) throws out of `flushPending`, so Apps Script emails the owner. The dirty flag stays set, so the backlog syncs once you fix the misconfig. Throttle repeat emails under **Apps Script ▸ Triggers ▸ notifications**. Transient per-row API errors retry automatically and appear in the **Executions** log.
