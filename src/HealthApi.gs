@@ -107,33 +107,73 @@ function getDataPoint(name) {
 // Lists exercise datapoints whose civil start time falls on `date` in the
 // script's time zone. Used by listStrengthOnDate to discover
 // non-sync-created activities to match against.
-function listExercisesOnDate(date) {
+// Lists raw dataPoints of `dataType` whose civil time (per the AIP-160 filter
+// leaf `filterMember`) falls on `date` in the script's time zone, walking every
+// page. Callers apply their own projection/sort. `filterMember` is snake_case
+// (e.g. 'exercise.interval.civil_start_time', 'weight.sample_time.civil_time')
+// while `dataType` is the path segment in the URL — see the data-type-ID
+// spelling gotcha in AGENTS.md.
+function listDataPointsByCivilDate_(dataType, filterMember, date) {
   const startDay = ymd(date);
   const nextDay = ymd(new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1));
 
-  const filter = 'exercise.interval.civil_start_time >= "' + startDay + '"'
-    + ' AND exercise.interval.civil_start_time < "' + nextDay + '"';
+  const filter = filterMember + ' >= "' + startDay + '"'
+    + ' AND ' + filterMember + ' < "' + nextDay + '"';
   const url = HEALTH_API_BASE
-    + '/users/me/dataTypes/exercise/dataPoints'
+    + '/users/me/dataTypes/' + dataType + '/dataPoints'
     + '?filter=' + encodeURIComponent(filter)
     + '&pageSize=100';
 
-  const sessions = [];
+  const points = [];
   let pageToken = null;
   do {
     const pagedUrl = pageToken ? url + '&pageToken=' + encodeURIComponent(pageToken) : url;
     const json = httpJson_('GET', pagedUrl);
-    const points = json.dataPoints || [];
-    for (const p of points) sessions.push(p);
+    const page = json.dataPoints || [];
+    for (const p of page) points.push(p);
     pageToken = json.nextPageToken || null;
   } while (pageToken);
+  return points;
+}
 
+function listExercisesOnDate(date) {
+  const sessions = listDataPointsByCivilDate_(
+    'exercise', 'exercise.interval.civil_start_time', date);
   sessions.sort((a, b) => {
     const aStart = a.exercise && a.exercise.interval && a.exercise.interval.startTime;
     const bStart = b.exercise && b.exercise.interval && b.exercise.interval.startTime;
     return new Date(aStart || 0) - new Date(bStart || 0);
   });
   return sessions;
+}
+
+// Lists weight datapoints whose civil sample time falls on `date` in the
+// script's time zone, returning the minimal shape orphan reconciliation needs:
+// `{ name, googleWebClientId }` (null googleWebClientId for device / first-party
+// / foreign-app sources, mirroring listStrengthOnDate). Used by
+// reconcileWeightOrphans_ to find untracked weight datapoints created by our
+// own web client.
+//
+// Filter member: `weight.sample_time.civil_time` (snake_case in AIP-160 filter
+// expressions), matching the documented heart-rate sample filter shape and
+// `listExercisesOnDate`'s civil-time convention. Verified against the live API
+// 2026-06-09 via a Debug.gs probe: this spelling returns 200 (as does the
+// `weight.sample_time.physical_time` RFC3339 form); the bare `weight.sample_time`
+// 400s with INVALID_DATA_POINT_FILTER_DATA_TYPE_MEMBER, matching the heart-rate
+// "member not supported" behavior. The fail-safe still holds if the server ever
+// changes: a 400 makes httpJson_ throw, the caller's per-date try/catch logs a
+// warning and reconciles nothing for that day — a safe no-op (never a wrong
+// deletion), degrading to "weight orphans not collected" rather than data loss.
+function listWeightOnDate(date) {
+  const out = [];
+  const points = listDataPointsByCivilDate_(
+    'weight', 'weight.sample_time.civil_time', date);
+  for (const p of points) {
+    if (!p || !p.name) continue;
+    const app = p.dataSource && p.dataSource.application;
+    out.push({ name: p.name, googleWebClientId: (app && app.googleWebClientId) || null });
+  }
+  return out;
 }
 
 function getTzOffsetSeconds_(tz, date) {

@@ -609,37 +609,37 @@ function runParserTests() {
   t('exerciseUnchanged_ false when interval missing', () => eq(
     exerciseUnchanged_({ exercise: { notes: 'x' } }, exStart, exEnd, 'x'), false));
 
-  // selectOrphanExerciseNames_: delete untracked datapoints from our own web
+  // selectOrphanDataPointNames_: delete untracked datapoints from our own web
   // client, leave tracked / foreign / other-client / unattributable ones alone.
   const oCand = (name, clientId) => ({ name: name, googleWebClientId: clientId || null });
-  t('selectOrphanExerciseNames_ deletes our untracked datapoint (client derived from a tracked one)', () => {
+  t('selectOrphanDataPointNames_ deletes our untracked datapoint (client derived from a tracked one)', () => {
     const candidates = [
       oCand('ex/tracked', 'ours'),   // tracked -> establishes "ours"
       oCand('ex/orphan', 'ours')     // untracked, same client -> orphan
     ];
-    eq(selectOrphanExerciseNames_(candidates, { 'ex/tracked': true }), ['ex/orphan']);
+    eq(selectOrphanDataPointNames_(candidates, { 'ex/tracked': true }), ['ex/orphan']);
   });
-  t('selectOrphanExerciseNames_ keeps tracked datapoints', () => {
+  t('selectOrphanDataPointNames_ keeps tracked datapoints', () => {
     const candidates = [oCand('ex/tracked', 'ours')];
-    eq(selectOrphanExerciseNames_(candidates, { 'ex/tracked': true }), []);
+    eq(selectOrphanDataPointNames_(candidates, { 'ex/tracked': true }), []);
   });
-  t('selectOrphanExerciseNames_ keeps foreign datapoints (null client id)', () => {
+  t('selectOrphanDataPointNames_ keeps foreign datapoints (null client id)', () => {
     const candidates = [
       oCand('ex/tracked', 'ours'),
       oCand('foreign/device', null)   // device/first-party -> never an orphan
     ];
-    eq(selectOrphanExerciseNames_(candidates, { 'ex/tracked': true }), []);
+    eq(selectOrphanDataPointNames_(candidates, { 'ex/tracked': true }), []);
   });
-  t('selectOrphanExerciseNames_ keeps untracked datapoints from a different web client', () => {
+  t('selectOrphanDataPointNames_ keeps untracked datapoints from a different web client', () => {
     const candidates = [
       oCand('ex/tracked', 'ours'),
       oCand('other/app', 'theirs')    // another web app, not ours -> keep
     ];
-    eq(selectOrphanExerciseNames_(candidates, { 'ex/tracked': true }), []);
+    eq(selectOrphanDataPointNames_(candidates, { 'ex/tracked': true }), []);
   });
-  t('selectOrphanExerciseNames_ deletes nothing when ownership cannot be attributed', () => {
+  t('selectOrphanDataPointNames_ deletes nothing when ownership cannot be attributed', () => {
     const candidates = [oCand('ex/orphan', 'ours')];   // no tracked candidate to derive "ours"
-    eq(selectOrphanExerciseNames_(candidates, {}), []);
+    eq(selectOrphanDataPointNames_(candidates, {}), []);
   });
 
   // resolveForeignMatches_ tests. listStrengthOnDate is stubbed per-test so
