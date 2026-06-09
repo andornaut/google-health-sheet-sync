@@ -1,9 +1,9 @@
 const DATE_COLUMN_HEADER = 'Date';
 const WEIGHT_COLUMN_HEADER = 'Weight';
-// Weight syncs immediately on edit (no debounce); exercises wait for the
-// edit-burst debounce window. Each content type has its own stamp so a row
-// with both can record weight progress without losing track that exercise
-// is still pending. Cleared independently per phase by onEditMarkDirty.
+// Each content type has its own synced-at stamp so a row with both can record
+// weight progress without losing track that exercise is still pending. Cleared
+// independently per phase by onEditMarkDirty, which also triggers an immediate
+// sync of the edited row(s).
 const EXERCISE_SYNCED_AT_COLUMN_HEADER = 'Exercise Synced At';
 const WEIGHT_SYNCED_AT_COLUMN_HEADER = 'Weight Synced At';
 const HEALTH_IDS_COLUMN_HEADER = 'Created Health IDs';
@@ -36,8 +36,11 @@ const MANAGED_COLUMN_HEADERS = [
   MATCHED_HEALTH_SESSION_COLUMN_HEADER
 ];
 
-// How often the polling trigger fires to check for ready-to-sync rows.
-// Apps Script has no setTimeout; deferred work happens via periodic triggers.
+// How often the polling trigger (flushIfPending) fires. onEdit syncs the edited
+// row(s) immediately; this poll is the retry net for edits that hit lock
+// contention or a transient failure, and the pass that re-aligns recent
+// unmatched rows once a late foreign session arrives. Apps Script has no
+// setTimeout; deferred work happens via periodic triggers.
 const POLL_INTERVAL_MIN = 5;
 
 // How long manual sync entry points (Run now, force-resync) wait to acquire
@@ -97,16 +100,6 @@ const BACKSTOP_HOUR = 4;
 // foreign-match backstop since an orphan can sit indefinitely and is only ever
 // removed here; bounded so the daily scan stays cheap (one list call per day).
 const ORPHAN_RECONCILE_LOOKBACK_DAYS = 7;
-
-// Per-row "still typing" guard. A dirty row whose Exercises Last Edited At
-// is within this window is skipped on the current poll and picked up by the
-// next one. Without it, a poll firing mid-edit would push out a half-typed
-// row. Since every sync delete+recreates with the row's current state,
-// syncing more often than necessary just churns the Health datapoint
-// without changing the eventual state — the guard avoids that churn during
-// an edit burst. Rows with no Exercises Last Edited At bypass the wait and
-// sync immediately. Weight phase has no debounce.
-const LAST_EDIT_QUIESCE_MS = 60 * 1000;
 
 // Foreign-session timing alignment (resolveForeignMatches_).
 //

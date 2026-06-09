@@ -225,20 +225,24 @@ function clearRowWeightSynced(rowNum, weightSyncedAtCol) {
   sheet.getRange(rowNum, weightSyncedAtCol).setValue('');
 }
 
+// Classify the edited range and apply phase-isolated dirty marking (clear the
+// relevant Synced At stamp(s), advance edit timestamps, bump PENDING_DIRTY_KEY).
+// Returns true when the row was marked dirty (so onEditTrigger knows to run an
+// immediate sync), false on every no-op/early-return path.
 function onEditMarkDirty(e) {
-  if (!e || !e.range) return;
+  if (!e || !e.range) return false;
   const sheet = e.range.getSheet();
-  if (sheet.getSheetId() !== getSheet_().getSheetId()) return;
+  if (sheet.getSheetId() !== getSheet_().getSheetId()) return false;
 
   const firstRow = e.range.getRow();
-  if (firstRow < 2) return;
+  if (firstRow < 2) return false;
   const lastRow = e.range.getLastRow();
   const firstCol = e.range.getColumn();
   const lastCol = e.range.getLastColumn();
 
   const { map, headers } = getHeaderMap_(sheet);
   const exerciseSyncedAtCol = map[EXERCISE_SYNCED_AT_COLUMN_HEADER];
-  if (!exerciseSyncedAtCol) return;
+  if (!exerciseSyncedAtCol) return false;
   const weightSyncedAtCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER] || null;
   const exerciseFirstEditedAtCol = map[EXERCISE_FIRST_EDITED_AT_COLUMN_HEADER] || null;
   const exercisesLastEditedAtCol = map[EXERCISES_LAST_EDITED_AT_COLUMN_HEADER] || null;
@@ -281,7 +285,7 @@ function onEditMarkDirty(e) {
   const desc = describeEditRange_(headers, touched, firstRow, lastRow, firstCol, lastCol);
   if (!exerciseRelevant && !weightRelevant) {
     console.info('onEditTrigger: ' + desc + ' no-op (date-only/empty)');
-    return;
+    return false;
   }
 
   const phases = [];
@@ -309,6 +313,7 @@ function onEditMarkDirty(e) {
     exerciseRelevant ? exerciseFirstEditedAtCol : null,
     exerciseRelevant ? exercisesLastEditedAtCol : null,
     weightRelevant ? weightEditedAtCol : null);
+  return true;
 }
 
 function clearStampColumn_(sheet, firstRow, numRows, col) {
