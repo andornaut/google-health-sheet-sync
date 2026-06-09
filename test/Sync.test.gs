@@ -205,6 +205,32 @@ function runSyncTests() {
     eq(deleted, [orphan], 'only our untracked weight datapoint is deleted');
   });
 
+  // ---- backstop: re-dirties BOTH matched and unmatched recent rows --------
+
+  // backstop() uses the real Date.now() (not injectable) for its lookback
+  // window, so rows must be dated "now". A Date object in the Date cell is read
+  // back verbatim by toDate_, sidestepping the UTC-midnight civil-date boundary
+  // that a 'yyyy-MM-dd' string would hit in a non-UTC script time zone.
+  t('backstop re-dirties BOTH matched and unmatched recent rows and sets the pending flag', () => {
+    const today = new Date();
+    reset([
+      [today, '', '135x5x3', 'SYNC', '', '', '', '', '', ''],            // row 2: unmatched
+      [today, '', '225x5x3', 'SYNC', '', '', '', '', '', 'foreign/F1']   // row 3: matched
+    ]);
+    withStubs({ listStrengthOnDate: () => [], listWeightOnDate: () => [] }, () => backstop());
+    eq(SHEET.getRange(2, COL['Exercise Synced At']).getValue(), '', 'unmatched row re-dirtied');
+    eq(SHEET.getRange(3, COL['Exercise Synced At']).getValue(), '', 'matched row re-dirtied');
+    ok(PROPS.getProperty('pendingDirty') !== null, 'pending flag set for the next poll');
+  });
+
+  t('backstop skips entirely when the lock is held', () => {
+    reset([[new Date(), '', '135x5x3', 'SYNC', '', '', '', '', '', '']]);
+    LOCK.held = true;
+    withStubs({ listStrengthOnDate: () => [], listWeightOnDate: () => [] }, () => backstop());
+    eq(SHEET.getRange(2, COL['Exercise Synced At']).getValue(), 'SYNC', 'row untouched when lock held');
+    ok(PROPS.getProperty('pendingDirty') === null, 'no pending flag when skipped');
+  });
+
   const msg = results.join('\n');
   console.log(msg);
 }
