@@ -227,7 +227,7 @@ function clearRowWeightSynced(rowNum, weightSyncedAtCol) {
 
 // Classify the edited range and apply phase-isolated dirty marking (clear the
 // relevant Synced At stamp(s), advance edit timestamps, bump PENDING_DIRTY_KEY).
-// Returns true when the row was marked dirty (so onEditTrigger knows to run an
+// Returns true when the row was marked dirty (so syncOnEdit knows to run an
 // immediate sync), false on every no-op/early-return path.
 function onEditMarkDirty(e) {
   if (!e || !e.range) return false;
@@ -284,14 +284,14 @@ function onEditMarkDirty(e) {
   }
   const desc = describeEditRange_(headers, touched, firstRow, lastRow, firstCol, lastCol);
   if (!exerciseRelevant && !weightRelevant) {
-    console.info('onEditTrigger: ' + desc + ' no-op (date-only/empty)');
+    console.info('syncOnEdit: ' + desc + ' no-op (date-only/empty)');
     return false;
   }
 
   const phases = [];
   if (exerciseRelevant) phases.push('exercise');
   if (weightRelevant) phases.push('weight');
-  console.info('onEditTrigger: ' + desc + ' dirty=[' + phases.join(',') + ']');
+  console.info('syncOnEdit: ' + desc + ' dirty=[' + phases.join(',') + ']');
 
   markPendingDirty_();
   // No lock: these are single-cell writes that race safely with an in-flight
