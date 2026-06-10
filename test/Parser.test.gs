@@ -274,11 +274,11 @@ function runParserTests() {
   t('isNotFoundError_ false for 500', () => eq(isNotFoundError_({ statusCode: 500 }), false));
   t('isNotFoundError_ false for null', () => eq(isNotFoundError_(null), false));
 
-  t('clampExerciseDurationMs_ leaves sub-max durations untouched', () => eq(
-    clampExerciseDurationMs_(30 * 60 * 1000), 30 * 60 * 1000
+  t('capExerciseDurationToMax_ leaves sub-max durations untouched', () => eq(
+    capExerciseDurationToMax_(30 * 60 * 1000), 30 * 60 * 1000
   ));
-  t('clampExerciseDurationMs_ caps at MAX_EXERCISE_DURATION_MS', () => eq(
-    clampExerciseDurationMs_(10 * 60 * 60 * 1000), MAX_EXERCISE_DURATION_MS
+  t('capExerciseDurationToMax_ caps at MAX_EXERCISE_DURATION_MS', () => eq(
+    capExerciseDurationToMax_(10 * 60 * 60 * 1000), MAX_EXERCISE_DURATION_MS
   ));
 
   t('humanizeMs_ sub-second -> ms', () => eq(humanizeMs_(500), '500ms'));

@@ -115,7 +115,7 @@ The **Sync** menu also exposes:
 - **Resync all rows**: clears both `Synced At` columns for every row and reconciles everything. Runs immediately; only changed datapoints are recreated.
 - **Revoke Health API**: clears the stored token.
 - **Run setup**: append missing managed columns and rebuild triggers (after editing timing constants).
-- **Run tests**: run the parser tests inside Apps Script.
+- **Run tests**: run all local test suites (parser/pure helpers and orchestration) inside Apps Script.
 
 ---
 

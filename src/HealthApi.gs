@@ -104,9 +104,6 @@ function getDataPoint(name) {
   return httpJson_('GET', url);
 }
 
-// Lists exercise datapoints whose civil start time falls on `date` in the
-// script's time zone. Used by listStrengthOnDate to discover
-// non-sync-created activities to match against.
 // Lists raw dataPoints of `dataType` whose civil time (per the AIP-160 filter
 // leaf `filterMember`) falls on `date` in the script's time zone, walking every
 // page. Callers apply their own projection/sort. `filterMember` is snake_case
@@ -136,6 +133,9 @@ function listDataPointsByCivilDate_(dataType, filterMember, date) {
   return points;
 }
 
+// Lists exercise datapoints whose civil start time falls on `date` in the
+// script's time zone, sorted ascending by start time. Used by listStrengthOnDate
+// to discover non-sync-created activities to match against.
 function listExercisesOnDate(date) {
   const sessions = listDataPointsByCivilDate_(
     'exercise', 'exercise.interval.civil_start_time', date);
