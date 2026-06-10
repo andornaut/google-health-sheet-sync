@@ -15,19 +15,13 @@ function onOpen() {
     .addItem('Authorize Health API', 'authorizeHealthApi')
     .addItem('Revoke Health API', 'revokeHealthApi')
     .addSeparator()
-    .addItem('Run tests', 'runAllTests')
+    // Only the parser / pure-helper suite is wired here. The orchestration
+    // suite (runSyncTests) depends on the in-memory sheet/properties fakes that
+    // test/run.js injects as SYNC_TEST_HARNESS_, which does not exist in the
+    // Apps Script runtime — running it here throws ReferenceError. Run it
+    // locally with `npm test`.
+    .addItem('Run tests', 'runParserTests')
     .addToUi();
-}
-
-// Menu entry point for "Run tests": runs every local test suite (parser/pure
-// helpers AND the stateful orchestration tests) in one execution so the
-// Executions log shows the full PASS/FAIL output. The local Node runner
-// (test/run.js) invokes runParserTests/runSyncTests directly; this aggregator
-// is the in-editor equivalent. Defined here rather than in a test file so it
-// reads as a Sync-menu entry point alongside the others.
-function runAllTests() {
-  runParserTests();
-  runSyncTests();
 }
 
 function authorizeHealthApi() {
