@@ -806,6 +806,8 @@ function runParserTests() {
   });
 
   const msg = results.join('\n');
-  console.log(msg);
-  try { SpreadsheetApp.getUi().alert('Parser tests\n\n' + msg); } catch (e) {}
+  const passed = results.filter(r => r.startsWith('PASS ')).length;
+  const summary = results.length + ' tests: ' + passed + ' passed, ' + (results.length - passed) + ' failed';
+  console.log(msg + '\n\n' + summary);
+  try { SpreadsheetApp.getUi().alert('Parser / pure-helper tests\n\n' + msg + '\n\n' + summary); } catch (e) {}
 }

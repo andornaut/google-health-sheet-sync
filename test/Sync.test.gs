@@ -232,5 +232,7 @@ function runSyncTests() {
   });
 
   const msg = results.join('\n');
-  console.log(msg);
+  const passed = results.filter(r => r.startsWith('PASS ')).length;
+  const summary = results.length + ' tests: ' + passed + ' passed, ' + (results.length - passed) + ' failed';
+  console.log(msg + '\n\n' + summary);
 }
