@@ -106,11 +106,16 @@ const ORPHAN_RECONCILE_LOOKBACK_DAYS = 7;
 //
 // The sync NEVER skips creating its own exercise datapoint: every
 // exercise-dirty row writes its own session so the sheet's sets/reps notes
-// always reach Health. This is safe because the Google Health app merges
-// overlapping same-type sessions into one summary card server-side (confirmed
-// 2026-06-02 via the in-app AI assistant: one card, no visible duplicate), so
-// a device-logged session and our sync-created one coexist without a visible
-// duplicate.
+// always reach Health. On a cross-source overlap day the Google Health app
+// SHADOWS our session in the card UI — the device's card wins and ours (the
+// one carrying the reps/sets) is hidden; the two are NOT content-merged
+// (confirmed 2026-06-03; see AGENTS.md "session-shadowing"). Writing our
+// datapoint is still worthwhile: the in-app AI assistant reads the notes of
+// BOTH overlapping sessions and folds our sets/reps into its summary, so our
+// data still reaches the user even when our card itself is shadowed. We accept
+// the hidden card rather than offsetting our session off the real workout time
+// (the adjacent-placement workaround is documented in AGENTS.md but not
+// adopted).
 //
 // When a row's edit window overlaps a pre-existing foreign STRENGTH_TRAINING
 // session (e.g. one started/stopped manually on a watch/Fitbit), we copy that

@@ -15,8 +15,19 @@ function onOpen() {
     .addItem('Authorize Health API', 'authorizeHealthApi')
     .addItem('Revoke Health API', 'revokeHealthApi')
     .addSeparator()
-    .addItem('Run tests', 'runParserTests')
+    .addItem('Run tests', 'runAllTests')
     .addToUi();
+}
+
+// Menu entry point for "Run tests": runs every local test suite (parser/pure
+// helpers AND the stateful orchestration tests) in one execution so the
+// Executions log shows the full PASS/FAIL output. The local Node runner
+// (test/run.js) invokes runParserTests/runSyncTests directly; this aggregator
+// is the in-editor equivalent. Defined here rather than in a test file so it
+// reads as a Sync-menu entry point alongside the others.
+function runAllTests() {
+  runParserTests();
+  runSyncTests();
 }
 
 function authorizeHealthApi() {
@@ -613,7 +624,7 @@ function resolveForeignMatches_(allRows, readyRows) {
   });
 
   // Only rows with on-row-date edit timestamps anchor a trustworthy window.
-  // clampExerciseDurationMs_ caps the window the same way resolveRowTiming_
+  // capExerciseDurationToMax_ caps the window the same way resolveRowTiming_
   // caps the recorded interval, so a row whose exercisesLastEditedAt drifted
   // far past exerciseFirstEditedAt (late corrections that keep sticky
   // first-edit + advance last-edit) doesn't produce a multi-day window biased
@@ -622,7 +633,7 @@ function resolveForeignMatches_(allRows, readyRows) {
     .filter(r => hasSendableExercises_(r.exercises) && exerciseEditIsOnRowDate_(r))
     .map(r => {
       const startMs = r.exerciseFirstEditedAt.getTime();
-      const clampedEndMs = startMs + clampExerciseDurationMs_(r.exercisesLastEditedAt.getTime() - startMs);
+      const clampedEndMs = startMs + capExerciseDurationToMax_(r.exercisesLastEditedAt.getTime() - startMs);
       return {
         rowNum: r.rowNum,
         windowStart: startMs - FOREIGN_MATCH_BUFFER_MS,
@@ -703,12 +714,12 @@ function buildOrdinalMap_(rows) {
   return ordinalByRowNum;
 }
 
-// Cap an edit-derived exercise duration at MAX_EXERCISE_DURATION_MS. Used by
-// the foreign-match window in resolveForeignMatches_ to keep its upper bound
-// consistent with editDerivedDurationMs_ (which the recorded 'edit' interval
-// uses, and which applies the same MAX cap plus a MIN floor / start-only
-// default).
-function clampExerciseDurationMs_(rawDurationMs) {
+// Cap an edit-derived exercise duration at MAX_EXERCISE_DURATION_MS (MAX only,
+// no MIN floor). Used by the foreign-match window in resolveForeignMatches_ to
+// keep its upper bound consistent with editDerivedDurationMs_ — which the
+// recorded 'edit' interval uses, and which applies the same MAX cap PLUS a MIN
+// floor / start-only default that this helper deliberately omits.
+function capExerciseDurationToMax_(rawDurationMs) {
   return Math.min(rawDurationMs, MAX_EXERCISE_DURATION_MS);
 }
 
