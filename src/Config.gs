@@ -156,3 +156,16 @@ const MAX_BODYWEIGHT_LB = 499;
 // avoids syncing a 5 lb "weight" datapoint. Symmetric counterpart to
 // MAX_BODYWEIGHT_LB.
 const MIN_BODYWEIGHT_LB = 50;
+
+// Row-date validation (validateRowDates_, run at the start of every trigger):
+// data rows must be in strictly increasing date order down the sheet (which
+// also forbids two rows on the same date), and every date's year must fall
+// within [MIN_ROW_DATE_YEAR, MAX_ROW_DATE_YEAR] — the year bounds catch
+// fat-fingered dates (e.g. 0226-06-12 for 2026-06-12) before a sync writes a
+// datapoint at the bogus time. On violation, syncOnEdit throws uncaught so
+// Apps Script emails the owner about the failed trigger execution (the edit
+// that broke the rule is the moment to alarm); flushPending and backstop log
+// an error and skip instead, so a standing violation doesn't email every
+// 5-minute poll.
+const MIN_ROW_DATE_YEAR = 2025;
+const MAX_ROW_DATE_YEAR = 2049;

@@ -212,15 +212,67 @@ function runSyncTests() {
   // back verbatim by toDate_, sidestepping the UTC-midnight civil-date boundary
   // that a 'yyyy-MM-dd' string would hit in a non-UTC script time zone.
   t('backstop re-dirties BOTH matched and unmatched recent rows and sets the pending flag', () => {
+    // Distinct ascending dates (yesterday, today) so the date validation pass
+    // doesn't reject the sheet; both fall inside BACKSTOP_LOOKBACK_DAYS = 2.
     const today = new Date();
+    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
     reset([
-      [today, '', '135x5x3', 'SYNC', '', '', '', '', '', ''],            // row 2: unmatched
+      [yesterday, '', '135x5x3', 'SYNC', '', '', '', '', '', ''],        // row 2: unmatched
       [today, '', '225x5x3', 'SYNC', '', '', '', '', '', 'foreign/F1']   // row 3: matched
     ]);
     withStubs({ listStrengthOnDate: () => [], listWeightOnDate: () => [] }, () => backstop());
     eq(SHEET.getRange(2, COL['Exercise Synced At']).getValue(), '', 'unmatched row re-dirtied');
     eq(SHEET.getRange(3, COL['Exercise Synced At']).getValue(), '', 'matched row re-dirtied');
     ok(PROPS.getProperty('pendingDirty') !== null, 'pending flag set for the next poll');
+  });
+
+  // ---- trigger-entry date validation --------------------------------------
+
+  t('syncOnEdit throws on a date validation violation (uncaught -> owner email)', () => {
+    reset([
+      ['2026-01-15', '', '135x5', '', '', '', '', '', '', ''],
+      ['2026-01-15', '', '225x5', '', '', '', '', '', '', '']   // duplicate date
+    ]);
+    let thrown = null;
+    try { syncOnEdit({ range: SHEET.getRange(2, COL['Bench']) }); }
+    catch (err) { thrown = err; }
+    ok(thrown !== null, 'throws out of syncOnEdit');
+    ok(String(thrown).indexOf('date validation failed') !== -1, 'message names the validation: ' + thrown);
+    // Thrown before dirty marking, so the edit is not recorded.
+    eq(cell('Exercises Last Edited At'), '', 'edit not dirty-marked');
+    ok(PROPS.getProperty('pendingDirty') === null, 'no pending flag');
+  });
+
+  t('flushPending logs and skips (no throw) on a date validation violation', () => {
+    reset([
+      ['2026-01-16', '185', '', 'SYNC', '', '', '', '', '', ''],
+      ['2026-01-15', '186', '', 'SYNC', '', '', '', '', '', '']   // out of order
+    ]);
+    PROPS.setProperty('pendingDirty', 'GEN1');
+    const calls = [];
+    withStubs(Object.assign({}, NO_FOREIGN, {
+      createWeightAt: () => { calls.push('create'); return 'users/me/dataTypes/weight/dataPoints/W1'; }
+    }), () => flushPending());
+    eq(calls, [], 'no sync work attempted');
+    eq(PROPS.getProperty('pendingDirty'), 'GEN1', 'dirty flag left so the backlog syncs after the fix');
+  });
+
+  t('backstop skips on a date validation violation', () => {
+    reset([['2024-06-01', '', '135x5x3', 'SYNC', '', '', '', '', '', '']]);   // year below MIN
+    withStubs({ listStrengthOnDate: () => [], listWeightOnDate: () => [] }, () => backstop());
+    eq(cell('Exercise Synced At'), 'SYNC', 'row not re-dirtied');
+    ok(PROPS.getProperty('pendingDirty') === null, 'no pending flag');
+  });
+
+  t('manual resyncAllRows toasts and aborts on a date validation violation', () => {
+    reset([
+      ['2026-01-15', '', '135x5', 'SYNC', 'SYNC', '', '', '', '', ''],
+      ['2026-01-15', '', '225x5', 'SYNC', 'SYNC', '', '', '', '', '']   // duplicate date
+    ]);
+    withStubs(NO_FOREIGN, () => resyncAllRows());
+    eq(cell('Exercise Synced At'), 'SYNC', 'stamps not cleared');
+    eq(cell('Weight Synced At'), 'SYNC', 'weight stamps not cleared');
+    ok(PROPS.getProperty('pendingDirty') === null, 'no pending flag');
   });
 
   t('backstop skips entirely when the lock is held', () => {

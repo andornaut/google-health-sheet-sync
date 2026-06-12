@@ -805,6 +805,41 @@ function runParserTests() {
     });
   });
 
+  // findRowDateViolation_: trigger-entry date validation (increasing order,
+  // no duplicate dates, year within [MIN_ROW_DATE_YEAR, MAX_ROW_DATE_YEAR]).
+  // UTC noon keeps the civil date stable in the test time zone.
+  const vDate = (y, m, d) => new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const vRow = (rowNum, date) => ({ rowNum: rowNum, date: date });
+
+  t('findRowDateViolation_ empty rows -> null', () => eq(findRowDateViolation_([]), null));
+  t('findRowDateViolation_ increasing in-range dates -> null', () =>
+    eq(findRowDateViolation_([
+      vRow(2, vDate(2025, 1, 1)), vRow(3, vDate(2026, 6, 1)), vRow(4, vDate(2049, 12, 31))
+    ]), null));
+  t('findRowDateViolation_ duplicate date flagged', () => {
+    const v = findRowDateViolation_([vRow(2, vDate(2026, 1, 15)), vRow(3, vDate(2026, 1, 15))]);
+    eq(/rows 2 and 3 share the date 2026-01-15/.test(v), true, v);
+  });
+  t('findRowDateViolation_ same civil day, different times is a duplicate', () => {
+    const v = findRowDateViolation_([
+      vRow(2, new Date(Date.UTC(2026, 0, 15, 13, 0, 0))),
+      vRow(3, new Date(Date.UTC(2026, 0, 15, 20, 0, 0)))
+    ]);
+    eq(/share the date 2026-01-15/.test(v), true, v);
+  });
+  t('findRowDateViolation_ decreasing date flagged', () => {
+    const v = findRowDateViolation_([vRow(2, vDate(2026, 1, 16)), vRow(3, vDate(2026, 1, 15))]);
+    eq(/row 3 \(2026-01-15\) is dated before row 2 \(2026-01-16\)/.test(v), true, v);
+  });
+  t('findRowDateViolation_ year below MIN flagged', () => {
+    const v = findRowDateViolation_([vRow(2, vDate(2024, 12, 31))]);
+    eq(/row 2: date 2024-12-31 is outside the allowed years 2025-2049/.test(v), true, v);
+  });
+  t('findRowDateViolation_ year above MAX flagged', () => {
+    const v = findRowDateViolation_([vRow(2, vDate(2050, 1, 1))]);
+    eq(/outside the allowed years/.test(v), true, v);
+  });
+
   const msg = results.join('\n');
   const passed = results.filter(r => r.startsWith('PASS ')).length;
   const summary = results.length + ' tests: ' + passed + ' passed, ' + (results.length - passed) + ' failed';
