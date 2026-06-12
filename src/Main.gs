@@ -62,7 +62,98 @@ function installTriggers() {
   ScriptApp.newTrigger('backstop').timeBased().everyHours(BACKSTOP_INTERVAL_HOURS).create();
 }
 
+// Return the first date violation among `datedRows` ([{ rowNum, date }] in
+// sheet order) as a human-readable string, or null when valid. Comparison is
+// by civil-date key (ymd, script time zone), so two rows on the same civil
+// day count as duplicates even if their Date cells carry different times.
+// Rows without a parseable Date are skipped by the caller, matching readRows
+// — they never sync, so they can't place a datapoint at a bogus time. Pure.
+function findRowDateViolation_(datedRows) {
+  let prev = null;
+  for (let i = 0; i < datedRows.length; i++) {
+    const r = datedRows[i];
+    const key = ymd(r.date);
+    const year = Number(key.slice(0, 4));
+    if (year < MIN_ROW_DATE_YEAR || year > MAX_ROW_DATE_YEAR) {
+      return 'row ' + r.rowNum + ': date ' + key + ' is outside the allowed years '
+        + MIN_ROW_DATE_YEAR + '-' + MAX_ROW_DATE_YEAR;
+    }
+    if (prev) {
+      if (key === prev.key) {
+        return 'rows ' + prev.rowNum + ' and ' + r.rowNum + ' share the date ' + key;
+      }
+      if (key < prev.key) {
+        return 'row ' + r.rowNum + ' (' + key + ') is dated before row '
+          + prev.rowNum + ' (' + prev.key + '); rows must be in increasing date order';
+      }
+    }
+    prev = { rowNum: r.rowNum, key: key };
+  }
+  return null;
+}
+
+// Read the Date column and return the first row-date violation (a
+// human-readable string) or null. Every trigger runs this before doing any
+// other work; only the one column is read, so the per-trigger cost is a
+// single range read and no Health API calls. Deliberately does NOT route
+// through readRows: its structural throws (missing Weight column, duplicate
+// exercise headers) belong to syncDirtyRows' unrecoverable handling, and a
+// missing Date column is likewise left for that path rather than reported as
+// a validation failure here.
+function validateRowDates_() {
+  const sheet = getSheet_();
+  const dateCol = getHeaderMap_(sheet).map[DATE_COLUMN_HEADER];
+  if (!dateCol) return null;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  const values = sheet.getRange(2, dateCol, lastRow - 1, 1).getValues();
+  const datedRows = [];
+  values.forEach((v, idx) => {
+    if (!v[0]) return;
+    const date = toDate_(v[0]);
+    if (date) datedRows.push({ rowNum: idx + 2, date: date });
+  });
+  return findRowDateViolation_(datedRows);
+}
+
+// Shared date-validation guard for the time-based triggers (vs. syncOnEdit's
+// uncaught throw): they fire on a schedule, so throwing here would email the
+// owner every cycle until the sheet is fixed — log-and-skip instead. Returns
+// true when the trigger should skip its run. The dirty flag is left
+// untouched, so any backlog syncs on the first run after the fix.
+function dateValidationBlocksTrigger_(triggerName) {
+  const violation = validateRowDates_();
+  if (!violation) return false;
+  console.error(triggerName + ': date validation failed; skipping: ' + violation);
+  return true;
+}
+
+// Date-validation guard for the manual Sync-menu entry points: the user is
+// present, so surface the violation as a toast (not an email or a buried
+// log) and abort before any stamps are cleared or datapoints written.
+// Returns true when the action should abort.
+function dateValidationBlocksManual_() {
+  const violation = validateRowDates_();
+  if (!violation) return false;
+  console.error('date validation failed: ' + violation);
+  toast_('Date validation failed: ' + violation, 30);
+  return true;
+}
+
 function syncOnEdit(e) {
+  // Date validation runs first and OUTSIDE the catch-all below: a violation
+  // is thrown uncaught so Apps Script emails the owner about the failed
+  // trigger execution — the edit that broke the rule is the moment to alarm.
+  // The time-based triggers (flushPending, backstop) log-and-skip instead so
+  // a standing violation doesn't email every cycle. Note the edit is NOT
+  // dirty-marked on this path (the throw precedes onEditMarkDirty), so
+  // content typed while the sheet is invalid does not sync by itself once
+  // the dates are fixed. Recovery: exercise rows within
+  // BACKSTOP_LOOKBACK_DAYS self-heal — the next backstop re-dirties them and
+  // the following poll syncs them. Older exercise rows and weight edits need
+  // a re-edit of the cell or "Resync selected rows".
+  const violation = validateRowDates_();
+  if (violation) throw new Error('syncOnEdit: date validation failed: ' + violation);
   try {
     // onEditMarkDirty does the fast, lock-free work (clear stamps, advance edit
     // timestamps, bump the dirty generation) and reports whether anything was
@@ -91,6 +182,10 @@ function flushPending() {
     console.info('flushPending: no pending edits, skipping');
     return;
   }
+  // Validation sits after the fast-path return above so an idle poll stays a
+  // single PropertiesService read (no sheet I/O); nothing can sync without
+  // pending work, so the late check gates every sync all the same.
+  if (dateValidationBlocksTrigger_('flushPending')) return;
   console.info('flushPending: pending edits detected, syncing');
   syncDirtyRows(0);
 }
@@ -139,6 +234,7 @@ function selectBackstopRows_(rows, nowMs, lookbackDays, wantMatched) {
 // a GET + no-op rather than churning the datapoint.
 // Also reconciles orphans. No-arg so it's editor-runnable.
 function backstop() {
+  if (dateValidationBlocksTrigger_('backstop')) return;
   // Take the script lock for the whole run. Orphan reconciliation deletes
   // exercise datapoints no row references; without the lock it could race an
   // in-flight syncOneRow_ that has POSTed a datapoint but not yet persisted its
@@ -312,6 +408,7 @@ function reDirtyRows_(rowNums, cols) {
 // the lock is held). If the user keeps editing afterward, the row goes dirty
 // again and the next sync reconciles the Health datapoint(s).
 function runSyncNow() {
+  if (dateValidationBlocksManual_()) return;
   runSyncAndToast_('Synced');
 }
 
@@ -331,6 +428,7 @@ function runSyncAndToast_(verb) {
 }
 
 function resyncSelectedRows() {
+  if (dateValidationBlocksManual_()) return;
   const sheet = getSheet_();
   const { map } = getHeaderMap_(sheet);
   const exerciseCol = map[EXERCISE_SYNCED_AT_COLUMN_HEADER];
@@ -362,6 +460,7 @@ function resyncSelectedRows() {
 }
 
 function resyncAllRows() {
+  if (dateValidationBlocksManual_()) return;
   const sheet = getSheet_();
   const { map } = getHeaderMap_(sheet);
   const exerciseCol = map[EXERCISE_SYNCED_AT_COLUMN_HEADER];
