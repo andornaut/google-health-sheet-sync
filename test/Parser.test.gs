@@ -414,11 +414,63 @@ function runParserTests() {
     const r = resolveRowTiming_({ exerciseFirstEditedAt: first, exercisesLastEditedAt: last, date: JAN_15_NOON_UTC }, 0, null);
     eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 10 * 60 * 1000);
   });
-  t('resolveRowTiming_ edit source clamps too-long duration to MAX (120 min)', () => {
+  t('resolveRowTiming_ edit source accepts a span right at MAX (120 min)', () => {
+    const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
+    const last = new Date(first.getTime() + MAX_EXERCISE_DURATION_MS);
+    const r = resolveRowTiming_({ exerciseFirstEditedAt: first, exercisesLastEditedAt: last, date: JAN_15_NOON_UTC }, 0, null);
+    eq(r.exerciseSource, 'edit');
+    eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 120 * 60 * 1000);
+  });
+  // Past the cap the last edit is a later correction, not the end of the
+  // workout. Using it would rebuild a short recorded session as a fabricated
+  // 2 h one, so the row falls through to 'prior' (or 'synthetic' with no prior).
+  t('resolveRowTiming_ span past MAX falls through to prior, keeping the recorded interval', () => {
+    const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
+    const last = new Date(first.getTime() + 5 * 60 * 60 * 1000);   // corrected hours later
+    const prior = { exercise: { interval: {
+      startTime: '2026-01-15T17:00:00Z', endTime: '2026-01-15T17:30:00Z',
+      startUtcOffset: EST + 's', endUtcOffset: EST + 's'
+    } } };
+    const r = resolveRowTiming_(
+      { exerciseFirstEditedAt: first, exercisesLastEditedAt: last, date: JAN_15_NOON_UTC }, 0, prior);
+    eq(r.exerciseSource, 'prior');
+    eq(r.exercise.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
+    eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 30 * 60 * 1000, 'recorded 30 min kept, not stretched');
+  });
+  // The span test guards an interval we already recorded, so with no prior it
+  // does not apply: the observed on-date start beats synthetic noon, and the
+  // MAX clamp bounds the duration. This is the one path where that clamp works.
+  t('resolveRowTiming_ span past MAX with no prior still uses the observed start', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
     const last = new Date(first.getTime() + 5 * 60 * 60 * 1000);
     const r = resolveRowTiming_({ exerciseFirstEditedAt: first, exercisesLastEditedAt: last, date: JAN_15_NOON_UTC }, 0, null);
-    eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 120 * 60 * 1000);
+    eq(r.exerciseSource, 'edit');
+    eq(r.exercise.startUtcMs, first.getTime(), 'keeps the 9am start rather than synthetic noon');
+    eq(r.exercise.endUtcMs - r.exercise.startUtcMs, MAX_EXERCISE_DURATION_MS, 'clamped to the cap');
+  });
+  // Known consequence of protecting the recorded interval: timestamps cannot
+  // tell "still logging this workout" from "correcting it later", so a sparsely
+  // logged session stays at whatever the first sync recorded.
+  t('resolveRowTiming_ sparse logging past MAX keeps the start-only default', () => {
+    const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
+    const last = new Date(first.getTime() + 2.5 * 60 * 60 * 1000);
+    const startOnly = { exercise: { interval: {
+      startTime: '2026-01-15T17:00:00Z', endTime: '2026-01-15T17:10:00Z',
+      startUtcOffset: EST + 's', endUtcOffset: EST + 's'
+    } } };
+    const r = resolveRowTiming_(
+      { exerciseFirstEditedAt: first, exercisesLastEditedAt: last, date: JAN_15_NOON_UTC }, 0, startOnly);
+    eq(r.exerciseSource, 'prior');
+    eq(r.exercise.endUtcMs - r.exercise.startUtcMs, MIN_EXERCISE_DURATION_MS);
+  });
+  // A midnight-crossing workout keeps the 'edit' path: the span stays small
+  // even though the last edit lands on the following civil date.
+  t('resolveRowTiming_ edit source survives a midnight-crossing workout', () => {
+    const first = new Date(Date.UTC(2026, 0, 16, 4, 45, 0));   // 11:45pm EST Jan 15
+    const last = new Date(Date.UTC(2026, 0, 16, 5, 15, 0));    // 12:15am EST Jan 16
+    const r = resolveRowTiming_({ exerciseFirstEditedAt: first, exercisesLastEditedAt: last, date: JAN_15_NOON_UTC }, 0, null);
+    eq(r.exerciseSource, 'edit');
+    eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 30 * 60 * 1000);
   });
   t('resolveRowTiming_ synthetic source when no edit timestamps', () => {
     const r = resolveRowTiming_({ exerciseFirstEditedAt: null, exercisesLastEditedAt: null, date: JAN_15_NOON_UTC }, 0, null);
