@@ -77,9 +77,15 @@ const SYNTHETIC_DURATION_HOURS = 1;
 // the start-only default: a single-edit row (start == last edit, no observed
 // end) has a zero/negative raw span that floors to MIN, and two near-instant
 // edits (which would otherwise produce a span the Health API 500s on) floor to
-// the same value, so every edit-derived exercise is at least MIN. The MAX cap
-// keeps a row edited across days (late corrections) from recording a multi-hour
-// "workout". See editDerivedDurationMs_.
+// the same value, so every edit-derived exercise is at least MIN.
+//
+// MAX does double duty. It bounds the duration on the one path that still
+// clamps (a row with no prior datapoint), and more importantly it is the
+// stated belief about how long a workout can run: exerciseEditSpansWorkout_
+// treats an edit further than MAX from the first one as a later correction
+// rather than part of the session, so a row that already has a recorded
+// interval keeps it instead of being stretched to the cap. See
+// editDerivedDurationMs_ and exerciseEditIsUsable_.
 const MIN_EXERCISE_DURATION_MS = 10 * 60 * 1000;
 const MAX_EXERCISE_DURATION_MS = 120 * 60 * 1000;
 

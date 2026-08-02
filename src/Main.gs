@@ -914,19 +914,64 @@ function capExerciseDurationToMax_(rawDurationMs) {
 
 // True when the row's exercise edit timestamps form a trustworthy same-day
 // window: both first/last edit are set AND the first edit's civil date matches
-// the row's Date. This gates the live-workout 'edit' timing path (endTime can
-// advance during a workout) and the foreign-match window — an off-date edit
-// (correcting an old row today) must not anchor timing to today.
+// the row's Date. This gates the foreign-match window: an off-date edit
+// (correcting an old row today) must not anchor timing to today. The window
+// itself is clamped to MAX_EXERCISE_DURATION_MS from the first edit, so a late
+// last-edit can't distort it.
 function exerciseEditIsOnRowDate_(row) {
   return !!(row.exerciseFirstEditedAt && row.exercisesLastEditedAt
     && ymd(row.exerciseFirstEditedAt) === ymd(row.date));
 }
 
+// True when those timestamps describe the workout itself rather than a later
+// correction, which is the stricter thing the 'edit' timing path needs: the
+// last edit counts as evidence of when the session ended only if it is close
+// enough to the first to plausibly be part of it.
+//
+// Without the span test, ANY later edit rebuilds the interval as
+// firstEdit .. firstEdit + MAX_EXERCISE_DURATION_MS, because editDerivedDurationMs_
+// clamps the (huge) raw span to the cap. Fixing a typo at 7pm on the workout's
+// own day, or touching the row months later, would both turn a recorded 30
+// minute session into a fabricated 2 hour one. Beyond the cap the last edit
+// tells us nothing about the workout, so resolveRowTiming_ falls through to
+// 'prior' and reuses the recorded interval verbatim.
+//
+// Only meaningful when there is a recorded interval to protect; see
+// exerciseEditIsUsable_, which is what resolveRowTiming_ actually gates on.
+//
+// Consequence worth knowing: a workout logged sparsely (first set typed at
+// 9:00, the rest filled in at 11:30) freezes at whatever the 9:00 sync
+// recorded, which is the 10 minute start-only default. Timestamps cannot
+// distinguish "still logging this workout" from "correcting it later", and
+// MAX_EXERCISE_DURATION_MS is the stated belief about how long a workout can
+// run, so an edit further out than that is treated as a correction. Logging
+// sets as you go keeps the interval accurate.
+function exerciseEditSpansWorkout_(row) {
+  if (!exerciseEditIsOnRowDate_(row)) return false;
+  const spanMs = row.exercisesLastEditedAt.getTime() - row.exerciseFirstEditedAt.getTime();
+  return spanMs <= MAX_EXERCISE_DURATION_MS;
+}
+
+// Whether resolveRowTiming_ should build the interval from the edit timestamps.
+// The span test guards an interval we already recorded, so it only applies when
+// there is one: with no prior datapoint there is nothing to protect, and the
+// row's observed on-date start is far better evidence than synthetic noon. In
+// that case the timestamps are used with editDerivedDurationMs_'s clamp, which
+// is the only path where its MAX cap still does work.
+function exerciseEditIsUsable_(row, priorExercise) {
+  if (!exerciseEditIsOnRowDate_(row)) return false;
+  return exerciseEditSpansWorkout_(row) || !priorExercise;
+}
+
 // Map a raw edit-derived duration (last edit - first edit) to the recorded
 // exercise duration by clamping to [MIN_EXERCISE_DURATION_MS,
 // MAX_EXERCISE_DURATION_MS]. A single-edit row has raw <= 0 (start == last
-// edit, no observed end), which the MIN floor turns into the start-only default
-// — so the start-only case needs no special handling.
+// edit, no observed end), which the MIN floor turns into the start-only
+// default, so the start-only case needs no special handling.
+//
+// The MAX cap binds only on the no-prior path: exerciseEditIsUsable_ otherwise
+// refuses the 'edit' path once the raw span passes the cap, so a row with a
+// recorded interval keeps it instead of being stretched to the cap.
 function editDerivedDurationMs_(rawDurationMs) {
   return Math.min(Math.max(rawDurationMs, MIN_EXERCISE_DURATION_MS), MAX_EXERCISE_DURATION_MS);
 }
@@ -938,12 +983,16 @@ function editDerivedDurationMs_(rawDurationMs) {
 //     - 'foreign'   if a foreignInterval is provided (an overlapping foreign
 //                   session whose manual start/stop is more accurate than our
 //                   edit-derived window). Its interval is used verbatim.
-//     - 'edit'      if exerciseFirstEditedAt's civil date == row.date AND
-//                   exercisesLastEditedAt is set. This lets endTime advance
-//                   during a live workout as more sets are typed in.
+//     - 'edit'      if exerciseEditIsUsable_(row, priorExercise): the first
+//                   edit is on row.date, and either the last edit is within
+//                   MAX_EXERCISE_DURATION_MS of it or there is no prior
+//                   datapoint to protect. This lets endTime advance during a
+//                   live workout as more sets are typed in, without letting a
+//                   later correction rewrite an interval already recorded.
 //     - 'prior'     if a previous datapoint is provided. Its interval is
-//                   reused verbatim so an off-date edit (e.g. correcting
-//                   an old row today) doesn't shift startTime to today.
+//                   reused verbatim, so neither an off-date edit (correcting
+//                   an old row today) nor a late same-day one (fixing a typo
+//                   in the evening) shifts the recorded times.
 //     - 'synthetic' otherwise: noon+ordinal on row.date.
 //
 //   Weight (only consumed on the POST path; PATCH preserves sampleTime
@@ -963,7 +1012,7 @@ function resolveRowTiming_(row, ordinal, priorExercise, foreignInterval) {
 
   let exercise = null;
   let exerciseSource = null;
-  const exerciseEditOnRowDate = exerciseEditIsOnRowDate_(row);
+  const exerciseEditIsUsable = exerciseEditIsUsable_(row, priorExercise);
   if (foreignInterval) {
     exercise = {
       startUtcMs: foreignInterval.startUtcMs,
@@ -972,7 +1021,7 @@ function resolveRowTiming_(row, ordinal, priorExercise, foreignInterval) {
       endOffsetSeconds: foreignInterval.endUtcOffsetSeconds
     };
     exerciseSource = 'foreign';
-  } else if (exerciseEditOnRowDate) {
+  } else if (exerciseEditIsUsable) {
     const startMs = row.exerciseFirstEditedAt.getTime();
     const rawDuration = row.exercisesLastEditedAt.getTime() - startMs;
     // A single edit (start == last, rawDuration <= 0) has no observed end;
