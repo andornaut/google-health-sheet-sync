@@ -678,7 +678,7 @@ function runParserTests() {
     const cand = fCand_('foreign/A',
       Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
     withStubbedList(() => [cand], () => {
-      const plan = resolveForeignMatches_([row], [row]);
+      const plan = resolveForeignMatches_([], [], [row]);
       eq(plan[10] && plan[10].name, 'foreign/A');
     });
   });
@@ -697,7 +697,7 @@ function runParserTests() {
     const cand = fCand_('foreign/after-midnight',
       Date.UTC(2026, 0, 16, 5, 0, 0), Date.UTC(2026, 0, 16, 5, 30, 0));   // 12:00-12:30am EST Jan 16
     withStubbedList(() => [cand], () => {
-      const plan = resolveForeignMatches_([row], [row]);
+      const plan = resolveForeignMatches_([], [], [row]);
       eq(plan[10] && plan[10].name, 'foreign/after-midnight');
     });
   });
@@ -713,7 +713,7 @@ function runParserTests() {
     const cand = fCand_('foreign/A',
       Date.UTC(2026, 0, 20, 22, 0, 0), Date.UTC(2026, 0, 20, 23, 0, 0));
     withStubbedList(() => [cand], () => {
-      const plan = resolveForeignMatches_([row], [row]);
+      const plan = resolveForeignMatches_([], [], [row]);
       eq(plan[10], undefined);
     });
   });
@@ -723,7 +723,7 @@ function runParserTests() {
     const cand = fCand_('foreign/A',
       Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
     withStubbedList(() => [cand], () => {
-      const plan = resolveForeignMatches_([row], [row]);
+      const plan = resolveForeignMatches_([], [], [row]);
       eq(plan[10], undefined);
     });
   });
@@ -742,24 +742,44 @@ function runParserTests() {
     const cand = fCand_(ownName,
       Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
     withStubbedList(() => [cand], () => {
-      const plan = resolveForeignMatches_([row], [row]);
+      const plan = resolveForeignMatches_([ownName], [], [row]);
+      eq(plan[10], undefined);
+    });
+  });
+
+  t('resolveForeignMatches_ excludes ids from rows readRows dropped (blank Date)', () => {
+    // The candidate belongs to a row whose Date cell is blank, so readRows
+    // dropped it and it is absent from allRows, but its id is still in
+    // allHealthIds. Without that, the ready row would borrow our own
+    // datapoint's interval as if it were a foreign session.
+    const undatedRowsName = 'users/me/dataTypes/exercise/dataPoints/456';
+    const row = fRow_({
+      rowNum: 10,
+      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),
+      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0))
+    });
+    const cand = fCand_(undatedRowsName,
+      Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
+    withStubbedList(() => [cand], () => {
+      const plan = resolveForeignMatches_([undatedRowsName], [], [row]);
       eq(plan[10], undefined);
     });
   });
 
   t('resolveForeignMatches_ excludes candidates already aligned-elsewhere by a non-ready row', () => {
     // The ready row's window overlaps the candidate (so it would align absent
-    // the exclusion), but a non-ready row already aligned to it.
+    // the exclusion), but row 5 already aligned to it. The exclusion is keyed
+    // off the full-sheet allMatchedSessions list, so it holds whether row 5 is
+    // merely not-ready this pass or was dropped by readRows for a blank Date.
     const readyRow = fRow_({
       rowNum: 10,
       exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),
       exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0))
     });
-    const nonReadyRow = fRow_({ rowNum: 5, matchedHealthSession: 'foreign/A' });
     const cand = fCand_('foreign/A',
       Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
     withStubbedList(() => [cand], () => {
-      const plan = resolveForeignMatches_([readyRow, nonReadyRow], [readyRow]);
+      const plan = resolveForeignMatches_([], [{ rowNum: 5, name: 'foreign/A' }], [readyRow]);
       eq(plan[10], undefined);
     });
   });
@@ -780,7 +800,7 @@ function runParserTests() {
     const cand = fCand_('foreign/late',
       Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
     withStubbedList(() => [cand], () => {
-      const plan = resolveForeignMatches_([row], [row]);
+      const plan = resolveForeignMatches_([], [], [row]);
       // Clamped window (9am + 2h + 30min buffer = 12:30pm cutoff) doesn't
       // reach the 5pm candidate, so no overlap and no alignment. (If clamping
       // were absent, the 5-day window would have caught 'foreign/late'.)
@@ -800,7 +820,7 @@ function runParserTests() {
     const candB = fCand_('foreign/match',
       Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
     withStubbedList(() => [candA, candB], () => {
-      const plan = resolveForeignMatches_([row], [row]);
+      const plan = resolveForeignMatches_([], [], [row]);
       eq(plan[10] && plan[10].name, 'foreign/match');
     });
   });

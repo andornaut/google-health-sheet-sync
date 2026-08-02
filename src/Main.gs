@@ -248,18 +248,20 @@ function backstop() {
   }
   try {
     const now = Date.now();
-    const { rows, exerciseSyncedAtCol } = readRows();
+    const { rows, allHealthIds, exerciseSyncedAtCol } = readRows();
 
     // Reconcile orphans first, while the rows snapshot is unmodified. (reDirty
     // below doesn't touch Created Health IDs, so order is not load-bearing, but
     // reconciling against the clean snapshot keeps the intent obvious.)
+    // Both take allHealthIds, the full-sheet id list, which includes rows
+    // readRows drops for a blank/unparseable Date.
     try {
-      reconcileExerciseOrphans_(rows, now, ORPHAN_RECONCILE_LOOKBACK_DAYS);
+      reconcileExerciseOrphans_(allHealthIds, now, ORPHAN_RECONCILE_LOOKBACK_DAYS);
     } catch (err) {
       console.warn('backstop: exercise orphan reconciliation failed (continuing): ' + err);
     }
     try {
-      reconcileWeightOrphans_(rows, now, ORPHAN_RECONCILE_LOOKBACK_DAYS);
+      reconcileWeightOrphans_(allHealthIds, now, ORPHAN_RECONCILE_LOOKBACK_DAYS);
     } catch (err) {
       console.warn('backstop: weight orphan reconciliation failed (continuing): ' + err);
     }
@@ -330,12 +332,15 @@ function selectOrphanDataPointNames_(candidates, knownNames) {
 // 403 if a name turns out to be foreign) is logged and skipped, never aborting
 // the rest. Must run under the script lock (see backstop) so an in-flight
 // sync's not-yet-persisted create can't be mistaken for an orphan.
-function reconcileDataPointOrphans_(rows, nowMs, lookbackDays, typeKey, listOnDate) {
+//
+// `allHealthIds` must be readRows' full-sheet id list, NOT the ids reachable
+// from its `rows`: a row whose Date is blank or unparseable is absent from
+// `rows` while its datapoints are still live, and reconciling against the
+// narrower set would delete them.
+function reconcileDataPointOrphans_(allHealthIds, nowMs, lookbackDays, typeKey, listOnDate) {
   const tag = 'reconcileDataPointOrphans_(' + typeKey + ')';
   const known = {};
-  rows.forEach(r => {
-    splitHealthIdsByType_(r.healthIds)[typeKey].forEach(n => { known[n] = true; });
-  });
+  splitHealthIdsByType_(allHealthIds)[typeKey].forEach(n => { known[n] = true; });
 
   const candidates = [];
   for (let i = 0; i < lookbackDays; i++) {
@@ -366,8 +371,8 @@ function reconcileDataPointOrphans_(rows, nowMs, lookbackDays, typeKey, listOnDa
 }
 
 // Reconcile orphaned sync-created exercise datapoints (STRENGTH_TRAINING).
-function reconcileExerciseOrphans_(rows, nowMs, lookbackDays) {
-  reconcileDataPointOrphans_(rows, nowMs, lookbackDays, 'exercise', listStrengthOnDate);
+function reconcileExerciseOrphans_(allHealthIds, nowMs, lookbackDays) {
+  reconcileDataPointOrphans_(allHealthIds, nowMs, lookbackDays, 'exercise', listStrengthOnDate);
 }
 
 // Reconcile orphaned sync-created weight datapoints. The exercise path's
@@ -376,8 +381,8 @@ function reconcileExerciseOrphans_(rows, nowMs, lookbackDays) {
 // so a duplicate untracked weight datapoint can leak the same way. Same
 // ownership logic — only datapoints from our web client, referenced by no row,
 // are deleted.
-function reconcileWeightOrphans_(rows, nowMs, lookbackDays) {
-  reconcileDataPointOrphans_(rows, nowMs, lookbackDays, 'weight', listWeightOnDate);
+function reconcileWeightOrphans_(allHealthIds, nowMs, lookbackDays) {
+  reconcileDataPointOrphans_(allHealthIds, nowMs, lookbackDays, 'weight', listWeightOnDate);
 }
 
 // Write a fresh generation marker into PENDING_DIRTY_KEY. The value matters
@@ -441,11 +446,30 @@ function resyncSelectedRows() {
     toast_('Weight Synced At column missing. Run setup.', 30);
     return;
   }
+  // The selection is spreadsheet-global: it belongs to whichever tab is
+  // focused, not necessarily the synced one (always the first tab, per
+  // getSheet_). Re-dirtying by row number from another tab's selection would
+  // hit unrelated rows here, so require the synced tab to be active.
+  const activeSheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  if (activeSheet.getSheetId() !== sheet.getSheetId()) {
+    toast_('Select rows on the "' + sheet.getName() + '" tab first.', 10);
+    return;
+  }
   const rows = {};
-  const ranges = sheet.getActiveRangeList().getRanges();
+  // Null when nothing is selected at all.
+  const rangeList = sheet.getActiveRangeList();
+  if (!rangeList) {
+    toast_('No data rows selected.', 10);
+    return;
+  }
+  const ranges = rangeList.getRanges();
+  // Clamp to the data range. A whole-column selection (clicking the column
+  // header) reports the full sheet height, which would re-dirty every empty row
+  // below the data and spend the pass on thousands of stamp writes.
+  const lastDataRow = sheet.getLastRow();
   for (const range of ranges) {
     const start = range.getRow();
-    const end = start + range.getNumRows() - 1;
+    const end = Math.min(start + range.getNumRows() - 1, lastDataRow);
     for (let row = start; row <= end; row++) {
       if (row >= 2) rows[row] = true;
     }
@@ -549,13 +573,16 @@ function syncDirtyRows(lockWaitMs) {
   let ok = 0;
   let errors = 0;
   let deferredCount = 0;
-  // Set when the pass hits a misconfiguration that retrying can't fix (missing
-  // columns, duplicate headers, or any other throw out of the body). The catch
-  // emails the owner; the finally clears the dirty flag so we don't re-run and
-  // re-email every poll. A later edit or manual sync re-triggers.
+  // Set when the pass hits a misconfiguration retrying can't fix (missing
+  // columns, duplicate headers), or when the row loop's summary throw reports
+  // rows that failed unexpectedly. The catch emails the owner; the finally
+  // LEAVES the dirty flag set (it skips flag resolution entirely on this path)
+  // so the backlog syncs itself on the next poll once the cause clears.
+  // Clearing it would orphan already-dirty rows until some future edit. The
+  // summary throw depends on that, which is why it sets the flag first.
   let unrecoverable = false;
   try {
-    const { rows, exerciseSyncedAtCol, weightSyncedAtCol, healthIdsCol, exercisesLastEditedAtCol, weightEditedAtCol, matchedHealthSessionCol } = readRows();
+    const { rows, allHealthIds, allMatchedSessions, exerciseSyncedAtCol, weightSyncedAtCol, healthIdsCol, exercisesLastEditedAtCol, weightEditedAtCol, matchedHealthSessionCol } = readRows();
     if (!exerciseSyncedAtCol || !weightSyncedAtCol || !healthIdsCol) {
       throw new Error('Managed columns missing; run "Run setup" from the Sync menu before syncing.');
     }
@@ -605,7 +632,7 @@ function syncDirtyRows(lockWaitMs) {
     // supplies a foreign session's interval to align timing when one overlaps
     // the row's edit window. See FOREIGN_MATCH_BUFFER_MS in Config.gs.
     const exerciseReadyRows = ready.filter(r => r.exerciseReady).map(r => r.row);
-    const alignmentPlan = resolveForeignMatches_(rows, exerciseReadyRows);
+    const alignmentPlan = resolveForeignMatches_(allHealthIds, allMatchedSessions, exerciseReadyRows);
     const cols = {
       exerciseSyncedAtCol: exerciseSyncedAtCol,
       weightSyncedAtCol: weightSyncedAtCol,
@@ -614,16 +641,82 @@ function syncDirtyRows(lockWaitMs) {
       weightEditedAtCol: weightEditedAtCol,
       matchedHealthSessionCol: matchedHealthSessionCol
     };
+    // A throw out of syncOneRow_ is unexpected: it catches its own Health API
+    // failures, so what reaches here is sheet I/O failing on a transient
+    // Spreadsheets service error: the final writeHealthIds /
+    // writeMatchedHealthSession, the concurrent-edit guard reads, and the stamp
+    // writes. The two persist-immediately writeHealthIds calls sit inside the
+    // create try/catch blocks, so a failure there is recorded as
+    // weightFailed/exerciseFailed, but that does NOT contain it: the same
+    // transient condition then fails the unconditional write at the end of the
+    // row, which does reach this catch, with the just-created datapoint
+    // untracked (an orphan for reconciliation to reclaim).
+    //
+    // Isolate it per row rather than letting it abort the loop. Rows are
+    // processed newest-first, so aborting would leave every older row behind
+    // the failure unsynced, and a row that throws deterministically would do
+    // so on every subsequent pass, wedging the backlog indefinitely. The pass
+    // therefore always runs to the end: no failure count stops it. (Stopping
+    // early to limit orphans was tried and removed: every threshold either
+    // failed to bound them, since the next pass re-creates what this one
+    // couldn't record, or re-created the wedge.)
+    //
+    // Reconciliation is the backstop, but only within
+    // ORPHAN_RECONCILE_LOOKBACK_DAYS: it lists candidates by the DATAPOINT's
+    // own civil date, which is the row's Date, not its creation time. So
+    // orphans leaked for rows dated further back than that lookback (the
+    // resyncAllRows-over-history case) are never listed and never reclaimed.
+    // That is the accepted residual, not something the loop covers.
+    // The failures are still reported: the summary throw below routes them
+    // through the unrecoverable path so the owner is emailed and the dirty flag
+    // is kept, but only after every other ready row has synced and stamped.
+    const unexpected = [];
     for (let i = 0; i < ready.length; i++) {
       const entry = ready[i];
       const ordinal = ordinalByRowNum[entry.row.rowNum];
       const foreignMatch = alignmentPlan[entry.row.rowNum] || null;
-      if (syncOneRow_(entry.row, ordinal, foreignMatch, entry.weightReady, entry.exerciseReady, cols, i + 1, ready.length)) ok++;
-      else errors++;
+      try {
+        if (syncOneRow_(entry.row, ordinal, foreignMatch, entry.weightReady, entry.exerciseReady, cols, i + 1, ready.length)) ok++;
+        else errors++;
+      } catch (err) {
+        errors++;
+        unexpected.push('row ' + entry.row.rowNum + ': ' + err);
+        console.error('syncDirtyRows: unexpected error on row ' + entry.row.rowNum
+          + '; skipping it and continuing the pass: ' + err);
+      }
+    }
+    if (unexpected.length > 0) {
+      // Set the flag before throwing. The unrecoverable path skips end-of-pass
+      // flag resolution entirely (it only leaves whatever is already there), so
+      // a pass entered with no flag set (runSyncNow is the one entry point that
+      // doesn't set one) would strand these rows dirty with nothing to retry
+      // them: flushPending short-circuits on its fast path, and the backstop
+      // only re-dirties exercise rows with sendable content.
+      markPendingDirty_();
+      // Carry the pass outcome in the message. This throw replaces the normal
+      // return, so the ok/errors/deferred counts would otherwise be lost, and
+      // on the manual entry points runSyncAndToast_ shows this text, where
+      // "79 synced" is the difference between "the resync worked apart from one
+      // row" and an unqualified "Sync failed".
+      //
+      // Counts go FIRST, and only the first few rows are named: the toast
+      // truncates, so with a broad failure (up to MAX_ROWS_PER_SYNC rows) a
+      // trailing summary would be cut off, exactly the outcome the summary
+      // exists to prevent. Nothing is lost by trimming the list: every failure
+      // was logged individually above and lands in Executions.
+      const MAX_NAMED_FAILURES = 5;
+      const named = unexpected.slice(0, MAX_NAMED_FAILURES);
+      const unnamed = unexpected.length - named.length;
+      throw new Error(ok + ' synced, ' + errors + ' error(s)'
+        + (deferredCount > 0 ? ', ' + deferredCount + ' deferred by the row cap' : '')
+        + '. Unexpected per-row failure(s): ' + named.join('; ')
+        + (unnamed > 0 ? '; +' + unnamed + ' more (see Executions)' : '')
+        + '.');
     }
   } catch (err) {
     // Unrecoverable: a throw out of the sync body (missing required columns,
-    // duplicate exercise headers, etc.). Per-row API failures never reach here
+    // duplicate exercise headers, etc.), or the summary throw for rows whose
+    // sheet I/O failed unexpectedly. Per-row API failures never reach here
     // — syncOneRow_ catches them and they retry. Re-throw so the failure
     // propagates uncaught: Apps Script then emails the script owner about the
     // failed trigger execution (no MailApp needed), and manual entry points
@@ -686,11 +779,16 @@ function syncDirtyRows(lockWaitMs) {
 // Candidate exclusions (global, keyed by resource name — names are globally
 // unique, so no date keying is needed, and global keying is what lets a
 // neighbor-day candidate be excluded correctly):
-//   - sync-created: name appears in some row's Created Health IDs (our own
-//     datapoint — never align to ourselves, including a row's prior datapoint
-//     on re-sync).
+//   - sync-created: name appears in `allHealthIds` (our own datapoint, never
+//     align to ourselves, including a row's prior datapoint on re-sync). This
+//     is readRows' full-sheet id list rather than the ids reachable from the
+//     pass's `rows` snapshot, so a row dropped for a blank/unparseable Date
+//     still shields its datapoints from being borrowed as "foreign".
 //   - aligned-elsewhere: name is a non-ready row's Matched Health Session, so
-//     two rows don't borrow the same foreign session's times across runs.
+//     two rows don't borrow the same foreign session's times across runs. Also
+//     full-sheet (`allMatchedSessions`) rather than row-derived: a row dropped
+//     for a blank Date can never be ready, so the session it borrowed has to
+//     stay excluded.
 //
 // Cross-date: candidates are gathered for every civil date any row's window
 // touches (a window near local midnight pulls the neighbor day too), deduped
@@ -698,22 +796,20 @@ function syncDirtyRows(lockWaitMs) {
 // match regardless of which civil date the foreign session was logged under.
 //
 // Ordering note: this runs once near the top of syncDirtyRows, before the
-// per-row syncOneRow_ loop. The `allRows` snapshot comes from readRows() at
-// the start of the pass, and `listStrengthOnDate` calls the API before any
-// row in this pass has had its create issued. So same-pass freshly-created
-// datapoints are not yet visible to the API and not yet in any row's
-// Created Health IDs — both gaps cancel out and there's no self-match risk.
-function resolveForeignMatches_(allRows, readyRows) {
+// per-row syncOneRow_ loop. Both exclusion lists come from readRows() at the
+// start of the pass, and `listStrengthOnDate` calls the API before any row in
+// this pass has had its create issued. So same-pass freshly-created datapoints
+// are not yet visible to the API and not yet in Created Health IDs, so both gaps
+// cancel out and there's no self-match risk.
+function resolveForeignMatches_(allHealthIds, allMatchedSessions, readyRows) {
   const plan = {};
   const readyRowNums = {};
   readyRows.forEach(r => { readyRowNums[r.rowNum] = true; });
 
   const excluded = {};
-  allRows.forEach(r => {
-    if (!readyRowNums[r.rowNum] && r.matchedHealthSession) {
-      excluded[r.matchedHealthSession] = true;
-    }
-    splitHealthIdsByType_(r.healthIds).exercise.forEach(name => { excluded[name] = true; });
+  splitHealthIdsByType_(allHealthIds).exercise.forEach(name => { excluded[name] = true; });
+  allMatchedSessions.forEach(m => {
+    if (!readyRowNums[m.rowNum]) excluded[m.name] = true;
   });
 
   // Only rows with on-row-date edit timestamps anchor a trustworthy window.
@@ -942,6 +1038,36 @@ function exerciseUnchanged_(prior, targetStartUtcMs, targetEndUtcMs, targetNotes
   return (ex.notes || '') === (targetNotes || '');
 }
 
+// Delete a row's prior datapoints of one type, ONE NAME PER CALL, and return
+// the names that must stay in Created Health IDs (their delete genuinely
+// failed, so the next sync retries them). A 404 counts as already deleted
+// (the datapoint was removed in the Health app) and its name is dropped;
+// retrying a delete that can never succeed would hold the row dirty and
+// re-issue the same call every poll.
+//
+// Per-name rather than one batched deleteDataPointsByName call because
+// :batchDelete fails as a unit: one missing name would 404 the whole batch, and
+// treating that as "all deleted" would drop still-live siblings from the sheet,
+// leaving them untracked and reclaimable only by orphan reconciliation (never,
+// for a row older than ORPHAN_RECONCILE_LOOKBACK_DAYS). Rows normally carry a
+// single id per type, so this is the same one call in the common case.
+function deletePriorDataPoints_(tag, label, names) {
+  const remaining = [];
+  names.forEach(name => {
+    try {
+      deleteDataPointsByName([name]);
+    } catch (err) {
+      if (isNotFoundError_(err)) {
+        console.warn(tag + ': previous ' + label + ' datapoint not found (404); treating as deleted: ' + name);
+        return;
+      }
+      console.error(tag + ': delete previous ' + label + ' datapoint failed (' + name + '): ' + err);
+      remaining.push(name);
+    }
+  });
+  return remaining;
+}
+
 // Sync a single row in two independent phases (weight, exercise). Either or
 // both phases may run on a given pass:
 //   - Weight phase runs whenever the row's Weight Synced At is cleared. It
@@ -990,7 +1116,6 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
   let priorExercise = null;
   let priorWeight = null;
   let priorWeightFetchFailed = false;
-  const exerciseEditOnRowDate = exerciseEditIsOnRowDate_(row);
   if (exerciseWillCreate && split.exercise.length > 0) {
     try {
       priorExercise = getDataPoint(split.exercise[0]);
@@ -1066,14 +1191,10 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
     } else if (split.weight.length > 0 && !hasBodyweight) {
       // Bodyweight cleared on a row that previously had one: delete.
       console.info(tag + ': deleting ' + split.weight.length + ' previous weight datapoint(s)');
-      try {
-        deleteDataPointsByName(split.weight);
-        newWeightIds = [];
-      } catch (err) {
-        console.error(tag + ': delete previous weight datapoint(s) failed: ' + err);
-        weightFailed = true;
-        // Keep newWeightIds = split.weight so the next sync retries delete.
-      }
+      // Names left in newWeightIds are the ones whose delete failed; they stay
+      // in Created Health IDs so the next sync retries them.
+      newWeightIds = deletePriorDataPoints_(tag, 'weight', split.weight);
+      if (newWeightIds.length > 0) weightFailed = true;
     } else if (split.weight.length === 0 && hasBodyweight) {
       // First weight for this row: POST.
       newWeightIds = [];
@@ -1118,22 +1239,10 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
     } else {
       if (split.exercise.length > 0) {
         console.info(tag + ': deleting ' + split.exercise.length + ' previous exercise datapoint(s)');
-        try {
-          deleteDataPointsByName(split.exercise);
-          newExerciseIds = [];
-        } catch (err) {
-          if (isNotFoundError_(err)) {
-            // Already gone server-side (e.g. deleted in the Health app). Treat as
-            // deleted so the row recreates instead of retrying a delete that
-            // 404s forever.
-            console.warn(tag + ': previous exercise datapoint(s) not found (404); treating as deleted.');
-            newExerciseIds = [];
-          } else {
-            console.error(tag + ': delete previous exercise datapoint(s) failed: ' + err);
-            exerciseFailed = true;
-            // Keep newExerciseIds = split.exercise so the next sync retries delete.
-          }
-        }
+        // Same contract as the weight delete above: survivors are the failures,
+        // and any survivor blocks the recreate so the next sync retries them.
+        newExerciseIds = deletePriorDataPoints_(tag, 'exercise', split.exercise);
+        if (newExerciseIds.length > 0) exerciseFailed = true;
       } else {
         newExerciseIds = [];
       }

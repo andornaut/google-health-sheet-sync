@@ -104,6 +104,8 @@ function readRows() {
   if (lastRow < 2) {
     return {
       rows: [],
+      allHealthIds: [],
+      allMatchedSessions: [],
       exerciseSyncedAtCol: exerciseSyncedAtCol,
       weightSyncedAtCol: weightSyncedAtCol,
       weightCol: weightCol,
@@ -119,8 +121,25 @@ function readRows() {
   const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
 
   const rows = [];
+  // Every data row's Created Health IDs, including the rows dropped below for a
+  // blank/unparseable Date. A dated row losing its Date must not make its
+  // datapoints look untracked: orphan reconciliation would delete them and
+  // foreign matching would offer them to another row as a "foreign" session.
+  // Callers that need ownership (not row content) use this, not `rows`.
+  const allHealthIds = [];
+  // Companion to allHealthIds, same rationale: `{ rowNum, name }` for every data
+  // row carrying a Matched Health Session, including dropped ones. A dropped row
+  // can never be ready to sync, so the foreign session it borrowed must stay
+  // excluded, otherwise another row claims the same session's interval.
+  const allMatchedSessions = [];
   values.forEach((row, idx) => {
     const rowNum = idx + 2;
+    const healthIds = healthIdsCol ? parseHealthIds_(row[healthIdsCol - 1]) : [];
+    healthIds.forEach(n => allHealthIds.push(n));
+    if (matchedHealthSessionCol) {
+      const matched = String(row[matchedHealthSessionCol - 1] || '').trim();
+      if (matched) allMatchedSessions.push({ rowNum: rowNum, name: matched });
+    }
     const dateVal = row[dateCol - 1];
     if (!dateVal) return;
     const date = toDate_(dateVal);
@@ -133,7 +152,6 @@ function readRows() {
     const bodyweight = parseBodyweight(row[weightCol - 1]);
     const exerciseSyncedAt = exerciseSyncedAtCol ? row[exerciseSyncedAtCol - 1] : '';
     const weightSyncedAt = weightSyncedAtCol ? row[weightSyncedAtCol - 1] : '';
-    const healthIds = healthIdsCol ? parseHealthIds_(row[healthIdsCol - 1]) : [];
     const exerciseFirstEditedAt = exerciseFirstEditedAtCol ? toDate_(row[exerciseFirstEditedAtCol - 1]) : null;
     const exercisesLastEditedAt = exercisesLastEditedAtCol ? toDate_(row[exercisesLastEditedAtCol - 1]) : null;
     const weightEditedAt = weightEditedAtCol ? toDate_(row[weightEditedAtCol - 1]) : null;
@@ -156,6 +174,8 @@ function readRows() {
   });
   return {
     rows: rows,
+    allHealthIds: allHealthIds,
+    allMatchedSessions: allMatchedSessions,
     exerciseSyncedAtCol: exerciseSyncedAtCol,
     weightSyncedAtCol: weightSyncedAtCol,
     weightCol: weightCol,
@@ -256,8 +276,16 @@ function onEditMarkDirty(e) {
   // treated as an exercise edit. Only cells with content count. This also
   // implicitly handles the "every cell empty" case (clearing already-blank
   // cells, pasting empty data): no flag gets set and we return early.
-  // Deletions of real content are also skipped — use Force Resync to
-  // remove a row's datapoint after clearing it.
+  //
+  // The exception is a single-cell clear of real content (deleting a logged
+  // set, blanking a bodyweight). Apps Script supplies `oldValue` for
+  // single-cell edits only, which is what distinguishes that from clearing an
+  // already-blank cell, so multi-cell clears stay conservative and still need
+  // "Resync selected rows". Without this the delete paths in syncOneRow_
+  // (bodyweight cleared -> DELETE, exercises cleared -> delete-only) are
+  // unreachable from normal editing and the stale Health datapoint survives:
+  // a fully-cleared exercise row is skipped by the backstop too, since
+  // selectBackstopRows_ requires sendable exercise content.
   //
   // Weight-column edits affect only the weight datapoint and must NOT
   // advance the row's exercise timestamps. Exercise columns (any non-
@@ -267,19 +295,34 @@ function onEditMarkDirty(e) {
   // content lands.
   const managedCols = MANAGED_COLUMN_HEADERS.map(h => map[h]).filter(c => c);
   const newValues = e.range.getValues();
+  const isEmptyValue = v => v === '' || v === null || v === undefined;
+  const singleCell = firstRow === lastRow && firstCol === lastCol;
+  const clearedContent = singleCell
+    && isEmptyValue(newValues[0] && newValues[0][0])
+    && !isEmptyValue(e.oldValue);
   let exerciseRelevant = false;
   let weightRelevant = false;
   const touched = [];
   for (let i = 0; i < newValues.length; i++) {
     for (let j = 0; j < newValues[i].length; j++) {
       const v = newValues[i][j];
-      if (v === '' || v === null || v === undefined) continue;
+      if (isEmptyValue(v) && !clearedContent) continue;
       const c = firstCol + j;
       touched.push({ col: c, row: firstRow + i });
       if (managedCols.indexOf(c) !== -1) continue;
       if (c === dateCol) continue;
-      if (c === weightCol) weightRelevant = true;
-      else exerciseRelevant = true;
+      if (c === weightCol) { weightRelevant = true; continue; }
+      // Exercise-relevant only if this is a real exercise column. readRows
+      // skips blank-header columns when building exerciseCols, so a scratch
+      // column parked to the right of Weight contributes no content, so marking
+      // the row dirty for it would advance Exercises Last Edited At, stretch
+      // the 'edit' interval's endTime, and churn the datapoint for an edit
+      // that changes nothing the sync reads. Blankness is decided exactly as
+      // readRows decides it (`String(h).trim()`), so the two can't disagree on
+      // a header cell holding a falsy-but-real value like 0; a column past the
+      // header row's width has no header at all and counts as blank.
+      const headerName = c - 1 < headers.length ? String(headers[c - 1]).trim() : '';
+      if (headerName) exerciseRelevant = true;
     }
   }
   const desc = describeEditRange_(headers, touched, firstRow, lastRow, firstCol, lastCol);
@@ -291,7 +334,8 @@ function onEditMarkDirty(e) {
   const phases = [];
   if (exerciseRelevant) phases.push('exercise');
   if (weightRelevant) phases.push('weight');
-  console.info('syncOnEdit: ' + desc + ' dirty=[' + phases.join(',') + ']');
+  console.info('syncOnEdit: ' + desc + (clearedContent ? ' cleared' : '')
+    + ' dirty=[' + phases.join(',') + ']');
 
   markPendingDirty_();
   // No lock: these are single-cell writes that race safely with an in-flight

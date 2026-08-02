@@ -72,7 +72,17 @@ function makeFakeSheet(sheetId) {
 
   const sheet = {
     _setGrid(rows) { grid = rows.map(r => r.slice()); },
+    // Selection fake for resyncSelectedRows: _setSelection([[firstRow, numRows], ...]),
+    // or null to simulate "nothing selected".
+    _setSelection(specs) {
+      sheet._selection = specs === null ? null : {
+        getRanges: () => specs.map(([row, numRows]) => sheet.getRange(row, 1, numRows, 1))
+      };
+    },
+    _selection: null,
+    getActiveRangeList: () => sheet._selection,
     getSheetId: () => sheetId,
+    getName: () => 'Sheet' + sheetId,
     hideColumns: () => {},
     getLastRow() {
       let last = 0;
@@ -133,9 +143,15 @@ function makeFakeStore() {
 }
 
 const fakeSheet = makeFakeSheet(1);
+// A second tab the sync never manages, so tests can put the selection on the
+// "wrong" sheet the way a user with multiple tabs would.
+const otherFakeSheet = makeFakeSheet(2);
+const activeSheetRef = { sheet: fakeSheet };
+const toasts = [];
 const fakeSpreadsheet = {
-  getSheets: () => [fakeSheet],
-  toast: () => {},
+  getSheets: () => [fakeSheet, otherFakeSheet],
+  getActiveSheet: () => activeSheetRef.sheet,
+  toast: msg => { toasts.push(String(msg)); },
   getUi: () => { throw new Error('no UI'); }
 };
 const scriptProps = makeFakeStore();
@@ -175,7 +191,14 @@ const sandbox = {
   Utilities: Utilities,
   Session: Session,
   setTestTimeZone: tz => { scriptTimeZone = tz; },
-  SYNC_TEST_HARNESS_: { sheet: fakeSheet, scriptProps: scriptProps, lockState: lockState }
+  SYNC_TEST_HARNESS_: {
+    sheet: fakeSheet,
+    otherSheet: otherFakeSheet,
+    activeSheetRef: activeSheetRef,
+    toasts: toasts,
+    scriptProps: scriptProps,
+    lockState: lockState
+  }
 };
 vm.createContext(sandbox);
 
