@@ -118,7 +118,7 @@ function runParserTests() {
     'Pull up, 25 lbs (assisted)'
   ));
 
-  t('buildNotes one line per entry, session suffix on last line', () => {
+  t('buildNotes one period-terminated line per entry, duration on its own line', () => {
     const notes = buildNotes(45 * 60 * 1000, [
       { name: 'Bench press', entries: [
         { weight: 135, reps: 5, sets: 3, assisted: false },
@@ -127,9 +127,22 @@ function runParserTests() {
       { name: 'Squat', entries: [{ weight: 225, reps: 5, sets: 3, assisted: false }] }
     ]);
     eq(notes,
-      'Bench press, 135 lbs, 3 sets of 5\n'
-      + 'Bench press, 145 lbs, 2 sets of 3\n'
-      + 'Squat, 225 lbs, 3 sets of 5, 45 minute session');
+      'Bench press, 135 lbs, 3 sets of 5.\n'
+      + 'Bench press, 145 lbs, 2 sets of 3.\n'
+      + 'Squat, 225 lbs, 3 sets of 5.\n'
+      + '45 minute session.');
+  });
+
+  // The duration must never be glued onto the last entry's line: commas are the
+  // field delimiter within an entry, so a trailing ", 45 minute session" reads
+  // as another attribute of that exercise.
+  t('buildNotes does not append the duration to the last entry line', () => {
+    const notes = buildNotes(45 * 60 * 1000, [
+      { name: 'Squat', entries: [{ weight: 225, reps: 5, sets: 3, assisted: false }] }
+    ]);
+    eq(notes.split('\n').length, 2);
+    eq(notes.split('\n')[0], 'Squat, 225 lbs, 3 sets of 5.');
+    eq(notes.split('\n')[1], '45 minute session.');
   });
 
   t('buildNotes suppresses zero-set entries (start-only markers)', () => {
@@ -139,28 +152,28 @@ function runParserTests() {
         { weight: 200, reps: 5, sets: 2, assisted: false }
       ] }
     ]);
-    eq(notes, 'Bench press, 200 lbs, 2 sets of 5, 10 minute session');
+    eq(notes, 'Bench press, 200 lbs, 2 sets of 5.\n10 minute session.');
   });
 
-  t('buildNotes with only zero-set entries -> just the session suffix', () => {
+  t('buildNotes with only zero-set entries -> just the session sentence', () => {
     const notes = buildNotes(10 * 60 * 1000, [
       { name: 'Bench press', entries: [{ weight: 200, reps: 5, sets: 0, assisted: false }] }
     ]);
-    eq(notes, '10 minute session');
+    eq(notes, '10 minute session.');
   });
 
   t('buildNotes matches foreign single-entry example', () => {
     const notes = buildNotes(2700 * 1000, [
       { name: 'Bench press', entries: [{ weight: 190, reps: 5, sets: 5, assisted: false }] }
     ]);
-    eq(notes, 'Bench press, 190 lbs, 5 sets of 5, 45 minute session');
+    eq(notes, 'Bench press, 190 lbs, 5 sets of 5.\n45 minute session.');
   });
 
   t('buildNotes rounds duration to nearest minute', () => {
     const notes = buildNotes(29 * 1000, [
       { name: 'Bench press', entries: [{ weight: 190, reps: 5, sets: 5, assisted: false }] }
     ]);
-    eq(notes, 'Bench press, 190 lbs, 5 sets of 5');
+    eq(notes, 'Bench press, 190 lbs, 5 sets of 5.');
   });
 
   t('parseHealthIds_ empty/null', () => {

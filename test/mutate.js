@@ -30,6 +30,13 @@ const MUTATIONS = [
     find: '  if (n > MAX_BODYWEIGHT_LB) {', replace: '  if (false) {' },
   { file: 'Format.gs', name: 'zero-set entries are no longer suppressed from the notes',
     find: '      if (!exerciseEntryIsSendable_(entry)) continue;', replace: '      void entry;' },
+  { file: 'Format.gs', name: 'entry lines are no longer period-terminated',
+    find: "      lines.push(formatEntryNote_(ex.name, entry) + '.');",
+    replace: '      lines.push(formatEntryNote_(ex.name, entry));' },
+  { file: 'Format.gs', name: 'the duration is glued onto the last entry line again',
+    find: "    lines.push(minutes + ' minute session.');",
+    replace: "    if (lines.length) lines[lines.length - 1] += ', ' + minutes + ' minute session';\n"
+      + "    else lines.push(minutes + ' minute session');" },
 
   // ---- Health API shaping -------------------------------------------------
   { file: 'HealthApi.gs', name: 'a create returning no resource name no longer throws (exercise)',

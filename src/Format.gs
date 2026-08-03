@@ -4,21 +4,29 @@
 // itself has no structured slot for per-set strength data
 // (Exercise.exerciseMetadata only carries hasGps / poolLengthMillimeters),
 // so the notes field is the only lever we have.
+//
+// Each entry is terminated with a period and the duration is its own sentence
+// on its own line. Commas are already the FIELD delimiter within an entry
+// ("Bench press, 190 lbs, 5 sets of 5"), so newlines alone carrying the item
+// boundary makes the whole blob ambiguous anywhere the pipeline collapses
+// whitespace: entry boundaries become indistinguishable from field boundaries.
+// A period survives that collapse and outranks the commas. It also keeps the
+// duration from reading as a fourth attribute of the last exercise, which is
+// how a glued ", 30 minute session" suffix parses.
 function buildNotes(durationMs, parsedExercises) {
   const lines = [];
   for (const ex of parsedExercises) {
     for (const entry of ex.entries) {
       // Non-sendable (zero-set "not yet performed") entries produce no note.
       if (!exerciseEntryIsSendable_(entry)) continue;
-      lines.push(formatEntryNote_(ex.name, entry));
+      lines.push(formatEntryNote_(ex.name, entry) + '.');
     }
   }
-  let notes = lines.join('\n');
   const minutes = Math.round(durationMs / 60000);
   if (minutes > 0) {
-    notes += (notes ? ', ' : '') + minutes + ' minute session';
+    lines.push(minutes + ' minute session.');
   }
-  return notes;
+  return lines.join('\n');
 }
 
 // A parsed entry is "sendable" when it represents a performed set rather than a
