@@ -24,12 +24,16 @@ function formatDateStub(date, tz, format) {
     if (!m) throw new Error('formatDateStub: unparseable offset "' + tzn + '"');
     return m[1] + m[2] + m[3];
   }
-  if (format === 'yyyy MM dd HH mm ss') {
+  if (format === 'yyyy MM dd HH mm ss' || format === 'yyyy-MM-dd HH:mm:ss') {
     const parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(date);
     const get = t => parts.find(p => p.type === t).value;
     let h = get('hour');
     if (h === '24') h = '00';
-    return get('year') + ' ' + get('month') + ' ' + get('day') + ' ' + h + ' ' + get('minute') + ' ' + get('second');
+    const ymdParts = [get('year'), get('month'), get('day')];
+    const hmsParts = [h, get('minute'), get('second')];
+    return format === 'yyyy MM dd HH mm ss'
+      ? ymdParts.concat(hmsParts).join(' ')
+      : ymdParts.join('-') + ' ' + hmsParts.join(':');
   }
   if (format === "yyyy-MM-dd'T'HH:mm:ss'Z'") {
     if (zone !== 'UTC') throw new Error('formatDateStub: ISO Z format only stubbed for GMT/UTC');
