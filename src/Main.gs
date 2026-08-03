@@ -219,6 +219,51 @@ function selectBackstopRows_(rows, nowMs, lookbackDays, wantMatched) {
     && hasSendableExercises_(r.exercises));
 }
 
+// Rows whose recorded Health datapoints contradict their current cell content:
+// an exercise datapoint tracked for a row with no sendable exercise content, or
+// a weight datapoint tracked for a row with no bodyweight. Returns
+// { exerciseRowNums, weightRowNums }.
+//
+// This is the reconciliation path for CLEARED content, and it is deliberately
+// state-based rather than event-based. onEditMarkDirty can only guess whether a
+// multi-cell edit cleared something (Apps Script supplies `oldValue` for single
+// cells only), and every guess has boundary cases that silently skip the delete.
+// The state here has no ambiguity: the sheet says one thing, Created Health IDs
+// says another, and exactly one of them is right. It therefore catches a clear
+// however the user made it: single cell, multi-cell, paste, or a mixed range
+// that blanks one cell while writing another.
+//
+// Only rows currently STAMPED synced are returned; an already-dirty row is
+// picked up by the next pass regardless, so re-dirtying it would just be an
+// extra write. Self-limiting: the sync drops the id, so the row stops matching.
+//
+// This DELETES data, so emptiness is read from the raw cells (hasExerciseText /
+// hasWeightText) and not from the parse result. The two are different claims:
+// an unparseable cell parses to nothing while plainly still holding the user's
+// data, so treating "the parser produced nothing" as "the user cleared it"
+// turns any parser or schema change into a mass deletion across all history.
+// The caller bounds the blast radius further, via STALE_RECONCILE_MAX_ROWS.
+//
+// Not covered: a row whose Date is blank, which readRows drops entirely. Such a
+// row keeps its datapoints by design (see readRows), so its content is not
+// authoritative here either. Pure (no API/sheet access).
+function selectStaleDataPointRows_(rows) {
+  const exerciseRowNums = [];
+  const weightRowNums = [];
+  rows.forEach(r => {
+    const split = splitHealthIdsByType_(r.healthIds);
+    if (r.exerciseSyncedAt && split.exercise.length > 0
+      && !hasSendableExercises_(r.exercises) && !r.hasExerciseText) {
+      exerciseRowNums.push(r.rowNum);
+    }
+    if (r.weightSyncedAt && split.weight.length > 0
+      && r.bodyweight === null && !r.hasWeightText) {
+      weightRowNums.push(r.rowNum);
+    }
+  });
+  return { exerciseRowNums: exerciseRowNums, weightRowNums: weightRowNums };
+}
+
 // Backstop trigger (every BACKSTOP_INTERVAL_HOURS): re-dirty recent exercise rows
 // (BOTH matched and unmatched) for foreign-match re-review. Clearing Exercise
 // Synced At + advancing the dirty generation makes the next flushPending re-run
@@ -248,7 +293,7 @@ function backstop() {
   }
   try {
     const now = Date.now();
-    const { rows, allHealthIds, exerciseSyncedAtCol } = readRows();
+    const { rows, allHealthIds, exerciseSyncedAtCol, weightSyncedAtCol } = readRows();
 
     // Reconcile orphans first, while the rows snapshot is unmodified. (reDirty
     // below doesn't touch Created Health IDs, so order is not load-bearing, but
@@ -274,15 +319,44 @@ function backstop() {
     // the two, so the union needs no dedup).
     const unmatched = selectBackstopRows_(rows, now, BACKSTOP_LOOKBACK_DAYS, false);
     const matched = selectBackstopRows_(rows, now, BACKSTOP_LOOKBACK_DAYS, true);
-    const targets = unmatched.concat(matched);
-    if (targets.length === 0) {
-      console.info('backstop: no recent exercise rows to re-review.');
+    // Plus rows whose recorded datapoints contradict their content, i.e. the
+    // user cleared cells. Deliberately NOT bounded by BACKSTOP_LOOKBACK_DAYS:
+    // the scan is pure sheet state with no API calls, a clear on an old row is
+    // exactly the case nothing else recovers, and the set is normally empty.
+    // Disjoint from the foreign-match selections above by construction (those
+    // require sendable exercise content, the stale exercise set requires none),
+    // so the concat needs no dedup.
+    let stale = selectStaleDataPointRows_(rows);
+    // Bound the destructive branch. Clearing cells is human-scale; a stale set
+    // this large is evidence of a systemic change (a column deleted, a bulk
+    // reformat) where reconciling would destroy history rather than repair it.
+    // Log and reconcile NOTHING rather than part of it, so the sheet is left
+    // exactly as found for a human to inspect. Foreign re-review still runs.
+    const staleCount = stale.exerciseRowNums.length + stale.weightRowNums.length;
+    if (staleCount > STALE_RECONCILE_MAX_ROWS) {
+      console.error('backstop: ' + staleCount + ' rows look cleared (limit '
+        + STALE_RECONCILE_MAX_ROWS + '). That is more than a person clears by hand, so this is'
+        + ' probably a column or format change rather than a clear. Reconciling nothing;'
+        + ' use "Resync selected rows" if the change really was intended.');
+      stale = { exerciseRowNums: [], weightRowNums: [] };
+    }
+    const exerciseTargets = unmatched.concat(matched).map(r => r.rowNum)
+      .concat(stale.exerciseRowNums);
+    const weightTargets = stale.weightRowNums;
+    if (exerciseTargets.length === 0 && weightTargets.length === 0) {
+      console.info('backstop: no exercise rows to re-review and no stale datapoints.');
       return;
     }
-    reDirtyRows_(targets.map(r => r.rowNum), { exerciseCol: exerciseSyncedAtCol });
-    console.info('backstop: re-dirtied ' + targets.length
-      + ' recent exercise row(s) (' + unmatched.length + ' unmatched, '
-      + matched.length + ' matched) for foreign-match re-review.');
+    if (exerciseTargets.length > 0) {
+      reDirtyRows_(exerciseTargets, { exerciseCol: exerciseSyncedAtCol });
+    }
+    if (weightTargets.length > 0) {
+      reDirtyRows_(weightTargets, { weightCol: weightSyncedAtCol });
+    }
+    console.info('backstop: re-dirtied ' + exerciseTargets.length + ' exercise row(s) ('
+      + unmatched.length + ' unmatched, ' + matched.length + ' matched for foreign re-review, '
+      + stale.exerciseRowNums.length + ' stale) and ' + weightTargets.length
+      + ' stale weight row(s).');
   } finally {
     lock.releaseLock();
   }

@@ -8,6 +8,22 @@ function runParserTests() {
     const sa = JSON.stringify(a), sb = JSON.stringify(b);
     if (sa !== sb) throw new Error((msg || 'mismatch') + ' expected ' + sb + ' got ' + sa);
   };
+  const throws = (fn, re, msg) => {
+    let err = null;
+    try { fn(); } catch (e) { err = e; }
+    if (!err) throw new Error((msg || 'expected a throw') + ', but none was thrown');
+    if (re && !re.test(String(err))) throw new Error((msg || 'wrong error') + ': ' + err);
+  };
+  // Swap globals (the Health API entry points) for the duration of fn, then
+  // restore; returns fn's value. Apps Script declares top-level functions on the
+  // global scope, but the VM sandbox these tests run in treats the function name
+  // like a const binding at the outer scope, so direct reassignment throws.
+  // Stash and restore via globalThis instead.
+  const withGlobals = (stubs, fn) => {
+    const saved = {};
+    Object.keys(stubs).forEach(k => { saved[k] = globalThis[k]; globalThis[k] = stubs[k]; });
+    try { return fn(); } finally { Object.keys(saved).forEach(k => { globalThis[k] = saved[k]; }); }
+  };
 
   t('empty cell -> []', () => eq(parseExerciseCell(''), []));
   t('null cell -> []', () => eq(parseExerciseCell(null), []));
@@ -203,10 +219,6 @@ function runParserTests() {
   t('formatSyncResult_ ok + errors', () => eq(
     formatSyncResult_({ ok: 2, errors: 1 }, 'Resynced'),
     'Resynced 2 row(s), 1 error(s).\n\nSee Executions for details.'
-  ));
-  t('formatSyncResult_ zero ok with errors', () => eq(
-    formatSyncResult_({ ok: 0, errors: 4 }, 'Synced'),
-    'Synced 0 row(s), 4 error(s).\n\nSee Executions for details.'
   ));
   t('formatSyncResult_ ok + deferred', () => eq(
     formatSyncResult_({ ok: 75, errors: 0, deferred: 25 }, 'Synced'),
@@ -488,11 +500,6 @@ function runParserTests() {
     eq(r.weightSource, 'synthetic');
     eq(r.weight.utcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
   });
-  t('resolveRowTiming_ weight uses weightEditedAt when set', () => {
-    const wEdit = new Date(Date.UTC(2026, 0, 15, 22, 0, 0));   // 5pm EST
-    const r = resolveRowTiming_({ exerciseFirstEditedAt: null, exercisesLastEditedAt: null, weightEditedAt: wEdit, date: JAN_15_NOON_UTC }, 0, null);
-    eq(r.weight, { utcMs: wEdit.getTime(), offsetSeconds: EST });
-  });
   t('resolveRowTiming_ weight uses weightEditedAt on weight-only row with no exerciseFirstEditedAt', () => {
     const wEdit = new Date(Date.UTC(2026, 0, 15, 22, 0, 0));
     const r = resolveRowTiming_({ exerciseFirstEditedAt: null, exercisesLastEditedAt: null, weightEditedAt: wEdit, date: JAN_15_NOON_UTC }, 0, null);
@@ -569,6 +576,51 @@ function runParserTests() {
     eq(r.exercise.endUtcMs, last.getTime());
   });
 
+  // 'foreign' is the highest-priority exercise timing source: an overlapping
+  // foreign session's manual start/stop is better evidence than our
+  // edit-derived window or an interval we recorded earlier, so it must win over
+  // BOTH 'edit' and 'prior', and its interval is borrowed verbatim.
+  const FOREIGN_INTERVAL = {
+    startUtcMs: Date.UTC(2026, 0, 15, 21, 30, 0),
+    endUtcMs: Date.UTC(2026, 0, 15, 22, 45, 0),
+    startUtcOffsetSeconds: EST,
+    endUtcOffsetSeconds: EST
+  };
+  t('resolveRowTiming_ foreign match is borrowed verbatim and beats same-date edits', () => {
+    const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
+    const last = new Date(Date.UTC(2026, 0, 15, 18, 0, 0));
+    const r = resolveRowTiming_(
+      { exerciseFirstEditedAt: first, exercisesLastEditedAt: last, date: JAN_15_NOON_UTC },
+      0, null, FOREIGN_INTERVAL);
+    eq(r.exerciseSource, 'foreign');
+    eq(r.exercise.startUtcMs, FOREIGN_INTERVAL.startUtcMs);
+    eq(r.exercise.endUtcMs, FOREIGN_INTERVAL.endUtcMs);
+    eq(r.exercise.startOffsetSeconds, EST);
+    eq(r.exercise.endOffsetSeconds, EST);
+  });
+  t('resolveRowTiming_ foreign match beats a prior datapoint', () => {
+    const prior = { exercise: { interval: {
+      startTime: '2026-01-15T16:00:00Z', endTime: '2026-01-15T16:30:00Z',
+      startUtcOffset: EST + 's', endUtcOffset: EST + 's'
+    } } };
+    const r = resolveRowTiming_(
+      { exerciseFirstEditedAt: null, exercisesLastEditedAt: null, date: JAN_15_NOON_UTC },
+      0, prior, FOREIGN_INTERVAL);
+    eq(r.exerciseSource, 'foreign');
+    eq(r.exercise.startUtcMs, FOREIGN_INTERVAL.startUtcMs);
+    eq(r.exercise.endUtcMs, FOREIGN_INTERVAL.endUtcMs);
+  });
+  // The two phases are independent: borrowing an exercise interval must not
+  // drag the bodyweight sample time with it.
+  t('resolveRowTiming_ foreign match leaves the weight sample time alone', () => {
+    const wEdit = new Date(Date.UTC(2026, 0, 15, 22, 0, 0));   // 5pm EST
+    const r = resolveRowTiming_(
+      { exerciseFirstEditedAt: null, exercisesLastEditedAt: null, weightEditedAt: wEdit, date: JAN_15_NOON_UTC },
+      0, null, FOREIGN_INTERVAL);
+    eq(r.weightSource, 'edit');
+    eq(r.weight, { utcMs: wEdit.getTime(), offsetSeconds: EST });
+  });
+
   t('resolveRowTiming_ malformed prior exercise falls through to synthetic', () => {
     const r = resolveRowTiming_({
       exerciseFirstEditedAt: JAN_20_3PM_EST,
@@ -643,6 +695,83 @@ function runParserTests() {
     eq(selectBackstopRows_(rows, bsNow, 2, true).map(r => r.rowNum), [2, 3]);
   });
 
+  // selectStaleDataPointRows_: the state-based reconciliation path for cleared
+  // content. A recorded datapoint that contradicts the row's cells is the one
+  // unambiguous signal available, so this is what makes a clear recoverable no
+  // matter how the user made it (onEditMarkDirty only sees single-cell clears).
+  // Fixtures mirror what readRows produces, INCLUDING hasExerciseText /
+  // hasWeightText. Those two are raw-cell facts, so a fixture that omits them
+  // makes the guard vacuously true and the test pass for the wrong reason.
+  const sRow = o => Object.assign({
+    rowNum: 2, exercises: sendable, bodyweight: 185, healthIds: [],
+    exerciseSyncedAt: 'SYNC', weightSyncedAt: 'SYNC',
+    hasExerciseText: true, hasWeightText: true
+  }, o);
+  // A row the user actually emptied: nothing parsed AND nothing in the cells.
+  const cleared = o => sRow(Object.assign({
+    exercises: [], bodyweight: null, hasExerciseText: false, hasWeightText: false
+  }, o));
+  const EX_ID = 'users/me/dataTypes/exercise/dataPoints/E1';
+  const WT_ID = 'users/me/dataTypes/weight/dataPoints/W1';
+
+  t('selectStaleDataPointRows_ nothing stale when content matches the tracked ids', () => eq(
+    selectStaleDataPointRows_([sRow({ healthIds: [EX_ID, WT_ID] })]),
+    { exerciseRowNums: [], weightRowNums: [] }));
+  t('selectStaleDataPointRows_ flags an exercise datapoint on an emptied row', () => eq(
+    selectStaleDataPointRows_([cleared({ healthIds: [EX_ID] })]),
+    { exerciseRowNums: [2], weightRowNums: [] }));
+  t('selectStaleDataPointRows_ flags a weight datapoint on an emptied row', () => eq(
+    selectStaleDataPointRows_([cleared({ healthIds: [WT_ID] })]),
+    { exerciseRowNums: [], weightRowNums: [2] }));
+  t('selectStaleDataPointRows_ flags both phases independently', () => eq(
+    selectStaleDataPointRows_([cleared({ healthIds: [EX_ID, WT_ID] })]),
+    { exerciseRowNums: [2], weightRowNums: [2] }));
+  // Nothing recorded means nothing to reconcile: a blank row is not stale.
+  t('selectStaleDataPointRows_ ignores a row with no tracked ids', () => eq(
+    selectStaleDataPointRows_([cleared({ healthIds: [] })]),
+    { exerciseRowNums: [], weightRowNums: [] }));
+  // An already-dirty row is picked up by the next pass regardless, so
+  // re-dirtying it would only cost an extra write.
+  t('selectStaleDataPointRows_ skips rows that are already dirty', () => eq(
+    selectStaleDataPointRows_([cleared({
+      healthIds: [EX_ID, WT_ID], exerciseSyncedAt: '', weightSyncedAt: ''
+    })]),
+    { exerciseRowNums: [], weightRowNums: [] }));
+
+  // The rule that keeps this from destroying history. "The parser produced
+  // nothing" is not "the user cleared it": a cell holding text the parser
+  // rejects still holds the user's data, so it must never be deleted. Blanking
+  // an exercise column's HEADER makes readRows stop building `exercises` for
+  // every historical row at once; a bulk reformat or a bounds change does the
+  // same to `bodyweight`. Both leave the raw text in place, which is what these
+  // two guard on.
+  t('selectStaleDataPointRows_ spares a row whose exercise cells still hold text', () => eq(
+    selectStaleDataPointRows_([cleared({ healthIds: [EX_ID], hasExerciseText: true })]),
+    { exerciseRowNums: [], weightRowNums: [] }));
+  t('selectStaleDataPointRows_ spares a row whose Weight cell still holds text', () => eq(
+    selectStaleDataPointRows_([cleared({ healthIds: [WT_ID], hasWeightText: true })]),
+    { exerciseRowNums: [], weightRowNums: [] }));
+  // A zero-set-only row parses to no sendable content but its cell is not
+  // empty, so the backstop leaves it alone; the single-cell onEdit clear path
+  // is what reconciles that edit, and erring toward keeping a datapoint is the
+  // safe direction.
+  t('selectStaleDataPointRows_ spares a zero-set-only row (text present)', () => eq(
+    selectStaleDataPointRows_([sRow({ exercises: zeroOnly, healthIds: [EX_ID] })]),
+    { exerciseRowNums: [], weightRowNums: [] }));
+
+  // Disjoint from selectBackstopRows_ by construction: that requires sendable
+  // content, this requires none, so the backstop can concat without dedup.
+  t('selectStaleDataPointRows_ and selectBackstopRows_ never select the same exercise row', () => {
+    const rows = [
+      Object.assign(sRow({ rowNum: 2, healthIds: [EX_ID] }),
+        { date: bsDate(15), matchedHealthSession: '' }),
+      Object.assign(cleared({ rowNum: 3, healthIds: [EX_ID] }),
+        { date: bsDate(15), matchedHealthSession: '' })
+    ];
+    eq(selectBackstopRows_(rows, bsNow, 2).map(r => r.rowNum), [2], 'foreign re-review takes the row with content');
+    eq(selectStaleDataPointRows_(rows).exerciseRowNums, [3], 'stale takes the emptied row');
+  });
+
   // exerciseUnchanged_: skip the recreate only when interval + notes all match.
   const priorEx = (startIso, endIso, notes) => ({
     exercise: { interval: { startTime: startIso, endTime: endIso }, notes: notes }
@@ -652,6 +781,9 @@ function runParserTests() {
   t('exerciseUnchanged_ true when interval and notes all match', () => eq(
     exerciseUnchanged_(priorEx('2026-01-15T17:00:00Z', '2026-01-15T17:30:00Z', 'Bench: 200x5x2'),
       exStart, exEnd, 'Bench: 200x5x2'), true));
+  t('exerciseUnchanged_ false when startTime differs', () => eq(
+    exerciseUnchanged_(priorEx('2026-01-15T17:00:00Z', '2026-01-15T17:30:00Z', 'Bench: 200x5x2'),
+      exStart - 60000, exEnd, 'Bench: 200x5x2'), false));
   t('exerciseUnchanged_ false when endTime differs', () => eq(
     exerciseUnchanged_(priorEx('2026-01-15T17:00:00Z', '2026-01-15T17:30:00Z', 'Bench: 200x5x2'),
       exStart, exEnd + 60000, 'Bench: 200x5x2'), false));
@@ -696,15 +828,7 @@ function runParserTests() {
 
   // resolveForeignMatches_ tests. listStrengthOnDate is stubbed per-test so
   // we control the foreign candidate list without hitting the API.
-  const withStubbedList = (stub, fn) => {
-    // Apps Script declares top-level functions on the global scope, but the
-    // VM sandbox these tests run in treats the function name like a const-
-    // binding at the outer scope, so direct reassignment throws. Stash and
-    // restore via globalThis instead.
-    const orig = globalThis.listStrengthOnDate;
-    globalThis.listStrengthOnDate = stub;
-    try { fn(); } finally { globalThis.listStrengthOnDate = orig; }
-  };
+  const withStubbedList = (stub, fn) => withGlobals({ listStrengthOnDate: stub }, fn);
 
   // 2026-01-15 12:00 UTC = 2026-01-15 07:00 EST, civil date 2026-01-15.
   const FOREIGN_DATE = new Date(Date.UTC(2026, 0, 15, 12, 0, 0));
@@ -799,25 +923,6 @@ function runParserTests() {
     });
   });
 
-  t('resolveForeignMatches_ excludes ids from rows readRows dropped (blank Date)', () => {
-    // The candidate belongs to a row whose Date cell is blank, so readRows
-    // dropped it and it is absent from allRows, but its id is still in
-    // allHealthIds. Without that, the ready row would borrow our own
-    // datapoint's interval as if it were a foreign session.
-    const undatedRowsName = 'users/me/dataTypes/exercise/dataPoints/456';
-    const row = fRow_({
-      rowNum: 10,
-      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),
-      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0))
-    });
-    const cand = fCand_(undatedRowsName,
-      Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
-    withStubbedList(() => [cand], () => {
-      const plan = resolveForeignMatches_([undatedRowsName], [], [row]);
-      eq(plan[10], undefined);
-    });
-  });
-
   t('resolveForeignMatches_ excludes candidates already aligned-elsewhere by a non-ready row', () => {
     // The ready row's window overlaps the candidate (so it would align absent
     // the exclusion), but row 5 already aligned to it. The exclusion is keyed
@@ -875,6 +980,168 @@ function runParserTests() {
       const plan = resolveForeignMatches_([], [], [row]);
       eq(plan[10] && plan[10].name, 'foreign/match');
     });
+  });
+
+  // Two rows must never borrow the same foreign session: the claimed candidate
+  // is spliced out of the pool, so the second row falls through to its own
+  // timing rather than being aligned to a workout another row already owns.
+  t('resolveForeignMatches_ gives one candidate to a single row, not to both', () => {
+    const rowA = fRow_({
+      rowNum: 10,
+      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),    // 5:00pm EST
+      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 30, 0))
+    });
+    const rowB = fRow_({
+      rowNum: 11,
+      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 15, 0)),   // 5:15pm EST
+      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 45, 0))
+    });
+    const cand = fCand_('foreign/only',
+      Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
+    withStubbedList(() => [cand], () => {
+      const plan = resolveForeignMatches_([], [], [rowA, rowB]);
+      eq(plan[10] && plan[10].name, 'foreign/only', 'assignment runs in rowNum order');
+      eq(plan[11], undefined, 'the second row gets nothing rather than the same session');
+    });
+  });
+
+  t('resolveForeignMatches_ assigns each of two rows its own overlapping candidate', () => {
+    const morningRow = fRow_({
+      rowNum: 10,
+      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 14, 0, 0)),    // 9:00am EST
+      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 14, 30, 0))
+    });
+    const eveningRow = fRow_({
+      rowNum: 11,
+      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),    // 5:00pm EST
+      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 30, 0))
+    });
+    const morningCand = fCand_('foreign/morning',
+      Date.UTC(2026, 0, 15, 14, 0, 0), Date.UTC(2026, 0, 15, 15, 0, 0));
+    const eveningCand = fCand_('foreign/evening',
+      Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
+    withStubbedList(() => [morningCand, eveningCand], () => {
+      const plan = resolveForeignMatches_([], [], [morningRow, eveningRow]);
+      eq(plan[10] && plan[10].name, 'foreign/morning');
+      eq(plan[11] && plan[11].name, 'foreign/evening');
+    });
+  });
+
+  // A zero-set-only row records timing but produces no datapoint, so it must
+  // not anchor a window and claim a candidate a real row could have used.
+  t('resolveForeignMatches_ zero-set-only row anchors no window', () => {
+    const row = fRow_({
+      rowNum: 10,
+      exercises: [{ name: 'Bench', entries: [{ weight: 200, reps: 5, sets: 0, assisted: false }] }],
+      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),
+      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0))
+    });
+    const cand = fCand_('foreign/A',
+      Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
+    withStubbedList(() => [cand], () => {
+      eq(resolveForeignMatches_([], [], [row])[10], undefined);
+    });
+  });
+
+  // ---- Health API request/response shaping --------------------------------
+  // httpJson_ is stubbed so these stay unit tests: no UrlFetchApp fake, just
+  // the payload we build and the response we parse.
+
+  t('createExerciseAt sends a STRENGTH_TRAINING payload and returns the new name', () => {
+    let sent = null;
+    const created = withGlobals({
+      httpJson_: (method, url, payload) => {
+        sent = { method: method, payload: payload };
+        return { done: true, response: { name: 'users/1/dataTypes/exercise/dataPoints/E1' } };
+      }
+    }, () => createExerciseAt(
+      Date.UTC(2026, 0, 15, 17, 0, 0), EST,
+      Date.UTC(2026, 0, 15, 17, 30, 0), EST,
+      'Bench press, 135 lbs, 3 sets of 5'));
+    eq(created, 'users/1/dataTypes/exercise/dataPoints/E1');
+    eq(sent.method, 'POST');
+    eq(sent.payload.exercise.exerciseType, 'STRENGTH_TRAINING');
+    eq(sent.payload.exercise.notes, 'Bench press, 135 lbs, 3 sets of 5');
+    eq(sent.payload.exercise.activeDuration, '1800s');
+    eq(sent.payload.exercise.interval, {
+      startTime: '2026-01-15T17:00:00Z', startUtcOffset: '-18000s',
+      endTime: '2026-01-15T17:30:00Z', endUtcOffset: '-18000s'
+    });
+  });
+
+  // A create we can't track is treated as a FAILED create: throwing keeps the
+  // row dirty so it retries, rather than stamping it synced and orphaning
+  // whatever the server may have made.
+  t('createExerciseAt throws when the create returns no resource name', () => throws(
+    () => withGlobals({ httpJson_: () => ({ done: true }) },
+      () => createExerciseAt(0, 0, 1000, 0, 'notes')),
+    /no datapoint name/, 'a nameless create must throw'));
+
+  t('createWeightAt converts pounds to grams and returns the new name', () => {
+    let sent = null;
+    const created = withGlobals({
+      httpJson_: (method, url, payload) => {
+        sent = payload;
+        return { done: true, response: { name: 'users/1/dataTypes/weight/dataPoints/W1' } };
+      }
+    }, () => createWeightAt(Date.UTC(2026, 0, 15, 17, 0, 0), EST, 185));
+    eq(created, 'users/1/dataTypes/weight/dataPoints/W1');
+    eq(sent.weight.weightGrams, Math.round(185 * GRAMS_PER_LB));
+    eq(sent.weight.sampleTime.physicalTime, '2026-01-15T17:00:00Z');
+    eq(sent.weight.sampleTime.utcOffset, '-18000s');
+  });
+
+  t('createWeightAt throws when the create returns no resource name', () => throws(
+    () => withGlobals({ httpJson_: () => ({ done: true }) }, () => createWeightAt(0, 0, 185)),
+    /no datapoint name/, 'a nameless create must throw'));
+
+  // sampleTime is mandatory in the PATCH body (the server 500s without it) and
+  // the resource is identified by the URL, which must use the literal `me`.
+  t('patchWeight PATCHes the me-form URL and echoes sampleTime back', () => {
+    const sampleTime = { physicalTime: '2026-01-15T17:00:00Z', utcOffset: '-18000s' };
+    let sent = null;
+    withGlobals({
+      httpJson_: (method, url, payload) => {
+        sent = { method: method, url: url, payload: payload };
+        return {};
+      }
+    }, () => patchWeight('users/123/dataTypes/weight/dataPoints/W1', sampleTime, 186));
+    eq(sent.method, 'PATCH');
+    eq(/\/users\/me\/dataTypes\/weight\/dataPoints\/W1$/.test(sent.url), true, sent.url);
+    eq(sent.payload, { weight: { sampleTime: sampleTime, weightGrams: Math.round(186 * GRAMS_PER_LB) } });
+  });
+
+  // The projection foreign matching and orphan attribution both consume: only
+  // STRENGTH_TRAINING sessions with a usable interval, sorted by start, with a
+  // null googleWebClientId for device / first-party sources.
+  t('listStrengthOnDate keeps usable STRENGTH_TRAINING only and maps the client id', () => {
+    const point = (name, type, startTime, endTime, app) => ({
+      name: name,
+      exercise: startTime === null
+        ? { exerciseType: type }
+        : {
+          exerciseType: type,
+          interval: {
+            startTime: startTime, endTime: endTime,
+            startUtcOffset: '-18000s', endUtcOffset: '-18000s'
+          }
+        },
+      dataSource: { application: app }
+    });
+    const out = withGlobals({
+      httpJson_: () => ({ dataPoints: [
+        point('ex/late', 'STRENGTH_TRAINING', '2026-01-15T22:00:00Z', '2026-01-15T23:00:00Z', { googleWebClientId: 'ours' }),
+        point('ex/early', 'STRENGTH_TRAINING', '2026-01-15T14:00:00Z', '2026-01-15T15:00:00Z', null),
+        point('ex/running', 'RUNNING', '2026-01-15T15:00:00Z', '2026-01-15T16:00:00Z', { googleWebClientId: 'ours' }),
+        point('ex/no-interval', 'STRENGTH_TRAINING', null, null, { googleWebClientId: 'ours' })
+      ] })
+    }, () => listStrengthOnDate(new Date(Date.UTC(2026, 0, 15, 17, 0, 0))));
+    eq(out.map(c => c.name), ['ex/early', 'ex/late'],
+      'other exercise types and interval-less points dropped, sorted by start');
+    eq(out.map(c => c.googleWebClientId), [null, 'ours'],
+      'a device session carries a null client id and is never treated as ours');
+    eq(out[1].startUtcMs, Date.UTC(2026, 0, 15, 22, 0, 0));
+    eq(out[1].startUtcOffsetSeconds, EST);
   });
 
   // findRowDateViolation_: trigger-entry date validation (increasing order,

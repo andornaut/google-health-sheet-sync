@@ -108,6 +108,16 @@ const BACKSTOP_INTERVAL_HOURS = 4;
 // removed here; bounded so each scan stays cheap (one list call per day scanned).
 const ORPHAN_RECONCILE_LOOKBACK_DAYS = 7;
 
+// Safety bound on the backstop's cleared-content reconciliation
+// (selectStaleDataPointRows_), which DELETES Health datapoints. Clearing cells
+// is a per-row, human-scale action: a handful of rows at a time. A stale set
+// larger than this is evidence of a systemic change instead (an exercise column
+// deleted, a bulk reformat), where deleting would destroy history rather than
+// reconcile it. Past the bound the backstop logs an error and reconciles
+// nothing, leaving the sheet untouched for a human to look at; "Resync selected
+// rows" still works if the large set really was intended.
+const STALE_RECONCILE_MAX_ROWS = 10;
+
 // Foreign-session timing alignment (resolveForeignMatches_).
 //
 // The sync NEVER skips creating its own exercise datapoint: every
