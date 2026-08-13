@@ -11,7 +11,7 @@
     "pull": "clasp pull",
     "open": "clasp open-script",
     "test": "node test/run.js",
-    "lint": "markdownlint README.md AGENTS.md",
+    "lint": "markdownlint README.md",
     "mutate": "node test/mutate.js"
   },
   "devDependencies": {
