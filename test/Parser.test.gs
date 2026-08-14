@@ -876,8 +876,8 @@ function runParserTests() {
     // Edits 11:45pm EST Jan 15 -> 12:15am EST Jan 16 (exerciseFirstEditedAt is
     // still on row.date Jan 15). The window straddles midnight, so candidates
     // are probed for both Jan 15 and Jan 16. The foreign session was logged
-    // just after midnight (12:00-12:30am EST Jan 16) — a different civil date
-    // than the row — and must still match on absolute-UTC overlap.
+    // just after midnight (12:00-12:30am EST Jan 16), a different civil date
+    // than the row, and must still match on absolute-UTC overlap.
     const row = fRow_({
       rowNum: 10,
       exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 16, 4, 45, 0)),   // 11:45pm EST Jan 15
@@ -918,7 +918,7 @@ function runParserTests() {
   });
 
   t('resolveForeignMatches_ excludes sync-created candidates (own datapoint not realigned)', () => {
-    // On-date row whose window overlaps the candidate — but the candidate IS
+    // On-date row whose window overlaps the candidate, but the candidate IS
     // the row's own prior datapoint, so it must be excluded rather than
     // aligned to itself on re-sync.
     const ownName = 'users/me/dataTypes/exercise/dataPoints/123';
@@ -965,7 +965,7 @@ function runParserTests() {
       exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 14, 0, 0)),  // 9am EST Jan 15
       exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 20, 14, 0, 0))   // 9am EST Jan 20
     });
-    // Candidate at 5pm-6pm EST Jan 15 — outside the clamped window but
+    // Candidate at 5pm-6pm EST Jan 15, outside the clamped window but
     // inside the unclamped one.
     const cand = fCand_('foreign/late',
       Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));

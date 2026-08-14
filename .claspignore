@@ -11,7 +11,7 @@ package.json
 package-lock.json
 README.md
 
-# Local Node test runner — uses CommonJS `require` which Apps Script's
+# Local Node test runner: uses CommonJS `require` which Apps Script's
 # V8 runtime does not define. If pushed, the project fails to load.
 test/run.js
 test/mutate.js

@@ -63,7 +63,7 @@ function httpJson_(method, url, payload) {
 }
 
 // True when a thrown httpJson_ error carries an HTTP 404 (the datapoint is
-// gone server-side — e.g. deleted in the Health app). Callers use this to
+// gone server-side: e.g. deleted in the Health app). Callers use this to
 // recover (recreate weight, treat an exercise delete as already done) instead
 // of retrying a GET/DELETE that will never succeed and wedging the row.
 function isNotFoundError_(err) {
@@ -164,7 +164,7 @@ function listExercisesOnDate(date) {
 // 400s with INVALID_DATA_POINT_FILTER_DATA_TYPE_MEMBER, matching the heart-rate
 // "member not supported" behavior. The fail-safe still holds if the server ever
 // changes: a 400 makes httpJson_ throw, the caller's per-date try/catch logs a
-// warning and reconciles nothing for that day — a safe no-op (never a wrong
+// warning and reconciles nothing for that day: a safe no-op (never a wrong
 // deletion), degrading to "weight orphans not collected" rather than data loss.
 function listWeightOnDate(date) {
   const out = [];
@@ -248,7 +248,7 @@ function syntheticExerciseInterval_(date, ordinal) {
     // More same-date rows than there are distinct hours left in the day. Rather
     // than error the row (which would re-fail every pass), clamp it into the
     // final slot. Synthetic timing is the bulk-import fallback, so overlapping
-    // a few rows at end-of-day is acceptable — the goal is a valid interval.
+    // a few rows at end-of-day is acceptable: the goal is a valid interval.
     console.warn('syntheticExerciseInterval_: ordinal ' + ordinal + ' would spill past '
       + 'midnight; clamping to the final ' + SYNTHETIC_DURATION_HOURS + 'h slot of the day.');
     endHour = 24;
@@ -387,7 +387,7 @@ function createWeightAt(sampleUtcMs, sampleOffsetSeconds, lbs) {
 }
 
 // Update an existing weight datapoint's weightGrams in place. The body MUST
-// include sampleTime — empirically, any PATCH body without it returns 500
+// include sampleTime: empirically, any PATCH body without it returns 500
 // INTERNAL (matching the documented "minimal body 500s" pattern observed
 // for exercise PATCH). `name` is omitted from the body since the URL
 // already identifies the resource (AIP-134); the empirical probe confirms

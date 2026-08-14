@@ -18,7 +18,7 @@ function onOpen() {
     // Only the parser / pure-helper suite is wired here. The orchestration
     // suite (runSyncTests) depends on the in-memory sheet/properties fakes that
     // test/run.js injects as SYNC_TEST_HARNESS_, which does not exist in the
-    // Apps Script runtime — running it here throws ReferenceError. Run it
+    // Apps Script runtime: running it here throws ReferenceError. Run it
     // locally with `npm test`.
     .addItem('Run tests', 'runParserTests')
     .addToUi();
@@ -66,8 +66,8 @@ function installTriggers() {
 // sheet order) as a human-readable string, or null when valid. Comparison is
 // by civil-date key (ymd, script time zone), so two rows on the same civil
 // day count as duplicates even if their Date cells carry different times.
-// Rows without a parseable Date are skipped by the caller, matching readRows
-// — they never sync, so they can't place a datapoint at a bogus time. Pure.
+// Rows without a parseable Date are skipped by the caller, matching readRows,
+// so they never sync and cannot place a datapoint at a bogus time. Pure.
 function findRowDateViolation_(datedRows) {
   let prev = null;
   for (let i = 0; i < datedRows.length; i++) {
@@ -118,7 +118,7 @@ function validateRowDates_() {
 
 // Shared date-validation guard for the time-based triggers (vs. syncOnEdit's
 // uncaught throw): they fire on a schedule, so throwing here would email the
-// owner every cycle until the sheet is fixed — log-and-skip instead. Returns
+// owner every cycle until the sheet is fixed: log-and-skip instead. Returns
 // true when the trigger should skip its run. The dirty flag is left
 // untouched, so any backlog syncs on the first run after the fix.
 function dateValidationBlocksTrigger_(triggerName) {
@@ -143,13 +143,13 @@ function dateValidationBlocksManual_() {
 function syncOnEdit(e) {
   // Date validation runs first and OUTSIDE the catch-all below: a violation
   // is thrown uncaught so Apps Script emails the owner about the failed
-  // trigger execution — the edit that broke the rule is the moment to alarm.
+  // trigger execution: the edit that broke the rule is the moment to alarm.
   // The time-based triggers (flushPending, backstop) log-and-skip instead so
   // a standing violation doesn't email every cycle. Note the edit is NOT
   // dirty-marked on this path (the throw precedes onEditMarkDirty), so
   // content typed while the sheet is invalid does not sync by itself once
   // the dates are fixed. Recovery: exercise rows within
-  // BACKSTOP_LOOKBACK_DAYS self-heal — the next backstop re-dirties them and
+  // BACKSTOP_LOOKBACK_DAYS self-heal: the next backstop re-dirties them and
   // the following poll syncs them. Older exercise rows and weight edits need
   // a re-edit of the cell or "Resync selected rows".
   const violation = validateRowDates_();
@@ -175,7 +175,7 @@ function flushPending() {
   // backstop re-dirties recent exercise rows (matched AND unmatched) for
   // foreign alignment, so the 5-min poll issues no Health API calls unless an
   // onEdit (or manual sync) left the dirty flag set. This keeps steady-state
-  // read traffic off the API — a row with no pending edits is not re-queried
+  // read traffic off the API: a row with no pending edits is not re-queried
   // every 5 minutes.
   const props = PropertiesService.getScriptProperties();
   if (!props.getProperty(PENDING_DIRTY_KEY)) {
@@ -285,7 +285,7 @@ function backstop() {
   // in-flight syncOneRow_ that has POSTed a datapoint but not yet persisted its
   // ID, and delete a legitimately-fresh datapoint. The lock also guarantees the
   // readRows snapshot reflects every persisted ID, so the "known" set is
-  // complete. If a sync holds the lock, skip — the next backstop run retries.
+  // complete. If a sync holds the lock, skip: the next backstop run retries.
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(LOCK_WAIT_MS)) {
     console.warn('backstop: another run holds the lock; skipping this run.');
@@ -369,13 +369,13 @@ function backstop() {
 // orphans: created by the SAME web client that owns our tracked datapoints, but
 // referenced by no row.
 //
-// "Our client" is derived from the candidates themselves — the
-// googleWebClientId of any candidate that IS tracked — rather than from a
+// "Our client" is derived from the candidates themselves (the
+// googleWebClientId of any candidate that IS tracked) rather than from a
 // configured value, so we only ever delete datapoints from the exact client
 // that created the ones we still track. Foreign device / first-party / in-app-
 // assistant sessions (null googleWebClientId) and any other web app are never
 // selected. If no tracked candidate is present we can't attribute ownership,
-// so nothing is returned. Type-agnostic and pure (no API/sheet access) — used
+// so nothing is returned. Type-agnostic and pure (no API/sheet access): used
 // for both exercise and weight reconciliation.
 function selectOrphanDataPointNames_(candidates, knownNames) {
   const ourClientIds = {};
@@ -395,7 +395,7 @@ function selectOrphanDataPointNames_(candidates, knownNames) {
 }
 
 // Delete sync-created datapoints of one data type that no row's Created Health
-// IDs references — orphans leaked by the two accepted create windows (a create
+// IDs references: orphans leaked by the two accepted create windows (a create
 // POST that succeeded server-side but timed out client-side and was retried; a
 // 6-minute hard kill after the POST returned but before the ID was persisted).
 // `typeKey` selects the splitHealthIdsByType_ bucket ('exercise' or 'weight')
@@ -453,7 +453,7 @@ function reconcileExerciseOrphans_(allHealthIds, nowMs, lookbackDays) {
 // create-orphan windows (timed-out-but-succeeded POST retry; hard kill after
 // POST before the ID is persisted) apply to the weight POST in syncOneRow_ too,
 // so a duplicate untracked weight datapoint can leak the same way. Same
-// ownership logic — only datapoints from our web client, referenced by no row,
+// ownership logic: only datapoints from our web client, referenced by no row,
 // are deleted.
 function reconcileWeightOrphans_(allHealthIds, nowMs, lookbackDays) {
   reconcileDataPointOrphans_(allHealthIds, nowMs, lookbackDays, 'weight', listWeightOnDate);
@@ -461,7 +461,7 @@ function reconcileWeightOrphans_(allHealthIds, nowMs, lookbackDays) {
 
 // Write a fresh generation marker into PENDING_DIRTY_KEY. The value matters
 // (syncDirtyRows compares start vs end to detect concurrent edits), so always
-// advance it — never just re-write the same string.
+// advance it: never just re-write the same string.
 function markPendingDirty_() {
   PropertiesService.getScriptProperties()
     .setProperty(PENDING_DIRTY_KEY, String(Date.now()));
@@ -667,7 +667,7 @@ function syncDirtyRows(lockWaitMs) {
 
     const ordinalByRowNum = buildOrdinalMap_(rows);
 
-    // Per-row phase readiness (no debounce — onEdit syncs immediately and the
+    // Per-row phase readiness (no debounce: onEdit syncs immediately and the
     // poll/backstop retry): a row's weight phase is ready when weight-dirty, its
     // exercise phase when exercise-dirty. There is no "still typing" wait; a
     // poll firing mid-burst just re-pushes current state, and the idempotent
@@ -790,13 +790,13 @@ function syncDirtyRows(lockWaitMs) {
   } catch (err) {
     // Unrecoverable: a throw out of the sync body (missing required columns,
     // duplicate exercise headers, etc.), or the summary throw for rows whose
-    // sheet I/O failed unexpectedly. Per-row API failures never reach here
-    // — syncOneRow_ catches them and they retry. Re-throw so the failure
+    // sheet I/O failed unexpectedly. Per-row API failures never reach here,
+    // since syncOneRow_ catches them and they retry. Re-throw so the failure
     // propagates uncaught: Apps Script then emails the script owner about the
     // failed trigger execution (no MailApp needed), and manual entry points
     // still toast and land the error in Executions. The finally LEAVES the
     // dirty flag set (see below) so the next poll retries automatically once
-    // the misconfig is fixed — clearing it would orphan already-dirty rows
+    // the misconfig is fixed: clearing it would orphan already-dirty rows
     // until some future edit. Repeated failure emails are throttled via the
     // trigger's notification cadence (Apps Script ▸ Triggers ▸ notifications),
     // not by suppressing the retry.
@@ -804,7 +804,7 @@ function syncDirtyRows(lockWaitMs) {
     console.error('syncDirtyRows: unrecoverable error: ' + err);
     throw err;
   } finally {
-    // NB: no `return` in this finally — a finally-return would swallow the
+    // NB: no `return` in this finally. A finally-return would swallow the
     // re-thrown unrecoverable error and defeat the manual-path toast.
     if (unrecoverable) {
       // Leave the dirty flag untouched (still set) so the backlog syncs on the
@@ -832,7 +832,7 @@ function syncDirtyRows(lockWaitMs) {
       // Bookend the pass: outcome counts plus whether the dirty flag survives
       // (so a reader knows if another poll will follow without inspecting it).
       const willRetry = workRemaining || concurrentEdit;
-      console.info('syncDirtyRows: pass complete — ' + ok + ' synced, ' + errors + ' error(s)'
+      console.info('syncDirtyRows: pass complete, ' + ok + ' synced, ' + errors + ' error(s)'
         + (deferredCount ? ', ' + deferredCount + ' deferred' : '')
         + (concurrentEdit ? ', concurrent edit landed' : '')
         + (willRetry ? '; pending flag kept, next poll will retry.' : '; queue drained.'));
@@ -846,11 +846,11 @@ function syncDirtyRows(lockWaitMs) {
 // copied onto the row's created exercise datapoint (timing alignment). The
 // sync never skips its own create; this only supplies a more accurate
 // start/end when a manually-logged foreign session overlaps the row's edit
-// window. Time-overlap only — rows without same-date exercise edit timestamps
+// window. Time-overlap only: rows without same-date exercise edit timestamps
 // get no match and fall through to synthetic/prior timing (there is no ordinal
 // fallback).
 //
-// Candidate exclusions (global, keyed by resource name — names are globally
+// Candidate exclusions (global, keyed by resource name: names are globally
 // unique, so no date keying is needed, and global keying is what lets a
 // neighbor-day candidate be excluded correctly):
 //   - sync-created: name appears in `allHealthIds` (our own datapoint, never
@@ -906,7 +906,7 @@ function resolveForeignMatches_(allHealthIds, allMatchedSessions, readyRows) {
   if (windows.length === 0) return plan;
 
   // Gather candidates across every civil date a window touches (start and end
-  // edges — adjacent when a window straddles midnight), deduped by name and
+  // edges, which are adjacent when a window straddles midnight), deduped by name and
   // with our own / aligned-elsewhere names dropped.
   const probeDates = {};
   windows.forEach(w => {
@@ -979,7 +979,7 @@ function buildOrdinalMap_(rows) {
 
 // Cap an edit-derived exercise duration at MAX_EXERCISE_DURATION_MS (MAX only,
 // no MIN floor). Used by the foreign-match window in resolveForeignMatches_ to
-// keep its upper bound consistent with editDerivedDurationMs_ — which the
+// keep its upper bound consistent with editDerivedDurationMs_, which the
 // recorded 'edit' interval uses, and which applies the same MAX cap PLUS a MIN
 // floor / start-only default that this helper deliberately omits.
 function capExerciseDurationToMax_(rawDurationMs) {
@@ -1076,7 +1076,7 @@ function editDerivedDurationMs_(rawDurationMs) {
 //     - 'synthetic' otherwise: noon on row.date.
 //
 // priorExercise is the GET response for the row's existing exercise
-// datapoint (or null if first-sync, or null if the GET failed — in which
+// datapoint (or null if first-sync, or null if the GET failed, in which
 // case we fall through to the edit/synthetic path rather than erroring).
 // foreignInterval is an overlapping foreign session (from
 // resolveForeignMatches_) whose start/end should be borrowed, or null.
@@ -1227,12 +1227,12 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
   const exerciseWillCreate = exerciseReady && hasSendableExercises_(row.exercises);
 
   // Fetch prior datapoints. Exercise: whenever the row has a prior exercise id
-  // and the phase will create — the GET serves two purposes now. (1) The 'prior'
+  // and the phase will create: the GET serves two purposes now. (1) The 'prior'
   // timing source reuses its interval verbatim when neither foreign-match nor
   // same-date editing applies (the resolver ignores it for foreign/edit, which
   // win). (2) The idempotency check compares the prior interval + notes to the
   // freshly-computed ones to skip an unchanged recreate. Weight: when we'll
-  // PATCH (i.e. prior weight ID exists AND bodyweight is set) — the PATCH body
+  // PATCH (i.e. prior weight ID exists AND bodyweight is set): the PATCH body
   // requires sampleTime, read from this GET. Exercise GET failure is non-fatal
   // (timing falls through to edit/synthetic and the recreate proceeds); weight
   // GET failure forces the PATCH to fail and the row to retry next pass.
@@ -1292,7 +1292,7 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
     const hasBodyweight = row.bodyweight !== null;
     if (split.weight.length > 0 && hasBodyweight) {
       // PATCH in place. Preserves sampleTime (echoed back from the prior
-      // GET — the API rejects PATCH bodies without sampleTime), createTime,
+      // GET: the API rejects PATCH bodies without sampleTime), createTime,
       // dataSource. Resource name stays the same so Created Health IDs
       // doesn't churn.
       const sampleTime = priorWeight && priorWeight.weight && priorWeight.weight.sampleTime;
@@ -1350,7 +1350,7 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
     // Idempotency: if the row's single existing exercise datapoint already
     // carries the target interval + notes, skip the delete+recreate entirely
     // and keep its resource name. This is what makes the per-poll / per-day
-    // re-dirty cheap — an unchanged row costs just the prior GET, no write and
+    // re-dirty cheap: an unchanged row costs just the prior GET, no write and
     // no resource-name churn. Only applies when there's exactly one prior id
     // (multiple priors are consolidated by recreating).
     const unchanged = wantCreate && split.exercise.length === 1 && priorExercise

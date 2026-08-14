@@ -4,7 +4,7 @@
 
 When two `STRENGTH_TRAINING` sessions from different sources overlap in time, the
 Google Health app/AI displays only one of them and hides ("shadows") the other.
-The shadowed session's data — including `exercise.notes` — never appears in the
+The shadowed session's data (including `exercise.notes`) never appears in the
 card or to the in-app AI assistant, even though both datapoints exist and are
 returned by the REST API.
 
@@ -26,7 +26,7 @@ reps/sets but no HR. The user should see both.
   `metricsSummary`, or start/creation order: a first-party/device session
   (`dataSource.application` = null) always shadows a third-party (OAuth client)
   session. Verified with our session placed both before and after the device
-  session — the device survived in both cases.
+  session: the device survived in both cases.
 - The shadowed datapoint still exists server-side: `GET` and `list` return it
   with its `notes` intact. Only the display/AI layer hides it.
 
@@ -35,7 +35,7 @@ reps/sets but no HR. The user should see both.
 A third-party app cannot get its `STRENGTH_TRAINING` notes shown for a workout a
 device also logged:
 
-- We cannot write to the device's datapoint — exercise `PATCH` is a silent no-op,
+- We cannot write to the device's datapoint: exercise `PATCH` is a silent no-op,
   and cross-client writes return `403 DATA_POINT_NOT_OWNED_BY_CLIENT`.
 - We cannot make our datapoint win the shared card (source priority).
 - Avoiding the shadow requires placing our session at a non-overlapping time,
@@ -47,7 +47,7 @@ coincides with a device session.
 ## Proposed fix
 
 When two same-type sessions overlap, MERGE their non-conflicting fields into the
-single displayed card instead of shadowing one — e.g. show the device session's
+single displayed card instead of shadowing one: e.g. show the device session's
 HR/calories together with the overlapping session's `notes` (reps/sets). At
 minimum, surface the shadowed session's `notes` on the surviving card so no
 user-entered data is hidden.

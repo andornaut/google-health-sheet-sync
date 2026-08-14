@@ -15,7 +15,7 @@ function parseExerciseCell(raw) {
     }
     // 0 reps means the exercise was not performed: skip the entry (no exercise
     // log), distinct from an unknown/undefined count (null), which is logged.
-    // 0 sets (e.g. "200x5x0") is RETAINED — it marks the start of an exercise
+    // 0 sets (e.g. "200x5x0") is RETAINED: it marks the start of an exercise
     // that hasn't been completed yet, so the row counts as a real exercise edit
     // (anchoring the start time / foreign-match window). The notes layer
     // suppresses zero-set entries from the Health notes (see hasSendableExercises_

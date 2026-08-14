@@ -59,8 +59,8 @@ const Session = {
 // ---------------------------------------------------------------------------
 // Minimal in-memory fakes for the Apps Script services the orchestration code
 // (syncDirtyRows, syncOneRow_, onEditMarkDirty) touches. These let Sync.test.gs
-// exercise the stateful glue — dirty-flag lifecycle, phase dispatch, idempotency
-// — that the pure-helper tests can't reach. The Health API functions themselves
+// exercise the stateful glue (dirty-flag lifecycle, phase dispatch, idempotency)
+// that the pure-helper tests can't reach. The Health API functions themselves
 // are stubbed per-test via globalThis (same pattern as listStrengthOnDate), so
 // no UrlFetchApp fake is needed. Exposed to the sandbox as SYNC_TEST_HARNESS_.
 // ---------------------------------------------------------------------------

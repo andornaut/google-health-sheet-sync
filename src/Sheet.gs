@@ -306,8 +306,8 @@ function onEditMarkDirty(e) {
   const weightCol = map[WEIGHT_COLUMN_HEADER] || null;
 
   // Classify per phase by walking the cell values (not just column indices).
-  // A range that spans empty cells — e.g. pasting only Date + Weight on a
-  // new row leaves the exercise columns in between empty — must not be
+  // A range that spans empty cells (e.g. pasting only Date + Weight on a
+  // new row leaves the exercise columns in between empty) must not be
   // treated as an exercise edit. Only cells with content count.
   //
   // The one exception is a SINGLE-CELL clear of real content, detected via
@@ -389,9 +389,9 @@ function onEditMarkDirty(e) {
   // (sets if blank, otherwise leaves it alone). A weight or Date edit must
   // not seed it, otherwise the exercise interval's startTime would be
   // anchored before any exercise content was typed.
-  // exercisesLastEditedAt is overwritten only on exercise-relevant edits —
-  // it drives the exercise interval's endTime.
-  // weightEditedAt is overwritten on every weight-relevant edit — it
+  // exercisesLastEditedAt is overwritten only on exercise-relevant edits: it
+  // drives the exercise interval's endTime.
+  // weightEditedAt is overwritten on every weight-relevant edit: it
   // drives the weight sample time and the weight phase's concurrent-edit
   // guard, so it should reflect the latest weight cell change.
   writeEditMarkers_(sheet, {

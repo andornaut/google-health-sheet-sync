@@ -8,13 +8,13 @@ const EXERCISE_SYNCED_AT_COLUMN_HEADER = 'Exercise Synced At';
 const WEIGHT_SYNCED_AT_COLUMN_HEADER = 'Weight Synced At';
 const HEALTH_IDS_COLUMN_HEADER = 'Created Health IDs';
 // First exercise-relevant edit (sticky). Drives the exercise interval's
-// startTime. Only set by exercise-column edits — a weight or Date edit must
+// startTime. Only set by exercise-column edits: a weight or Date edit must
 // not seed it, otherwise the exercise interval would start before any
 // exercise content was typed.
 const EXERCISE_FIRST_EDITED_AT_COLUMN_HEADER = 'Exercise First Edited At';
 // Last edit time for exercise-relevant columns. Drives the exercise
 // interval's endTime and the exercise phase's concurrent-edit guard.
-// Weight-only edits do NOT advance it — otherwise a bodyweight change
+// Weight-only edits do NOT advance it: otherwise a bodyweight change
 // would drag the exercise endTime forward.
 const EXERCISES_LAST_EDITED_AT_COLUMN_HEADER = 'Exercises Last Edited At';
 // Last edit time for the Weight column. Drives the weight sample time and
@@ -134,7 +134,7 @@ const STALE_RECONCILE_MAX_ROWS = 10;
 //
 // When a row's edit window overlaps a pre-existing foreign STRENGTH_TRAINING
 // session (e.g. one started/stopped manually on a watch/Fitbit), we copy that
-// foreign session's start/end onto our created datapoint — the manual
+// foreign session's start/end onto our created datapoint: the manual
 // start/stop is more accurate than our edit-derived window. A foreign session
 // is a candidate when its interval overlaps [firstEdit - buffer, lastEdit +
 // buffer]; the largest-overlap candidate wins. Overlap is computed in absolute
@@ -165,7 +165,7 @@ const GRAMS_PER_LB = 453.59237;
 // 185.0). Without the cap the Health API accepts and syncs the bad value.
 const MAX_BODYWEIGHT_LB = 499;
 
-// Reject bodyweight values below this as mis-entries — typically a rep count or
+// Reject bodyweight values below this as mis-entries: typically a rep count or
 // set count accidentally typed into the Weight column (e.g. "5"). A real adult
 // bodyweight never lands here, so treating sub-floor values as no-bodyweight
 // avoids syncing a 5 lb "weight" datapoint. Symmetric counterpart to
@@ -175,7 +175,7 @@ const MIN_BODYWEIGHT_LB = 50;
 // Row-date validation (validateRowDates_, run at the start of every trigger):
 // data rows must be in strictly increasing date order down the sheet (which
 // also forbids two rows on the same date), and every date's year must fall
-// within [MIN_ROW_DATE_YEAR, MAX_ROW_DATE_YEAR] — the year bounds catch
+// within [MIN_ROW_DATE_YEAR, MAX_ROW_DATE_YEAR]: the year bounds catch
 // fat-fingered dates (e.g. 0226-06-12 for 2026-06-12) before a sync writes a
 // datapoint at the bogus time. On violation, syncOnEdit throws uncaught so
 // Apps Script emails the owner about the failed trigger execution (the edit
