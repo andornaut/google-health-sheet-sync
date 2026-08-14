@@ -108,8 +108,10 @@ function getDataPoint(name) {
 // leaf `filterMember`) falls on `date` in the script's time zone, walking every
 // page. Callers apply their own projection/sort. `filterMember` is snake_case
 // (e.g. 'exercise.interval.civil_start_time', 'weight.sample_time.civil_time')
-// while `dataType` is the path segment in the URL — see the data-type-ID
-// spelling gotcha in AGENTS.md.
+// while `dataType` is the path segment in the URL, which is kebab-case: the
+// heart-rate type is `heart-rate` in the path but `heart_rate` in a filter.
+// Wrong spelling in the path returns 400 INVALID_PARENT_DATA_TYPE_COLLECTION,
+// and wrong spelling in the filter returns 400 INVALID_DATA_POINT_FILTER.
 function listDataPointsByCivilDate_(dataType, filterMember, date) {
   const startDay = ymd(date);
   const nextDay = ymd(new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1));
@@ -392,8 +394,7 @@ function createWeightAt(sampleUtcMs, sampleOffsetSeconds, lbs) {
 // the server accepts a body without `name`. The caller passes the prior
 // datapoint's sampleTime verbatim from a GET so the sample timestamp is
 // echoed back unchanged. createTime, dataSource, and the resource name are
-// preserved server-side. See AGENTS.md "Health API: PATCH on dataPoints"
-// for the full probe matrix.
+// preserved server-side.
 function patchWeight(name, sampleTime, lbs) {
   const url = HEALTH_API_BASE + '/' + toMeName_(name);
   const grams = Math.round(lbs * GRAMS_PER_LB);
