@@ -1,5 +1,8 @@
 # Google Health Sheet Sync
 
+[![CI](https://github.com/andornaut/google-health-sheet-sync/actions/workflows/test.yml/badge.svg)](https://github.com/andornaut/google-health-sheet-sync/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Google Apps Script that syncs strength-training and bodyweight data from Google Sheets to the **Google Health app** via the **Google Health API v4**.
 
 ## Features
