@@ -1196,5 +1196,5 @@ function runParserTests() {
   const passed = results.filter(r => r.startsWith('PASS ')).length;
   const summary = results.length + ' tests: ' + passed + ' passed, ' + (results.length - passed) + ' failed';
   console.log(msg + '\n\n' + summary);
-  try { SpreadsheetApp.getUi().alert('Parser / pure-helper tests\n\n' + msg + '\n\n' + summary); } catch (e) {}
+  try { SpreadsheetApp.getUi().alert('Parser / pure-helper tests\n\n' + msg + '\n\n' + summary); } catch (e) { /* no UI outside a spreadsheet */ }
 }

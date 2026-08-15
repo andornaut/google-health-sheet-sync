@@ -402,7 +402,7 @@ function runSyncTests() {
     let thrown = null;
     withStubs(Object.assign({}, NO_FOREIGN, {
       createWeightAt: (utc, off, lbs) => 'users/me/dataTypes/weight/dataPoints/W-' + lbs,
-      writeHealthIds: (rowNum, col, names) => {
+      writeHealthIds: (rowNum, _col, _names) => {
         if (rowNum === 3) throw new Error('simulated Spreadsheets service failure');
         if (synced.indexOf(rowNum) === -1) synced.push(rowNum);   // called twice per row
       }
