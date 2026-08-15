@@ -225,7 +225,7 @@ function suiteFails() {
     const out = execFileSync('node', [path.join(root, 'test', 'run.js')],
       { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     return /^FAIL /m.test(out);
-  } catch (err) {
+  } catch {
     // Non-zero exit means the suite failed.
     return true;
   }

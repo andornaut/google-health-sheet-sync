@@ -85,7 +85,7 @@ export default [
       // settle, and they are where an actual mistake shows up.
       "no-unused-vars": [
         "error",
-        { argsIgnorePattern: "^_", caughtErrors: "none", vars: "local" },
+        { argsIgnorePattern: "^_", vars: "local" },
       ],
     },
   },
@@ -103,7 +103,6 @@ export default [
     plugins,
     rules: {
       ...toolingRules,
-      "no-unused-vars": ["error", { caughtErrors: "none" }],
     },
   },
   // test/mutate.js only. Its mutation specs hold excerpts matched against the

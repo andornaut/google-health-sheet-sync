@@ -850,8 +850,8 @@ function runSyncTests() {
       },
       writeHealthIds: () => { throw new Error('simulated Spreadsheets service failure'); }
     });
-    withStubs(brokenWrite, () => { try { syncDirtyRows(0); } catch (err) { /* reported */ } });
-    withStubs(brokenWrite, () => { try { syncDirtyRows(0); } catch (err) { /* reported */ } });
+    withStubs(brokenWrite, () => { try { syncDirtyRows(0); } catch { /* reported */ } });
+    withStubs(brokenWrite, () => { try { syncDirtyRows(0); } catch { /* reported */ } });
     eq(created.length, 2, 'each pass created a datapoint it could not record');
     eq(cell('Created Health IDs'), '', 'neither id reached the sheet');
 

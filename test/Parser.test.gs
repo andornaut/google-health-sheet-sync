@@ -1253,5 +1253,5 @@ exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 30, 0)),
   console.log(msg + '\n\n' + summary);
   try {
     SpreadsheetApp.getUi().alert('Parser / pure-helper tests\n\n' + msg + '\n\n' + summary);
-  } catch (e) { /* no UI outside a spreadsheet */ }
+  } catch { /* no UI outside a spreadsheet */ }
 }
