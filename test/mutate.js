@@ -276,7 +276,8 @@ function run() {
     Object.keys(originals).forEach(f => write(f, originals[f]));
   }
 
-  console.log(`\n${MUTATIONS.length} mutations: ${MUTATIONS.length - survivors.length} caught, ${survivors.length} survived`);
+  console.log(`\n${MUTATIONS.length} mutations: ${MUTATIONS.length - survivors.length} caught, `
+    + `${survivors.length} survived`);
   if (survivors.length > 0) {
     console.error('\nUnpinned decisions (no test fails when they are undone):\n  ' + survivors.join('\n  '));
     process.exit(1);

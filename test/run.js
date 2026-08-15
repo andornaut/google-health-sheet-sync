@@ -17,7 +17,9 @@ function formatDateStub(date, tz, format) {
   const zone = (tz === 'GMT' || tz === 'UTC') ? 'UTC' : tz;
   if (format === 'Z') {
     if (zone === 'UTC') return '+0000';
-    const parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'longOffset', year: 'numeric' }).formatToParts(date);
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone, timeZoneName: 'longOffset', year: 'numeric'
+    }).formatToParts(date);
     const tzn = parts.find(p => p.type === 'timeZoneName').value;
     if (tzn === 'GMT' || tzn === 'UTC') return '+0000';
     const m = tzn.match(/GMT([+-])(\d{2}):(\d{2})/);
@@ -25,7 +27,10 @@ function formatDateStub(date, tz, format) {
     return m[1] + m[2] + m[3];
   }
   if (format === 'yyyy MM dd HH mm ss' || format === 'yyyy-MM-dd HH:mm:ss') {
-    const parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(date);
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+    }).formatToParts(date);
     const get = t => parts.find(p => p.type === t).value;
     let h = get('hour');
     if (h === '24') h = '00';
@@ -40,7 +45,9 @@ function formatDateStub(date, tz, format) {
     return date.toISOString().slice(0, 19) + 'Z';
   }
   if (format === 'yyyy-MM-dd') {
-    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(date);
     const get = t => parts.find(p => p.type === t).value;
     return get('year') + '-' + get('month') + '-' + get('day');
   }

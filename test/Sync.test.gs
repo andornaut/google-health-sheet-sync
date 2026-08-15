@@ -354,7 +354,10 @@ function runSyncTests() {
     PROPS.setProperty('pendingDirty', 'GEN1');
     const calls = [];
     const r = withStubs(Object.assign({}, NO_FOREIGN, {
-      createWeightAt: (utc, off, lbs) => { calls.push(['createWeightAt', lbs]); return 'users/me/dataTypes/weight/dataPoints/W1'; }
+      createWeightAt: (utc, off, lbs) => {
+        calls.push(['createWeightAt', lbs]);
+        return 'users/me/dataTypes/weight/dataPoints/W1';
+      }
     }), () => syncDirtyRows(0));
     eq(r.ok, 1, 'one row synced');
     eq(calls, [['createWeightAt', 185]], 'POSTed bodyweight 185');
@@ -380,7 +383,10 @@ function runSyncTests() {
     // A stub that advances the generation mid-pass simulates an edit landing
     // after readRows snapshotted. End-of-pass must NOT clear the flag.
     const r = withStubs(Object.assign({}, NO_FOREIGN, {
-      createWeightAt: () => { PROPS.setProperty('pendingDirty', 'GEN2'); return 'users/me/dataTypes/weight/dataPoints/W1'; }
+      createWeightAt: () => {
+        PROPS.setProperty('pendingDirty', 'GEN2');
+        return 'users/me/dataTypes/weight/dataPoints/W1';
+      }
     }), () => syncDirtyRows(0));
     eq(r.ok, 1, 'row synced');
     eq(PROPS.getProperty('pendingDirty'), 'GEN2', 'concurrent-edit generation kept');
@@ -577,7 +583,8 @@ function runSyncTests() {
     }), () => syncDirtyRows(0));
     eq(r.ok, 1, 'row counted ok');
     eq(calls, [['delete', [priorName]], ['create']], 'deletes old then creates new');
-    eq(cell('Created Health IDs'), JSON.stringify(['users/me/dataTypes/exercise/dataPoints/E2']), 'new resource name recorded');
+    eq(cell('Created Health IDs'), JSON.stringify(['users/me/dataTypes/exercise/dataPoints/E2']),
+      'new resource name recorded');
   });
 
   t('syncDirtyRows recreates rather than skipping when a row has two prior exercise ids', () => {

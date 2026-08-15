@@ -713,7 +713,9 @@ function runParserTests() {
   t('hasSendableExercises_ true for a real set', () => eq(
     hasSendableExercises_([{ entries: [{ assisted: false, reps: 5, sets: 1, weight: 200 }], name: 'Bench' }]), true));
   t('hasSendableExercises_ true for unknown-sets entry (sets null)', () => eq(
-    hasSendableExercises_([{ entries: [{ assisted: false, reps: 5, sets: null, weight: 200 }], name: 'Bench' }]), true));
+    hasSendableExercises_(
+      [{ entries: [{ assisted: false, reps: 5, sets: null, weight: 200 }], name: 'Bench' }]
+    ), true));
   t('hasSendableExercises_ true when mixed zero-set and real', () => eq(
     hasSendableExercises_([{ entries: [
       { assisted: false, reps: 5, sets: 0, weight: 200 },
@@ -1195,7 +1197,8 @@ exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 30, 0)),
     });
     const out = withGlobals({
       httpJson_: () => ({ dataPoints: [
-        point('ex/late', 'STRENGTH_TRAINING', '2026-01-15T22:00:00Z', '2026-01-15T23:00:00Z', { googleWebClientId: 'ours' }),
+        point('ex/late', 'STRENGTH_TRAINING', '2026-01-15T22:00:00Z', '2026-01-15T23:00:00Z',
+          { googleWebClientId: 'ours' }),
         point('ex/early', 'STRENGTH_TRAINING', '2026-01-15T14:00:00Z', '2026-01-15T15:00:00Z', null),
         point('ex/running', 'RUNNING', '2026-01-15T15:00:00Z', '2026-01-15T16:00:00Z', { googleWebClientId: 'ours' }),
         point('ex/no-interval', 'STRENGTH_TRAINING', null, null, { googleWebClientId: 'ours' })
@@ -1248,5 +1251,7 @@ exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 30, 0)),
   const passed = results.filter(r => r.startsWith('PASS ')).length;
   const summary = results.length + ' tests: ' + passed + ' passed, ' + (results.length - passed) + ' failed';
   console.log(msg + '\n\n' + summary);
-  try { SpreadsheetApp.getUi().alert('Parser / pure-helper tests\n\n' + msg + '\n\n' + summary); } catch (e) { /* no UI outside a spreadsheet */ }
+  try {
+    SpreadsheetApp.getUi().alert('Parser / pure-helper tests\n\n' + msg + '\n\n' + summary);
+  } catch (e) { /* no UI outside a spreadsheet */ }
 }

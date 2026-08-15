@@ -8,8 +8,12 @@
       "ES2019"
     ],
     "types": [
-      "google-apps-script"
-    ]
+      "google-apps-script",
+      "node"
+    ],
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "maxNodeModuleJsDepth": 0
   },
   "include": [
     "src/**/*",
