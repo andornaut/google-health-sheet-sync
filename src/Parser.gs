@@ -48,7 +48,7 @@ function parseLine_(line) {
   if (reps !== null && (!Number.isInteger(reps) || reps < 0)) return null;
   if (sets !== null && (!Number.isInteger(sets) || sets < 0)) return null;
 
-  return { weight: weight, reps: reps, sets: sets, assisted: assisted };
+  return { assisted: assisted, reps: reps, sets: sets, weight: weight };
 }
 
 function parseBodyweight(raw) {

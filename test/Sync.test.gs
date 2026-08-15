@@ -82,7 +82,7 @@ function runSyncTests() {
   // what lets a real clear be told apart from clearing an already-blank cell.
   t('onEditMarkDirty single-cell clear of an exercise value marks the row dirty', () => {
     reset([['2026-01-15', '', '', 'PREV-EX', 'PREV-WT', '', '', '', '', '']]);
-    const marked = onEditMarkDirty({ range: SHEET.getRange(2, COL['Bench']), oldValue: '135x5x3' });
+    const marked = onEditMarkDirty({ oldValue: '135x5x3', range: SHEET.getRange(2, COL['Bench']) });
     ok(marked === true, 'returns true');
     eq(cell('Exercise Synced At'), '', 'exercise synced cleared');
     eq(cell('Weight Synced At'), 'PREV-WT', 'weight synced untouched');
@@ -91,7 +91,7 @@ function runSyncTests() {
 
   t('onEditMarkDirty single-cell clear of the bodyweight marks the row dirty', () => {
     reset([['2026-01-15', '', '', 'PREV-EX', 'PREV-WT', '', '', '', '', '']]);
-    const marked = onEditMarkDirty({ range: SHEET.getRange(2, COL['Weight']), oldValue: '185' });
+    const marked = onEditMarkDirty({ oldValue: '185', range: SHEET.getRange(2, COL['Weight']) });
     ok(marked === true, 'returns true');
     eq(cell('Weight Synced At'), '', 'weight synced cleared');
     eq(cell('Exercise Synced At'), 'PREV-EX', 'exercise synced untouched');
@@ -100,7 +100,7 @@ function runSyncTests() {
 
   t('onEditMarkDirty clearing an already-blank cell stays a no-op', () => {
     reset([['2026-01-15', '', '', 'PREV-EX', 'PREV-WT', '', '', '', '', '']]);
-    ok(onEditMarkDirty({ range: SHEET.getRange(2, COL['Bench']), oldValue: '' }) === false, 'no oldValue content');
+    ok(onEditMarkDirty({ oldValue: '', range: SHEET.getRange(2, COL['Bench']) }) === false, 'no oldValue content');
     ok(onEditMarkDirty({ range: SHEET.getRange(2, COL['Bench']) }) === false, 'no oldValue at all');
     eq(cell('Exercise Synced At'), 'PREV-EX', 'stamp untouched');
   });
@@ -176,7 +176,7 @@ function runSyncTests() {
     PROPS._clear();
     LOCK.held = false;
     ok(onEditMarkDirty({ range: SHEET.getRange(2, scratchCol) }) === false, 'typing there is a no-op');
-    ok(onEditMarkDirty({ range: SHEET.getRange(2, scratchCol), oldValue: 'note to self' }) === false,
+    ok(onEditMarkDirty({ oldValue: 'note to self', range: SHEET.getRange(2, scratchCol) }) === false,
       'clearing it is a no-op too');
     eq(cell('Exercise Synced At'), 'PREV-EX', 'exercise stamp untouched');
     eq(cell('Exercises Last Edited At'), '', 'edit timestamp not advanced');
@@ -312,7 +312,7 @@ function runSyncTests() {
     eq(r.rows.map(row => row.rowNum), [3], 'only the dated row is syncable');
     eq(r.allHealthIds, [undatedWeight, datedExercise], 'ids from BOTH rows, dropped one included');
     eq(r.allMatchedSessions,
-      [{ rowNum: 2, name: 'foreign/undated' }, { rowNum: 3, name: 'foreign/dated' }],
+      [{ name: 'foreign/undated', rowNum: 2 }, { name: 'foreign/dated', rowNum: 3 }],
       'matched sessions from BOTH rows');
   });
 
@@ -346,7 +346,7 @@ function runSyncTests() {
   t('syncDirtyRows with no dirty rows returns zero counts', () => {
     reset([['2026-01-15', '185', '', 'SYNC', 'SYNC', '[]', '', '', '', '']]);
     const r = withStubs(NO_FOREIGN, () => syncDirtyRows(0));
-    eq(r, { ok: 0, errors: 0 }, 'nothing to do');
+    eq(r, { errors: 0, ok: 0 }, 'nothing to do');
   });
 
   t('syncDirtyRows weight first-sync POSTs, stamps, persists ID, drains the flag', () => {
@@ -543,17 +543,17 @@ function runSyncTests() {
   t('syncDirtyRows skips the delete+recreate when the prior exercise datapoint is unchanged', () => {
     const startMs = Date.UTC(2026, 0, 15, 17, 0, 0);
     const endMs = Date.UTC(2026, 0, 15, 17, 30, 0);
-    const exercises = [{ name: 'Bench', entries: [{ weight: 135, reps: 5, sets: 3, assisted: false }] }];
+    const exercises = [{ entries: [{ assisted: false, reps: 5, sets: 3, weight: 135 }], name: 'Bench' }];
     const priorNotes = buildNotes(endMs - startMs, exercises);
     const priorName = 'users/me/dataTypes/exercise/dataPoints/E1';
     reset([['2026-01-15', '', '135x5x3', '', 'SYNC', JSON.stringify([priorName]), '', '', '', '']]);
     const calls = [];
     const r = withStubs(Object.assign({}, NO_FOREIGN, {
-      getDataPoint: () => ({ exercise: { interval: {
-        startTime: new Date(startMs).toISOString(), endTime: new Date(endMs).toISOString()
-      }, notes: priorNotes } }),
+      createExerciseAt: () => { calls.push(['create']); return 'users/me/dataTypes/exercise/dataPoints/E2'; },
       deleteDataPointsByName: names => { calls.push(['delete', names]); },
-      createExerciseAt: () => { calls.push(['create']); return 'users/me/dataTypes/exercise/dataPoints/E2'; }
+      getDataPoint: () => ({ exercise: { interval: {
+        endTime: new Date(endMs).toISOString(), startTime: new Date(startMs).toISOString()
+      }, notes: priorNotes } })
     }), () => syncDirtyRows(0));
     eq(r.ok, 1, 'row counted ok');
     eq(calls, [], 'no delete or create issued for an unchanged exercise');
@@ -569,11 +569,11 @@ function runSyncTests() {
     reset([['2026-01-15', '', '135x5x3', '', 'SYNC', JSON.stringify([priorName]), '', '', '', '']]);
     const calls = [];
     const r = withStubs(Object.assign({}, NO_FOREIGN, {
-      getDataPoint: () => ({ exercise: { interval: {
-        startTime: new Date(startMs).toISOString(), endTime: new Date(endMs).toISOString()
-      }, notes: 'Bench, 999 lbs, 1 set of 1' } }),
+      createExerciseAt: () => { calls.push(['create']); return 'users/me/dataTypes/exercise/dataPoints/E2'; },
       deleteDataPointsByName: names => { calls.push(['delete', names.slice()]); },
-      createExerciseAt: () => { calls.push(['create']); return 'users/me/dataTypes/exercise/dataPoints/E2'; }
+      getDataPoint: () => ({ exercise: { interval: {
+        endTime: new Date(endMs).toISOString(), startTime: new Date(startMs).toISOString()
+      }, notes: 'Bench, 999 lbs, 1 set of 1' } })
     }), () => syncDirtyRows(0));
     eq(r.ok, 1, 'row counted ok');
     eq(calls, [['delete', [priorName]], ['create']], 'deletes old then creates new');
@@ -587,18 +587,18 @@ function runSyncTests() {
     const startMs = Date.UTC(2026, 0, 15, 17, 0, 0);
     const endMs = Date.UTC(2026, 0, 15, 17, 30, 0);
     const priorNotes = buildNotes(endMs - startMs, [
-      { name: 'Bench', entries: [{ weight: 135, reps: 5, sets: 3, assisted: false }] }
+      { entries: [{ assisted: false, reps: 5, sets: 3, weight: 135 }], name: 'Bench' }
     ]);
     const first = 'users/me/dataTypes/exercise/dataPoints/E1';
     const second = 'users/me/dataTypes/exercise/dataPoints/E2';
     reset([['2026-01-15', '', '135x5x3', '', 'SYNC', JSON.stringify([first, second]), '', '', '', '']]);
     const calls = [];
     withStubs(Object.assign({}, NO_FOREIGN, {
-      getDataPoint: () => ({ exercise: { interval: {
-        startTime: new Date(startMs).toISOString(), endTime: new Date(endMs).toISOString()
-      }, notes: priorNotes } }),
+      createExerciseAt: () => { calls.push(['create']); return 'users/me/dataTypes/exercise/dataPoints/E3'; },
       deleteDataPointsByName: names => { calls.push(['delete', names.slice()]); },
-      createExerciseAt: () => { calls.push(['create']); return 'users/me/dataTypes/exercise/dataPoints/E3'; }
+      getDataPoint: () => ({ exercise: { interval: {
+        endTime: new Date(endMs).toISOString(), startTime: new Date(startMs).toISOString()
+      }, notes: priorNotes } })
     }), () => syncDirtyRows(0));
     eq(calls, [['delete', [first]], ['delete', [second]], ['create']],
       'both priors deleted despite matching content, one datapoint left');
@@ -614,8 +614,8 @@ function runSyncTests() {
     reset([['2026-01-15', '', '', '', 'SYNC', JSON.stringify([exName]), '', '', '', '']]);
     const calls = [];
     const r = withStubs(Object.assign({}, NO_FOREIGN, {
-      deleteDataPointsByName: names => { calls.push(['delete', names.slice()]); },
-      createExerciseAt: () => { calls.push(['create']); return 'users/me/dataTypes/exercise/dataPoints/E2'; }
+      createExerciseAt: () => { calls.push(['create']); return 'users/me/dataTypes/exercise/dataPoints/E2'; },
+      deleteDataPointsByName: names => { calls.push(['delete', names.slice()]); }
     }), () => syncDirtyRows(0));
     eq(r.ok, 1, 'row counted ok');
     eq(calls, [['delete', [exName]]], 'deleted, nothing recreated');
@@ -634,10 +634,10 @@ function runSyncTests() {
     reset([['2026-01-15', '186', '', 'SYNC', '', JSON.stringify([wName]), '', '', '', '']]);
     const calls = [];
     const r = withStubs(Object.assign({}, NO_FOREIGN, {
-      getDataPoint: name => { calls.push(['get', name]); return { weight: { sampleTime: sampleTime } }; },
-      patchWeight: (name, st, lbs) => { calls.push(['patch', name, st, lbs]); },
       createWeightAt: () => { calls.push(['create']); return 'users/me/dataTypes/weight/dataPoints/W2'; },
-      deleteDataPointsByName: names => { calls.push(['delete', names.slice()]); }
+      deleteDataPointsByName: names => { calls.push(['delete', names.slice()]); },
+      getDataPoint: name => { calls.push(['get', name]); return { weight: { sampleTime: sampleTime } }; },
+      patchWeight: (name, st, lbs) => { calls.push(['patch', name, st, lbs]); }
     }), () => syncDirtyRows(0));
     eq(r.ok, 1, 'row synced');
     eq(calls, [['get', wName], ['patch', wName, sampleTime, 186]], 'PATCH only: no delete, no create');
@@ -668,13 +668,13 @@ function runSyncTests() {
     const gone = 'users/me/dataTypes/weight/dataPoints/W-gone';
     reset([['2026-01-15', '186', '', 'SYNC', '', JSON.stringify([gone]), '', '', '', '']]);
     const r = withStubs(Object.assign({}, NO_FOREIGN, {
+      createWeightAt: () => 'users/me/dataTypes/weight/dataPoints/W-new',
       getDataPoint: () => {
         const err = new Error('Health API GET ... -> 404: not found');
         err.statusCode = 404;
         throw err;
       },
-      patchWeight: () => { throw new Error('must not PATCH a datapoint that is gone'); },
-      createWeightAt: () => 'users/me/dataTypes/weight/dataPoints/W-new'
+      patchWeight: () => { throw new Error('must not PATCH a datapoint that is gone'); }
     }), () => syncDirtyRows(0));
     eq(r.ok, 1, 'row synced');
     eq(cell('Created Health IDs'),
@@ -697,19 +697,19 @@ function runSyncTests() {
   t('syncDirtyRows borrows a matched foreign interval and records the session', () => {
     reset([[JAN15_NOON_EST, '', '135x5x3', '', 'SYNC', '', JAN15_5PM_EST, JAN15_530PM_EST, '', '']]);
     const cand = {
+      endUtcMs: Date.UTC(2026, 0, 15, 23, 20, 0),
+      endUtcOffsetSeconds: -5 * 3600,
       name: 'foreign/A',
       startUtcMs: Date.UTC(2026, 0, 15, 22, 5, 0),
-      endUtcMs: Date.UTC(2026, 0, 15, 23, 20, 0),
-      startUtcOffsetSeconds: -5 * 3600,
-      endUtcOffsetSeconds: -5 * 3600
+      startUtcOffsetSeconds: -5 * 3600
     };
     let created = null;
     const r = withStubs({
-      listStrengthOnDate: () => [cand],
       createExerciseAt: (startUtcMs, startOff, endUtcMs, endOff, notes) => {
-        created = { startUtcMs: startUtcMs, startOff: startOff, endUtcMs: endUtcMs, endOff: endOff, notes: notes };
+        created = { endOff: endOff, endUtcMs: endUtcMs, notes: notes, startOff: startOff, startUtcMs: startUtcMs };
         return 'users/me/dataTypes/exercise/dataPoints/E1';
-      }
+      },
+      listStrengthOnDate: () => [cand]
     }, () => syncDirtyRows(0));
     eq(r.ok, 1, 'row synced');
     eq(created.startUtcMs, cand.startUtcMs, 'foreign start borrowed verbatim, not the edit time');
@@ -717,7 +717,7 @@ function runSyncTests() {
     eq(created.startOff, cand.startUtcOffsetSeconds);
     eq(created.endOff, cand.endUtcOffsetSeconds);
     eq(created.notes, buildNotes(cand.endUtcMs - cand.startUtcMs, [
-      { name: 'Bench', entries: [{ weight: 135, reps: 5, sets: 3, assisted: false }] }
+      { entries: [{ assisted: false, reps: 5, sets: 3, weight: 135 }], name: 'Bench' }
     ]), 'the session length in the notes follows the borrowed interval');
     eq(cell('Matched Health Session'), 'foreign/A', 'match recorded for the next pass');
   });
@@ -854,13 +854,13 @@ function runSyncTests() {
     const deleted = [];
     let listed = false;
     withStubs({
+      deleteDataPointsByName: names => { deleted.push.apply(deleted, names); },
       listStrengthOnDate: () => [],
       listWeightOnDate: () => {
         if (listed) return [];   // one civil day's worth, not once per lookback day
         listed = true;
-        return [tracked, created[0], created[1]].map(name => ({ name: name, googleWebClientId: 'ours' }));
-      },
-      deleteDataPointsByName: names => { deleted.push.apply(deleted, names); }
+        return [tracked, created[0], created[1]].map(name => ({ googleWebClientId: 'ours', name: name }));
+      }
     }, () => backstop());
     eq(deleted, created, 'both leaked datapoints reclaimed, tracked one spared');
   });
@@ -873,12 +873,12 @@ function runSyncTests() {
     const device = 'users/me/dataTypes/weight/dataPoints/W-device';
     const deleted = [];
     withStubs({
+      deleteDataPointsByName: names => { deleted.push.apply(deleted, names); },
       listWeightOnDate: () => ([
-        { name: tracked, googleWebClientId: 'ours' },
-        { name: orphan, googleWebClientId: 'ours' },
-        { name: device, googleWebClientId: null }
-      ]),
-      deleteDataPointsByName: names => { deleted.push.apply(deleted, names); }
+        { googleWebClientId: 'ours', name: tracked },
+        { googleWebClientId: 'ours', name: orphan },
+        { googleWebClientId: null, name: device }
+      ])
     }, () => {
       reconcileWeightOrphans_([tracked], Date.UTC(2026, 0, 15, 12, 0, 0), 1);
     });
@@ -900,15 +900,15 @@ function runSyncTests() {
     ]);
     const deleted = [];
     withStubs({
+      deleteDataPointsByName: names => { deleted.push.apply(deleted, names); },
       listStrengthOnDate: () => ([
-        { name: liveEx, googleWebClientId: 'ours' },
-        { name: trackedEx, googleWebClientId: 'ours' }
+        { googleWebClientId: 'ours', name: liveEx },
+        { googleWebClientId: 'ours', name: trackedEx }
       ]),
       listWeightOnDate: () => ([
-        { name: liveWt, googleWebClientId: 'ours' },
-        { name: trackedWt, googleWebClientId: 'ours' }
-      ]),
-      deleteDataPointsByName: names => { deleted.push.apply(deleted, names); }
+        { googleWebClientId: 'ours', name: liveWt },
+        { googleWebClientId: 'ours', name: trackedWt }
+      ])
     }, () => backstop());
     eq(deleted, [], 'nothing deleted: the undated row still owns both datapoints');
   });
@@ -958,9 +958,9 @@ function runSyncTests() {
 
     const deleted = [];
     const r = withStubs(Object.assign({}, NO_FOREIGN, {
-      deleteDataPointsByName: names => { deleted.push.apply(deleted, names); },
       createExerciseAt: () => { throw new Error('must not recreate a cleared row'); },
-      createWeightAt: () => { throw new Error('must not recreate a cleared bodyweight'); }
+      createWeightAt: () => { throw new Error('must not recreate a cleared bodyweight'); },
+      deleteDataPointsByName: names => { deleted.push.apply(deleted, names); }
     }), () => syncDirtyRows(0));
     eq(r.ok, 1, 'row synced');
     eq(deleted.sort(), [exName, wtName].sort(), 'both stale datapoints deleted');
@@ -984,9 +984,9 @@ function runSyncTests() {
     eq(cell('Weight Synced At'), '', 'backstop caught the blanked bodyweight');
     const deleted = [];
     withStubs(Object.assign({}, NO_FOREIGN, {
-      deleteDataPointsByName: names => { deleted.push.apply(deleted, names); },
       createExerciseAt: () => 'users/me/dataTypes/exercise/dataPoints/E1',
-      createWeightAt: () => { throw new Error('must not recreate a blanked bodyweight'); }
+      createWeightAt: () => { throw new Error('must not recreate a blanked bodyweight'); },
+      deleteDataPointsByName: names => { deleted.push.apply(deleted, names); }
     }), () => syncDirtyRows(0));
     eq(deleted, [wtName], 'the weight datapoint was deleted');
   });
@@ -1004,8 +1004,8 @@ function runSyncTests() {
     for (let c = 1; c <= HEADERS.length; c++) SHEET.getRange(2, c).setValue('');
     const deleted = [];
     withStubs({
-      listStrengthOnDate: () => [], listWeightOnDate: () => [],
-      deleteDataPointsByName: names => { deleted.push.apply(deleted, names); }
+      deleteDataPointsByName: names => { deleted.push.apply(deleted, names); }, listStrengthOnDate: () => [],
+      listWeightOnDate: () => []
     }, () => backstop());
     eq(deleted, [], 'nothing deleted for the parked row');
   });
@@ -1119,9 +1119,9 @@ function runSyncTests() {
     SHEET._setSelection([[1, 1000]]);   // whole column, header row included
     const cleared = [];
     withStubs(Object.assign({}, NO_FOREIGN, {
-      createExerciseAt: () => 'users/me/dataTypes/exercise/dataPoints/E',
       clearRowExerciseSynced: rowNum => { cleared.push(rowNum); },
-      clearRowWeightSynced: () => {}
+      clearRowWeightSynced: () => {},
+      createExerciseAt: () => 'users/me/dataTypes/exercise/dataPoints/E'
     }), () => resyncSelectedRows());
     eq(cleared, [2, 3], 'only the two data rows were re-dirtied, not the full sheet height');
   });

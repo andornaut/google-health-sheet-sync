@@ -87,7 +87,7 @@ function findRowDateViolation_(datedRows) {
           + prev.rowNum + ' (' + prev.key + '); rows must be in increasing date order';
       }
     }
-    prev = { rowNum: r.rowNum, key: key };
+    prev = { key: key, rowNum: r.rowNum };
   }
   return null;
 }
@@ -111,7 +111,7 @@ function validateRowDates_() {
   values.forEach((v, idx) => {
     if (!v[0]) return;
     const date = toDate_(v[0]);
-    if (date) datedRows.push({ rowNum: idx + 2, date: date });
+    if (date) datedRows.push({ date: date, rowNum: idx + 2 });
   });
   return findRowDateViolation_(datedRows);
 }
@@ -293,7 +293,7 @@ function backstop() {
   }
   try {
     const now = Date.now();
-    const { rows, allHealthIds, exerciseSyncedAtCol, weightSyncedAtCol } = readRows();
+    const { allHealthIds, exerciseSyncedAtCol, rows, weightSyncedAtCol } = readRows();
 
     // Reconcile orphans first, while the rows snapshot is unmodified. (reDirty
     // below doesn't touch Created Health IDs, so order is not load-bearing, but
@@ -656,13 +656,16 @@ function syncDirtyRows(lockWaitMs) {
   // summary throw depends on that, which is why it sets the flag first.
   let unrecoverable = false;
   try {
-    const { rows, allHealthIds, allMatchedSessions, exerciseSyncedAtCol, weightSyncedAtCol, healthIdsCol, exercisesLastEditedAtCol, weightEditedAtCol, matchedHealthSessionCol } = readRows();
+    const {
+      allHealthIds, allMatchedSessions, exerciseSyncedAtCol, exercisesLastEditedAtCol, healthIdsCol,
+      matchedHealthSessionCol, rows, weightEditedAtCol, weightSyncedAtCol
+    } = readRows();
     if (!exerciseSyncedAtCol || !weightSyncedAtCol || !healthIdsCol) {
       throw new Error('Managed columns missing; run "Run setup" from the Sync menu before syncing.');
     }
     const dirty = rows.filter(r => !r.exerciseSyncedAt || !r.weightSyncedAt);
     if (dirty.length === 0) {
-      return { ok: 0, errors: 0 };
+      return { errors: 0, ok: 0 };
     }
 
     const ordinalByRowNum = buildOrdinalMap_(rows);
@@ -677,13 +680,13 @@ function syncDirtyRows(lockWaitMs) {
       const weightReady = !r.weightSyncedAt;
       const exerciseReady = !r.exerciseSyncedAt;
       if (weightReady || exerciseReady) {
-        ready.push({ row: r, weightReady: weightReady, exerciseReady: exerciseReady });
+        ready.push({ exerciseReady: exerciseReady, row: r, weightReady: weightReady });
       }
     });
 
     if (ready.length === 0) {
       console.info('syncDirtyRows: no rows ready to sync.');
-      return { ok: 0, errors: 0 };
+      return { errors: 0, ok: 0 };
     }
 
     // Newest-first so recent edits land in Health quickly when the cap defers
@@ -709,11 +712,11 @@ function syncDirtyRows(lockWaitMs) {
     const alignmentPlan = resolveForeignMatches_(allHealthIds, allMatchedSessions, exerciseReadyRows);
     const cols = {
       exerciseSyncedAtCol: exerciseSyncedAtCol,
-      weightSyncedAtCol: weightSyncedAtCol,
-      healthIdsCol: healthIdsCol,
       exercisesLastEditedAtCol: exercisesLastEditedAtCol,
+      healthIdsCol: healthIdsCol,
+      matchedHealthSessionCol: matchedHealthSessionCol,
       weightEditedAtCol: weightEditedAtCol,
-      matchedHealthSessionCol: matchedHealthSessionCol
+      weightSyncedAtCol: weightSyncedAtCol
     };
     // A throw out of syncOneRow_ is unexpected: it catches its own Health API
     // failures, so what reaches here is sheet I/O failing on a transient
@@ -750,7 +753,8 @@ function syncDirtyRows(lockWaitMs) {
       const ordinal = ordinalByRowNum[entry.row.rowNum];
       const foreignMatch = alignmentPlan[entry.row.rowNum] || null;
       try {
-        if (syncOneRow_(entry.row, ordinal, foreignMatch, entry.weightReady, entry.exerciseReady, cols, i + 1, ready.length)) ok++;
+        if (syncOneRow_(entry.row, ordinal, foreignMatch, entry.weightReady, entry.exerciseReady,
+          cols, i + 1, ready.length)) ok++;
         else errors++;
       } catch (err) {
         errors++;
@@ -839,7 +843,7 @@ function syncDirtyRows(lockWaitMs) {
     }
     lock.releaseLock();
   }
-  return { ok: ok, errors: errors, deferred: deferredCount };
+  return { deferred: deferredCount, errors: errors, ok: ok };
 }
 
 // Returns rowNum -> foreign Strength Training session whose interval should be
@@ -899,8 +903,8 @@ function resolveForeignMatches_(allHealthIds, allMatchedSessions, readyRows) {
       const clampedEndMs = startMs + capExerciseDurationToMax_(r.exercisesLastEditedAt.getTime() - startMs);
       return {
         rowNum: r.rowNum,
-        windowStart: startMs - FOREIGN_MATCH_BUFFER_MS,
-        windowEnd: clampedEndMs + FOREIGN_MATCH_BUFFER_MS
+        windowEnd: clampedEndMs + FOREIGN_MATCH_BUFFER_MS,
+        windowStart: startMs - FOREIGN_MATCH_BUFFER_MS
       };
     });
   if (windows.length === 0) return plan;
@@ -1089,10 +1093,10 @@ function resolveRowTiming_(row, ordinal, priorExercise, foreignInterval) {
   const exerciseEditIsUsable = exerciseEditIsUsable_(row, priorExercise);
   if (foreignInterval) {
     exercise = {
-      startUtcMs: foreignInterval.startUtcMs,
-      startOffsetSeconds: foreignInterval.startUtcOffsetSeconds,
+      endOffsetSeconds: foreignInterval.endUtcOffsetSeconds,
       endUtcMs: foreignInterval.endUtcMs,
-      endOffsetSeconds: foreignInterval.endUtcOffsetSeconds
+      startOffsetSeconds: foreignInterval.startUtcOffsetSeconds,
+      startUtcMs: foreignInterval.startUtcMs
     };
     exerciseSource = 'foreign';
   } else if (exerciseEditIsUsable) {
@@ -1103,20 +1107,20 @@ function resolveRowTiming_(row, ordinal, priorExercise, foreignInterval) {
     // second edit produces a real span (clamped to [MIN, MAX]).
     const endMs = startMs + editDerivedDurationMs_(rawDuration);
     exercise = {
-      startUtcMs: startMs,
-      startOffsetSeconds: getTzOffsetSeconds_(tz, row.exerciseFirstEditedAt),
+      endOffsetSeconds: getTzOffsetSeconds_(tz, new Date(endMs)),
       endUtcMs: endMs,
-      endOffsetSeconds: getTzOffsetSeconds_(tz, new Date(endMs))
+      startOffsetSeconds: getTzOffsetSeconds_(tz, row.exerciseFirstEditedAt),
+      startUtcMs: startMs
     };
     exerciseSource = 'edit';
   } else if (priorExercise) {
     const i = priorExercise.exercise && priorExercise.exercise.interval;
     if (i && i.startTime && i.endTime) {
       exercise = {
-        startUtcMs: new Date(i.startTime).getTime(),
-        startOffsetSeconds: parseOffsetSeconds_(i.startUtcOffset),
+        endOffsetSeconds: parseOffsetSeconds_(i.endUtcOffset),
         endUtcMs: new Date(i.endTime).getTime(),
-        endOffsetSeconds: parseOffsetSeconds_(i.endUtcOffset)
+        startOffsetSeconds: parseOffsetSeconds_(i.startUtcOffset),
+        startUtcMs: new Date(i.startTime).getTime()
       };
       exerciseSource = 'prior';
     }
@@ -1130,8 +1134,8 @@ function resolveRowTiming_(row, ordinal, priorExercise, foreignInterval) {
   let weightSource;
   if (row.weightEditedAt && ymd(row.weightEditedAt) === rowDateKey) {
     weight = {
-      utcMs: row.weightEditedAt.getTime(),
-      offsetSeconds: getTzOffsetSeconds_(tz, row.weightEditedAt)
+      offsetSeconds: getTzOffsetSeconds_(tz, row.weightEditedAt),
+      utcMs: row.weightEditedAt.getTime()
     };
     weightSource = 'edit';
   } else {
@@ -1140,8 +1144,8 @@ function resolveRowTiming_(row, ordinal, priorExercise, foreignInterval) {
   }
   return {
     exercise: exercise,
-    weight: weight,
     exerciseSource: exerciseSource,
+    weight: weight,
     weightSource: weightSource
   };
 }

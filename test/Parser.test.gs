@@ -28,45 +28,45 @@ function runParserTests() {
   t('empty cell -> []', () => eq(parseExerciseCell(''), []));
   t('null cell -> []', () => eq(parseExerciseCell(null), []));
   t('single weight "135" (reps/sets unknown)', () => eq(parseExerciseCell('135'),
-    [{ weight: 135, reps: null, sets: null, assisted: false }]));
+    [{ assisted: false, reps: null, sets: null, weight: 135 }]));
   t('weight x reps "135x5" (sets unknown)', () => eq(parseExerciseCell('135x5'),
-    [{ weight: 135, reps: 5, sets: null, assisted: false }]));
+    [{ assisted: false, reps: 5, sets: null, weight: 135 }]));
   t('weight x reps x sets "135x5x3"', () => eq(parseExerciseCell('135x5x3'),
-    [{ weight: 135, reps: 5, sets: 3, assisted: false }]));
+    [{ assisted: false, reps: 5, sets: 3, weight: 135 }]));
   t('assisted prefix "*135x5x3"', () => eq(parseExerciseCell('*135x5x3'),
-    [{ weight: 135, reps: 5, sets: 3, assisted: true }]));
+    [{ assisted: true, reps: 5, sets: 3, weight: 135 }]));
   t('multiline cell', () => eq(parseExerciseCell('135x5x3\n145x3x2'), [
-    { weight: 135, reps: 5, sets: 3, assisted: false },
-    { weight: 145, reps: 3, sets: 2, assisted: false }
+    { assisted: false, reps: 5, sets: 3, weight: 135 },
+    { assisted: false, reps: 3, sets: 2, weight: 145 }
   ]));
   t('comma-separated cell "95x5x2, 85x5x5"', () => eq(parseExerciseCell('95x5x2, 85x5x5'), [
-    { weight: 95, reps: 5, sets: 2, assisted: false },
-    { weight: 85, reps: 5, sets: 5, assisted: false }
+    { assisted: false, reps: 5, sets: 2, weight: 95 },
+    { assisted: false, reps: 5, sets: 5, weight: 85 }
   ]));
   t('mixed comma + newline', () => eq(parseExerciseCell('135x5x3, 145x3x2\n*155x1'), [
-    { weight: 135, reps: 5, sets: 3, assisted: false },
-    { weight: 145, reps: 3, sets: 2, assisted: false },
-    { weight: 155, reps: 1, sets: null, assisted: true }
+    { assisted: false, reps: 5, sets: 3, weight: 135 },
+    { assisted: false, reps: 3, sets: 2, weight: 145 },
+    { assisted: true, reps: 1, sets: null, weight: 155 }
   ]));
   t('whitespace tolerance "  135 x 5 x 3  "', () => eq(parseExerciseCell('  135 x 5 x 3  '),
-    [{ weight: 135, reps: 5, sets: 3, assisted: false }]));
+    [{ assisted: false, reps: 5, sets: 3, weight: 135 }]));
   t('uppercase X "135X5X3"', () => eq(parseExerciseCell('135X5X3'),
-    [{ weight: 135, reps: 5, sets: 3, assisted: false }]));
+    [{ assisted: false, reps: 5, sets: 3, weight: 135 }]));
   t('junk line skipped', () => eq(parseExerciseCell('garbage\n135x5'),
-    [{ weight: 135, reps: 5, sets: null, assisted: false }]));
+    [{ assisted: false, reps: 5, sets: null, weight: 135 }]));
   t('zero reps skipped silently "135x0" (not performed)', () => eq(parseExerciseCell('135x0'), []));
   t('zero sets retained "90x6x0" (start-only marker, suppressed in notes)', () => eq(parseExerciseCell('90x6x0'),
-    [{ weight: 90, reps: 6, sets: 0, assisted: false }]));
+    [{ assisted: false, reps: 6, sets: 0, weight: 90 }]));
   t('zero-reps dropped, zero-sets retained, valid kept', () => eq(parseExerciseCell('135x5x3, 90x6x0, 95x0'),
-    [{ weight: 135, reps: 5, sets: 3, assisted: false }, { weight: 90, reps: 6, sets: 0, assisted: false }]));
+    [{ assisted: false, reps: 5, sets: 3, weight: 135 }, { assisted: false, reps: 6, sets: 0, weight: 90 }]));
   t('negative weight rejected', () => eq(parseExerciseCell('-5'), []));
   t('decimal weight allowed "22.5" (reps/sets unknown)', () => eq(parseExerciseCell('22.5'),
-    [{ weight: 22.5, reps: null, sets: null, assisted: false }]));
+    [{ assisted: false, reps: null, sets: null, weight: 22.5 }]));
   t('decimal reps rejected "135x5.5"', () => eq(parseExerciseCell('135x5.5'), []));
   t('too many x segments rejected "135x5x3x2"', () => eq(parseExerciseCell('135x5x3x2'), []));
   t('semicolon-separated cell "95x5x2;85x5x5"', () => eq(parseExerciseCell('95x5x2;85x5x5'), [
-    { weight: 95, reps: 5, sets: 2, assisted: false },
-    { weight: 85, reps: 5, sets: 5, assisted: false }
+    { assisted: false, reps: 5, sets: 2, weight: 95 },
+    { assisted: false, reps: 5, sets: 5, weight: 85 }
   ]));
 
   t('bodyweight parse "185"', () => eq(parseBodyweight('185'), 185));
@@ -82,49 +82,49 @@ function runParserTests() {
   t('bodyweight rep-count typo "5" -> null (below floor)', () => eq(parseBodyweight('5'), null));
 
   t('formatEntryNote_ multiple sets', () => eq(
-    formatEntryNote_('Bench press', { weight: 190, reps: 5, sets: 5, assisted: false }),
+    formatEntryNote_('Bench press', { assisted: false, reps: 5, sets: 5, weight: 190 }),
     'Bench press, 190 lbs, 5 sets of 5'
   ));
   t('formatEntryNote_ single set', () => eq(
-    formatEntryNote_('Bench press', { weight: 135, reps: 5, sets: 1, assisted: false }),
+    formatEntryNote_('Bench press', { assisted: false, reps: 5, sets: 1, weight: 135 }),
     'Bench press, 135 lbs, 1 set of 5'
   ));
   t('formatEntryNote_ single rep', () => eq(
-    formatEntryNote_('Bench press', { weight: 225, reps: 1, sets: 1, assisted: false }),
+    formatEntryNote_('Bench press', { assisted: false, reps: 1, sets: 1, weight: 225 }),
     'Bench press, 225 lbs, 1 set of 1'
   ));
   t('formatEntryNote_ assisted suffix', () => eq(
-    formatEntryNote_('Pull up', { weight: 25, reps: 5, sets: 3, assisted: true }),
+    formatEntryNote_('Pull up', { assisted: true, reps: 5, sets: 3, weight: 25 }),
     'Pull up, 25 lbs, 3 sets of 5 (assisted)'
   ));
   t('formatEntryNote_ decimal weight', () => eq(
-    formatEntryNote_('Lateral raise', { weight: 22.5, reps: 10, sets: 3, assisted: false }),
+    formatEntryNote_('Lateral raise', { assisted: false, reps: 10, sets: 3, weight: 22.5 }),
     'Lateral raise, 22.5 lbs, 3 sets of 10'
   ));
   t('formatEntryNote_ weight only (reps/sets unknown)', () => eq(
-    formatEntryNote_('Bench press', { weight: 135, reps: null, sets: null, assisted: false }),
+    formatEntryNote_('Bench press', { assisted: false, reps: null, sets: null, weight: 135 }),
     'Bench press, 135 lbs'
   ));
   t('formatEntryNote_ weight + reps (sets unknown)', () => eq(
-    formatEntryNote_('Bench press', { weight: 135, reps: 5, sets: null, assisted: false }),
+    formatEntryNote_('Bench press', { assisted: false, reps: 5, sets: null, weight: 135 }),
     'Bench press, 135 lbs, 5 reps'
   ));
   t('formatEntryNote_ weight + 1 rep (sets unknown)', () => eq(
-    formatEntryNote_('Bench press', { weight: 225, reps: 1, sets: null, assisted: false }),
+    formatEntryNote_('Bench press', { assisted: false, reps: 1, sets: null, weight: 225 }),
     'Bench press, 225 lbs, 1 rep'
   ));
   t('formatEntryNote_ weight only + assisted', () => eq(
-    formatEntryNote_('Pull up', { weight: 25, reps: null, sets: null, assisted: true }),
+    formatEntryNote_('Pull up', { assisted: true, reps: null, sets: null, weight: 25 }),
     'Pull up, 25 lbs (assisted)'
   ));
 
   t('buildNotes one period-terminated line per entry, duration on its own line', () => {
     const notes = buildNotes(45 * 60 * 1000, [
-      { name: 'Bench press', entries: [
-        { weight: 135, reps: 5, sets: 3, assisted: false },
-        { weight: 145, reps: 3, sets: 2, assisted: false }
-      ] },
-      { name: 'Squat', entries: [{ weight: 225, reps: 5, sets: 3, assisted: false }] }
+      { entries: [
+        { assisted: false, reps: 5, sets: 3, weight: 135 },
+        { assisted: false, reps: 3, sets: 2, weight: 145 }
+      ], name: 'Bench press' },
+      { entries: [{ assisted: false, reps: 5, sets: 3, weight: 225 }], name: 'Squat' }
     ]);
     eq(notes,
       'Bench press, 135 lbs, 3 sets of 5.\n'
@@ -138,7 +138,7 @@ function runParserTests() {
   // as another attribute of that exercise.
   t('buildNotes does not append the duration to the last entry line', () => {
     const notes = buildNotes(45 * 60 * 1000, [
-      { name: 'Squat', entries: [{ weight: 225, reps: 5, sets: 3, assisted: false }] }
+      { entries: [{ assisted: false, reps: 5, sets: 3, weight: 225 }], name: 'Squat' }
     ]);
     eq(notes.split('\n').length, 2);
     eq(notes.split('\n')[0], 'Squat, 225 lbs, 3 sets of 5.');
@@ -147,31 +147,31 @@ function runParserTests() {
 
   t('buildNotes suppresses zero-set entries (start-only markers)', () => {
     const notes = buildNotes(10 * 60 * 1000, [
-      { name: 'Bench press', entries: [
-        { weight: 200, reps: 5, sets: 0, assisted: false },
-        { weight: 200, reps: 5, sets: 2, assisted: false }
-      ] }
+      { entries: [
+        { assisted: false, reps: 5, sets: 0, weight: 200 },
+        { assisted: false, reps: 5, sets: 2, weight: 200 }
+      ], name: 'Bench press' }
     ]);
     eq(notes, 'Bench press, 200 lbs, 2 sets of 5.\n10 minute session.');
   });
 
   t('buildNotes with only zero-set entries -> just the session sentence', () => {
     const notes = buildNotes(10 * 60 * 1000, [
-      { name: 'Bench press', entries: [{ weight: 200, reps: 5, sets: 0, assisted: false }] }
+      { entries: [{ assisted: false, reps: 5, sets: 0, weight: 200 }], name: 'Bench press' }
     ]);
     eq(notes, '10 minute session.');
   });
 
   t('buildNotes matches foreign single-entry example', () => {
     const notes = buildNotes(2700 * 1000, [
-      { name: 'Bench press', entries: [{ weight: 190, reps: 5, sets: 5, assisted: false }] }
+      { entries: [{ assisted: false, reps: 5, sets: 5, weight: 190 }], name: 'Bench press' }
     ]);
     eq(notes, 'Bench press, 190 lbs, 5 sets of 5.\n45 minute session.');
   });
 
   t('buildNotes rounds duration to nearest minute', () => {
     const notes = buildNotes(29 * 1000, [
-      { name: 'Bench press', entries: [{ weight: 190, reps: 5, sets: 5, assisted: false }] }
+      { entries: [{ assisted: false, reps: 5, sets: 5, weight: 190 }], name: 'Bench press' }
     ]);
     eq(notes, 'Bench press, 190 lbs, 5 sets of 5.');
   });
@@ -226,19 +226,19 @@ function runParserTests() {
     'Sync skipped (another run holds the lock). Try again shortly.'
   ));
   t('formatSyncResult_ ok only', () => eq(
-    formatSyncResult_({ ok: 3, errors: 0 }, 'Synced'),
+    formatSyncResult_({ errors: 0, ok: 3 }, 'Synced'),
     'Synced 3 row(s).'
   ));
   t('formatSyncResult_ ok + errors', () => eq(
-    formatSyncResult_({ ok: 2, errors: 1 }, 'Resynced'),
+    formatSyncResult_({ errors: 1, ok: 2 }, 'Resynced'),
     'Resynced 2 row(s), 1 error(s).\n\nSee Executions for details.'
   ));
   t('formatSyncResult_ ok + deferred', () => eq(
-    formatSyncResult_({ ok: 75, errors: 0, deferred: 25 }, 'Synced'),
+    formatSyncResult_({ deferred: 25, errors: 0, ok: 75 }, 'Synced'),
     'Synced 75 row(s), 25 deferred.'
   ));
   t('formatSyncResult_ ok + errors + deferred', () => eq(
-    formatSyncResult_({ ok: 70, errors: 5, deferred: 25 }, 'Synced'),
+    formatSyncResult_({ deferred: 25, errors: 5, ok: 70 }, 'Synced'),
     'Synced 70 row(s), 5 error(s), 25 deferred.\n\nSee Executions for details.'
   ));
 
@@ -258,8 +258,8 @@ function runParserTests() {
   });
 
   t('splitHealthIdsByType_ empty/null', () => {
-    eq(splitHealthIdsByType_(null), { weight: [], exercise: [], other: [] });
-    eq(splitHealthIdsByType_([]), { weight: [], exercise: [], other: [] });
+    eq(splitHealthIdsByType_(null), { exercise: [], other: [], weight: [] });
+    eq(splitHealthIdsByType_([]), { exercise: [], other: [], weight: [] });
   });
   t('splitHealthIdsByType_ buckets weight vs exercise', () => eq(
     splitHealthIdsByType_([
@@ -268,21 +268,21 @@ function runParserTests() {
       'users/me/dataTypes/weight/dataPoints/w2'
     ]),
     {
-      weight: ['users/me/dataTypes/weight/dataPoints/w1', 'users/me/dataTypes/weight/dataPoints/w2'],
       exercise: ['users/me/dataTypes/exercise/dataPoints/e1'],
-      other: []
+      other: [],
+      weight: ['users/me/dataTypes/weight/dataPoints/w1', 'users/me/dataTypes/weight/dataPoints/w2']
     }
   ));
   t('splitHealthIdsByType_ unknown type -> other', () => eq(
     splitHealthIdsByType_(['users/me/dataTypes/sleep/dataPoints/s1']),
-    { weight: [], exercise: [], other: ['users/me/dataTypes/sleep/dataPoints/s1'] }
+    { exercise: [], other: ['users/me/dataTypes/sleep/dataPoints/s1'], weight: [] }
   ));
   t('splitHealthIdsByType_ malformed name -> other', () => eq(
     splitHealthIdsByType_(['not-a-resource-name', 'users/me/dataTypes/weight/dataPoints/ok']),
     {
-      weight: ['users/me/dataTypes/weight/dataPoints/ok'],
       exercise: [],
-      other: ['not-a-resource-name']
+      other: ['not-a-resource-name'],
+      weight: ['users/me/dataTypes/weight/dataPoints/ok']
     }
   ));
 
@@ -315,12 +315,12 @@ function runParserTests() {
   t('buildSampleTimeFromUtc_ formats physical + civil time', () => eq(
     buildSampleTimeFromUtc_(Date.UTC(2026, 0, 15, 17, 0, 0), -18000),
     {
-      physicalTime: '2026-01-15T17:00:00Z',
-      utcOffset: '-18000s',
       civilTime: {
-        date: { year: 2026, month: 1, day: 15 },
+        date: { day: 15, month: 1, year: 2026 },
         time: { hours: 12, minutes: 0, seconds: 0 }
-      }
+      },
+      physicalTime: '2026-01-15T17:00:00Z',
+      utcOffset: '-18000s'
     }
   ));
 
@@ -385,10 +385,10 @@ function runParserTests() {
   t('buildIntervalFromUtc_ formats interval', () => eq(
     buildIntervalFromUtc_(Date.UTC(2026, 0, 15, 17, 0, 0), EST, Date.UTC(2026, 0, 15, 18, 0, 0), EST),
     {
-      startTime: '2026-01-15T17:00:00Z',
-      startUtcOffset: '-18000s',
       endTime: '2026-01-15T18:00:00Z',
-      endUtcOffset: '-18000s'
+      endUtcOffset: '-18000s',
+      startTime: '2026-01-15T17:00:00Z',
+      startUtcOffset: '-18000s'
     }
   ));
 
@@ -424,25 +424,38 @@ function runParserTests() {
   t('resolveRowTiming_ edit source preserves interval within bounds', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
     const last = new Date(Date.UTC(2026, 0, 15, 18, 0, 0));
-    const r = resolveRowTiming_({ exerciseFirstEditedAt: first, exercisesLastEditedAt: last, weightEditedAt: first, date: JAN_15_NOON_UTC }, 0, null);
+    const r = resolveRowTiming_({
+      date: JAN_15_NOON_UTC,
+      exerciseFirstEditedAt: first,
+      exercisesLastEditedAt: last,
+      weightEditedAt: first
+    }, 0, null);
     eq(r.exerciseSource, 'edit');
     eq(r.weightSource, 'edit');
     eq(r.exercise.startUtcMs, first.getTime());
     eq(r.exercise.endUtcMs, last.getTime());
     eq(r.exercise.startOffsetSeconds, EST);
     eq(r.exercise.endOffsetSeconds, EST);
-    eq(r.weight, { utcMs: first.getTime(), offsetSeconds: EST });
+    eq(r.weight, { offsetSeconds: EST, utcMs: first.getTime() });
   });
   t('resolveRowTiming_ edit source clamps too-short duration to MIN (10 min)', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
     const last = new Date(first.getTime() + 60 * 1000);
-    const r = resolveRowTiming_({ exerciseFirstEditedAt: first, exercisesLastEditedAt: last, date: JAN_15_NOON_UTC }, 0, null);
+    const r = resolveRowTiming_({
+      date: JAN_15_NOON_UTC,
+      exerciseFirstEditedAt: first,
+      exercisesLastEditedAt: last
+    }, 0, null);
     eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 10 * 60 * 1000);
   });
   t('resolveRowTiming_ edit source accepts a span right at MAX (120 min)', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
     const last = new Date(first.getTime() + MAX_EXERCISE_DURATION_MS);
-    const r = resolveRowTiming_({ exerciseFirstEditedAt: first, exercisesLastEditedAt: last, date: JAN_15_NOON_UTC }, 0, null);
+    const r = resolveRowTiming_({
+      date: JAN_15_NOON_UTC,
+      exerciseFirstEditedAt: first,
+      exercisesLastEditedAt: last
+    }, 0, null);
     eq(r.exerciseSource, 'edit');
     eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 120 * 60 * 1000);
   });
@@ -453,11 +466,11 @@ function runParserTests() {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
     const last = new Date(first.getTime() + 5 * 60 * 60 * 1000);   // corrected hours later
     const prior = { exercise: { interval: {
-      startTime: '2026-01-15T17:00:00Z', endTime: '2026-01-15T17:30:00Z',
-      startUtcOffset: EST + 's', endUtcOffset: EST + 's'
+      endTime: '2026-01-15T17:30:00Z', endUtcOffset: EST + 's',
+      startTime: '2026-01-15T17:00:00Z', startUtcOffset: EST + 's'
     } } };
     const r = resolveRowTiming_(
-      { exerciseFirstEditedAt: first, exercisesLastEditedAt: last, date: JAN_15_NOON_UTC }, 0, prior);
+      { date: JAN_15_NOON_UTC, exerciseFirstEditedAt: first, exercisesLastEditedAt: last }, 0, prior);
     eq(r.exerciseSource, 'prior');
     eq(r.exercise.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
     eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 30 * 60 * 1000, 'recorded 30 min kept, not stretched');
@@ -468,7 +481,11 @@ function runParserTests() {
   t('resolveRowTiming_ span past MAX with no prior still uses the observed start', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
     const last = new Date(first.getTime() + 5 * 60 * 60 * 1000);
-    const r = resolveRowTiming_({ exerciseFirstEditedAt: first, exercisesLastEditedAt: last, date: JAN_15_NOON_UTC }, 0, null);
+    const r = resolveRowTiming_({
+      date: JAN_15_NOON_UTC,
+      exerciseFirstEditedAt: first,
+      exercisesLastEditedAt: last
+    }, 0, null);
     eq(r.exerciseSource, 'edit');
     eq(r.exercise.startUtcMs, first.getTime(), 'keeps the 9am start rather than synthetic noon');
     eq(r.exercise.endUtcMs - r.exercise.startUtcMs, MAX_EXERCISE_DURATION_MS, 'clamped to the cap');
@@ -480,11 +497,11 @@ function runParserTests() {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
     const last = new Date(first.getTime() + 2.5 * 60 * 60 * 1000);
     const startOnly = { exercise: { interval: {
-      startTime: '2026-01-15T17:00:00Z', endTime: '2026-01-15T17:10:00Z',
-      startUtcOffset: EST + 's', endUtcOffset: EST + 's'
+      endTime: '2026-01-15T17:10:00Z', endUtcOffset: EST + 's',
+      startTime: '2026-01-15T17:00:00Z', startUtcOffset: EST + 's'
     } } };
     const r = resolveRowTiming_(
-      { exerciseFirstEditedAt: first, exercisesLastEditedAt: last, date: JAN_15_NOON_UTC }, 0, startOnly);
+      { date: JAN_15_NOON_UTC, exerciseFirstEditedAt: first, exercisesLastEditedAt: last }, 0, startOnly);
     eq(r.exerciseSource, 'prior');
     eq(r.exercise.endUtcMs - r.exercise.startUtcMs, MIN_EXERCISE_DURATION_MS);
   });
@@ -493,12 +510,20 @@ function runParserTests() {
   t('resolveRowTiming_ edit source survives a midnight-crossing workout', () => {
     const first = new Date(Date.UTC(2026, 0, 16, 4, 45, 0));   // 11:45pm EST Jan 15
     const last = new Date(Date.UTC(2026, 0, 16, 5, 15, 0));    // 12:15am EST Jan 16
-    const r = resolveRowTiming_({ exerciseFirstEditedAt: first, exercisesLastEditedAt: last, date: JAN_15_NOON_UTC }, 0, null);
+    const r = resolveRowTiming_({
+      date: JAN_15_NOON_UTC,
+      exerciseFirstEditedAt: first,
+      exercisesLastEditedAt: last
+    }, 0, null);
     eq(r.exerciseSource, 'edit');
     eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 30 * 60 * 1000);
   });
   t('resolveRowTiming_ synthetic source when no edit timestamps', () => {
-    const r = resolveRowTiming_({ exerciseFirstEditedAt: null, exercisesLastEditedAt: null, date: JAN_15_NOON_UTC }, 0, null);
+    const r = resolveRowTiming_({
+      date: JAN_15_NOON_UTC,
+      exerciseFirstEditedAt: null,
+      exercisesLastEditedAt: null
+    }, 0, null);
     eq(r.exerciseSource, 'synthetic');
     eq(r.weightSource, 'synthetic');
     eq(r.exercise.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
@@ -509,16 +534,26 @@ function runParserTests() {
     // exerciseFirstEditedAt no longer feeds weight, so without weightEditedAt
     // the weight phase falls through to synthetic noon on row.date.
     const first = new Date(Date.UTC(2026, 0, 15, 20, 0, 0));
-    const r = resolveRowTiming_({ exerciseFirstEditedAt: first, exercisesLastEditedAt: null, weightEditedAt: null, date: JAN_15_NOON_UTC }, 0, null);
+    const r = resolveRowTiming_({
+      date: JAN_15_NOON_UTC,
+      exerciseFirstEditedAt: first,
+      exercisesLastEditedAt: null,
+      weightEditedAt: null
+    }, 0, null);
     eq(r.weightSource, 'synthetic');
     eq(r.weight.utcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
   });
   t('resolveRowTiming_ weight uses weightEditedAt on weight-only row with no exerciseFirstEditedAt', () => {
     const wEdit = new Date(Date.UTC(2026, 0, 15, 22, 0, 0));
-    const r = resolveRowTiming_({ exerciseFirstEditedAt: null, exercisesLastEditedAt: null, weightEditedAt: wEdit, date: JAN_15_NOON_UTC }, 0, null);
+    const r = resolveRowTiming_({
+      date: JAN_15_NOON_UTC,
+      exerciseFirstEditedAt: null,
+      exercisesLastEditedAt: null,
+      weightEditedAt: wEdit
+    }, 0, null);
     eq(r.exerciseSource, 'synthetic');
     eq(r.weightSource, 'edit');
-    eq(r.weight, { utcMs: wEdit.getTime(), offsetSeconds: EST });
+    eq(r.weight, { offsetSeconds: EST, utcMs: wEdit.getTime() });
     eq(r.exercise.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));   // exercise synthetic
   });
 
@@ -530,10 +565,10 @@ function runParserTests() {
 
   t('resolveRowTiming_ off-date edit with no prior -> synthetic', () => {
     const r = resolveRowTiming_({
+      date: JAN_15_NOON_UTC,
       exerciseFirstEditedAt: JAN_20_3PM_EST,
       exercisesLastEditedAt: JAN_20_4PM_EST,
-      weightEditedAt: JAN_20_3PM_EST,
-      date: JAN_15_NOON_UTC
+      weightEditedAt: JAN_20_3PM_EST
     }, 0, null);
     eq(r.exerciseSource, 'synthetic');
     eq(r.weightSource, 'synthetic');
@@ -547,17 +582,17 @@ function runParserTests() {
     const priorExercise = {
       exercise: {
         interval: {
-          startTime: '2026-01-15T18:30:00Z',
-          startUtcOffset: '-18000s',
           endTime: '2026-01-15T19:15:00Z',
-          endUtcOffset: '-18000s'
+          endUtcOffset: '-18000s',
+          startTime: '2026-01-15T18:30:00Z',
+          startUtcOffset: '-18000s'
         }
       }
     };
     const r = resolveRowTiming_({
+      date: JAN_15_NOON_UTC,
       exerciseFirstEditedAt: JAN_20_3PM_EST,
-      exercisesLastEditedAt: JAN_20_4PM_EST,
-      date: JAN_15_NOON_UTC
+      exercisesLastEditedAt: JAN_20_4PM_EST
     }, 0, priorExercise);
     eq(r.exerciseSource, 'prior');
     eq(r.exercise.startUtcMs, priorStart);
@@ -572,17 +607,17 @@ function runParserTests() {
     const priorExercise = {
       exercise: {
         interval: {
-          startTime: '2026-01-15T16:00:00Z',
-          startUtcOffset: '-18000s',
           endTime: '2026-01-15T16:30:00Z',
-          endUtcOffset: '-18000s'
+          endUtcOffset: '-18000s',
+          startTime: '2026-01-15T16:00:00Z',
+          startUtcOffset: '-18000s'
         }
       }
     };
     const r = resolveRowTiming_({
+      date: JAN_15_NOON_UTC,
       exerciseFirstEditedAt: first,
-      exercisesLastEditedAt: last,
-      date: JAN_15_NOON_UTC
+      exercisesLastEditedAt: last
     }, 0, priorExercise);
     eq(r.exerciseSource, 'edit');
     eq(r.exercise.startUtcMs, first.getTime());
@@ -594,16 +629,16 @@ function runParserTests() {
   // edit-derived window or an interval we recorded earlier, so it must win over
   // BOTH 'edit' and 'prior', and its interval is borrowed verbatim.
   const FOREIGN_INTERVAL = {
-    startUtcMs: Date.UTC(2026, 0, 15, 21, 30, 0),
     endUtcMs: Date.UTC(2026, 0, 15, 22, 45, 0),
-    startUtcOffsetSeconds: EST,
-    endUtcOffsetSeconds: EST
+    endUtcOffsetSeconds: EST,
+    startUtcMs: Date.UTC(2026, 0, 15, 21, 30, 0),
+    startUtcOffsetSeconds: EST
   };
   t('resolveRowTiming_ foreign match is borrowed verbatim and beats same-date edits', () => {
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
     const last = new Date(Date.UTC(2026, 0, 15, 18, 0, 0));
     const r = resolveRowTiming_(
-      { exerciseFirstEditedAt: first, exercisesLastEditedAt: last, date: JAN_15_NOON_UTC },
+      { date: JAN_15_NOON_UTC, exerciseFirstEditedAt: first, exercisesLastEditedAt: last },
       0, null, FOREIGN_INTERVAL);
     eq(r.exerciseSource, 'foreign');
     eq(r.exercise.startUtcMs, FOREIGN_INTERVAL.startUtcMs);
@@ -613,11 +648,11 @@ function runParserTests() {
   });
   t('resolveRowTiming_ foreign match beats a prior datapoint', () => {
     const prior = { exercise: { interval: {
-      startTime: '2026-01-15T16:00:00Z', endTime: '2026-01-15T16:30:00Z',
-      startUtcOffset: EST + 's', endUtcOffset: EST + 's'
+      endTime: '2026-01-15T16:30:00Z', endUtcOffset: EST + 's',
+      startTime: '2026-01-15T16:00:00Z', startUtcOffset: EST + 's'
     } } };
     const r = resolveRowTiming_(
-      { exerciseFirstEditedAt: null, exercisesLastEditedAt: null, date: JAN_15_NOON_UTC },
+      { date: JAN_15_NOON_UTC, exerciseFirstEditedAt: null, exercisesLastEditedAt: null },
       0, prior, FOREIGN_INTERVAL);
     eq(r.exerciseSource, 'foreign');
     eq(r.exercise.startUtcMs, FOREIGN_INTERVAL.startUtcMs);
@@ -628,17 +663,17 @@ function runParserTests() {
   t('resolveRowTiming_ foreign match leaves the weight sample time alone', () => {
     const wEdit = new Date(Date.UTC(2026, 0, 15, 22, 0, 0));   // 5pm EST
     const r = resolveRowTiming_(
-      { exerciseFirstEditedAt: null, exercisesLastEditedAt: null, weightEditedAt: wEdit, date: JAN_15_NOON_UTC },
+      { date: JAN_15_NOON_UTC, exerciseFirstEditedAt: null, exercisesLastEditedAt: null, weightEditedAt: wEdit },
       0, null, FOREIGN_INTERVAL);
     eq(r.weightSource, 'edit');
-    eq(r.weight, { utcMs: wEdit.getTime(), offsetSeconds: EST });
+    eq(r.weight, { offsetSeconds: EST, utcMs: wEdit.getTime() });
   });
 
   t('resolveRowTiming_ malformed prior exercise falls through to synthetic', () => {
     const r = resolveRowTiming_({
+      date: JAN_15_NOON_UTC,
       exerciseFirstEditedAt: JAN_20_3PM_EST,
-      exercisesLastEditedAt: JAN_20_4PM_EST,
-      date: JAN_15_NOON_UTC
+      exercisesLastEditedAt: JAN_20_4PM_EST
     }, 0, { exercise: {} });
     eq(r.exerciseSource, 'synthetic');
     eq(r.exercise.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
@@ -648,7 +683,11 @@ function runParserTests() {
     // Only one exercise edit: first == last, no observed end. The MIN floor
     // (10 min) doubles as the start-only default.
     const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
-    const r = resolveRowTiming_({ exerciseFirstEditedAt: first, exercisesLastEditedAt: first, date: JAN_15_NOON_UTC }, 0, null);
+    const r = resolveRowTiming_({
+      date: JAN_15_NOON_UTC,
+      exerciseFirstEditedAt: first,
+      exercisesLastEditedAt: first
+    }, 0, null);
     eq(r.exerciseSource, 'edit');
     eq(r.exercise.startUtcMs, first.getTime());
     eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 10 * 60 * 1000);
@@ -670,40 +709,47 @@ function runParserTests() {
   // hasSendableExercises_: a zero-set-only row has nothing to send.
   t('hasSendableExercises_ false for empty', () => eq(hasSendableExercises_([]), false));
   t('hasSendableExercises_ false when all entries are zero-set', () => eq(
-    hasSendableExercises_([{ name: 'Bench', entries: [{ weight: 200, reps: 5, sets: 0, assisted: false }] }]), false));
+    hasSendableExercises_([{ entries: [{ assisted: false, reps: 5, sets: 0, weight: 200 }], name: 'Bench' }]), false));
   t('hasSendableExercises_ true for a real set', () => eq(
-    hasSendableExercises_([{ name: 'Bench', entries: [{ weight: 200, reps: 5, sets: 1, assisted: false }] }]), true));
+    hasSendableExercises_([{ entries: [{ assisted: false, reps: 5, sets: 1, weight: 200 }], name: 'Bench' }]), true));
   t('hasSendableExercises_ true for unknown-sets entry (sets null)', () => eq(
-    hasSendableExercises_([{ name: 'Bench', entries: [{ weight: 200, reps: 5, sets: null, assisted: false }] }]), true));
+    hasSendableExercises_([{ entries: [{ assisted: false, reps: 5, sets: null, weight: 200 }], name: 'Bench' }]), true));
   t('hasSendableExercises_ true when mixed zero-set and real', () => eq(
-    hasSendableExercises_([{ name: 'Bench', entries: [
-      { weight: 200, reps: 5, sets: 0, assisted: false },
-      { weight: 200, reps: 5, sets: 2, assisted: false }
-    ] }]), true));
+    hasSendableExercises_([{ entries: [
+      { assisted: false, reps: 5, sets: 0, weight: 200 },
+      { assisted: false, reps: 5, sets: 2, weight: 200 }
+    ], name: 'Bench' }]), true));
 
   // selectBackstopRows_: recent + sendable + not-yet-matched rows only.
   const bsNow = Date.UTC(2026, 0, 15, 17, 0, 0);   // noon EST Jan 15
   const bsDate = ymd => new Date(Date.UTC(2026, 0, ymd, 17, 0, 0));
-  const sendable = [{ name: 'Bench', entries: [{ weight: 200, reps: 5, sets: 2, assisted: false }] }];
-  const zeroOnly = [{ name: 'Bench', entries: [{ weight: 200, reps: 5, sets: 0, assisted: false }] }];
+  const sendable = [{ entries: [{ assisted: false, reps: 5, sets: 2, weight: 200 }], name: 'Bench' }];
+  const zeroOnly = [{ entries: [{ assisted: false, reps: 5, sets: 0, weight: 200 }], name: 'Bench' }];
   t('selectBackstopRows_ picks recent unmatched sendable rows, drops matched/old/empty', () => {
     const rows = [
-      { rowNum: 2, date: bsDate(15), exercises: sendable, matchedHealthSession: '' },        // today, unmatched -> pick
-      { rowNum: 3, date: bsDate(14), exercises: sendable, matchedHealthSession: '' },        // yesterday, unmatched -> pick
-      { rowNum: 4, date: bsDate(15), exercises: sendable, matchedHealthSession: 'foreign/x' }, // matched -> skip
-      { rowNum: 5, date: bsDate(13), exercises: sendable, matchedHealthSession: '' },        // 2 days back (outside lookback=2) -> skip
-      { rowNum: 6, date: bsDate(15), exercises: zeroOnly, matchedHealthSession: '' }          // no sendable content -> skip
+      { date: bsDate(15), exercises: sendable, matchedHealthSession: '', rowNum: 2 },        // today, unmatched -> pick
+      // yesterday, unmatched -> pick
+      { date: bsDate(14), exercises: sendable, matchedHealthSession: '', rowNum: 3 },
+      { date: bsDate(15), exercises: sendable, matchedHealthSession: 'foreign/x', rowNum: 4 }, // matched -> skip
+      // 2 days back (outside lookback=2) -> skip
+      { date: bsDate(13), exercises: sendable, matchedHealthSession: '', rowNum: 5 },
+      // no sendable content -> skip
+      { date: bsDate(15), exercises: zeroOnly, matchedHealthSession: '', rowNum: 6 }
     ];
     eq(selectBackstopRows_(rows, bsNow, 2).map(r => r.rowNum), [2, 3]);
   });
 
   t('selectBackstopRows_ wantMatched=true picks recent matched sendable rows, drops unmatched/old/empty', () => {
     const rows = [
-      { rowNum: 2, date: bsDate(15), exercises: sendable, matchedHealthSession: 'foreign/a' },  // today, matched -> pick
-      { rowNum: 3, date: bsDate(14), exercises: sendable, matchedHealthSession: 'foreign/b' },  // yesterday, matched -> pick
-      { rowNum: 4, date: bsDate(15), exercises: sendable, matchedHealthSession: '' },           // unmatched -> skip
-      { rowNum: 5, date: bsDate(13), exercises: sendable, matchedHealthSession: 'foreign/c' },  // outside lookback -> skip
-      { rowNum: 6, date: bsDate(15), exercises: zeroOnly, matchedHealthSession: 'foreign/d' }   // no sendable content -> skip
+      // today, matched -> pick
+      { date: bsDate(15), exercises: sendable, matchedHealthSession: 'foreign/a', rowNum: 2 },
+      // yesterday, matched -> pick
+      { date: bsDate(14), exercises: sendable, matchedHealthSession: 'foreign/b', rowNum: 3 },
+      { date: bsDate(15), exercises: sendable, matchedHealthSession: '', rowNum: 4 },           // unmatched -> skip
+      // outside lookback -> skip
+      { date: bsDate(13), exercises: sendable, matchedHealthSession: 'foreign/c', rowNum: 5 },
+      // no sendable content -> skip
+      { date: bsDate(15), exercises: zeroOnly, matchedHealthSession: 'foreign/d', rowNum: 6 }
     ];
     eq(selectBackstopRows_(rows, bsNow, 2, true).map(r => r.rowNum), [2, 3]);
   });
@@ -716,13 +762,13 @@ function runParserTests() {
   // hasWeightText. Those two are raw-cell facts, so a fixture that omits them
   // makes the guard vacuously true and the test pass for the wrong reason.
   const sRow = o => Object.assign({
-    rowNum: 2, exercises: sendable, bodyweight: 185, healthIds: [],
-    exerciseSyncedAt: 'SYNC', weightSyncedAt: 'SYNC',
-    hasExerciseText: true, hasWeightText: true
+    bodyweight: 185, exerciseSyncedAt: 'SYNC',
+    exercises: sendable, hasExerciseText: true,
+    hasWeightText: true, healthIds: [], rowNum: 2, weightSyncedAt: 'SYNC'
   }, o);
   // A row the user actually emptied: nothing parsed AND nothing in the cells.
   const cleared = o => sRow(Object.assign({
-    exercises: [], bodyweight: null, hasExerciseText: false, hasWeightText: false
+    bodyweight: null, exercises: [], hasExerciseText: false, hasWeightText: false
   }, o));
   const EX_ID = 'users/me/dataTypes/exercise/dataPoints/E1';
   const WT_ID = 'users/me/dataTypes/weight/dataPoints/W1';
@@ -747,7 +793,7 @@ function runParserTests() {
   // re-dirtying it would only cost an extra write.
   t('selectStaleDataPointRows_ skips rows that are already dirty', () => eq(
     selectStaleDataPointRows_([cleared({
-      healthIds: [EX_ID, WT_ID], exerciseSyncedAt: '', weightSyncedAt: ''
+      exerciseSyncedAt: '', healthIds: [EX_ID, WT_ID], weightSyncedAt: ''
     })]),
     { exerciseRowNums: [], weightRowNums: [] }));
 
@@ -759,10 +805,10 @@ function runParserTests() {
   // same to `bodyweight`. Both leave the raw text in place, which is what these
   // two guard on.
   t('selectStaleDataPointRows_ spares a row whose exercise cells still hold text', () => eq(
-    selectStaleDataPointRows_([cleared({ healthIds: [EX_ID], hasExerciseText: true })]),
+    selectStaleDataPointRows_([cleared({ hasExerciseText: true, healthIds: [EX_ID] })]),
     { exerciseRowNums: [], weightRowNums: [] }));
   t('selectStaleDataPointRows_ spares a row whose Weight cell still holds text', () => eq(
-    selectStaleDataPointRows_([cleared({ healthIds: [WT_ID], hasWeightText: true })]),
+    selectStaleDataPointRows_([cleared({ hasWeightText: true, healthIds: [WT_ID] })]),
     { exerciseRowNums: [], weightRowNums: [] }));
   // A zero-set-only row parses to no sendable content but its cell is not
   // empty, so the backstop leaves it alone; the single-cell onEdit clear path
@@ -776,9 +822,9 @@ function runParserTests() {
   // content, this requires none, so the backstop can concat without dedup.
   t('selectStaleDataPointRows_ and selectBackstopRows_ never select the same exercise row', () => {
     const rows = [
-      Object.assign(sRow({ rowNum: 2, healthIds: [EX_ID] }),
+      Object.assign(sRow({ healthIds: [EX_ID], rowNum: 2 }),
         { date: bsDate(15), matchedHealthSession: '' }),
-      Object.assign(cleared({ rowNum: 3, healthIds: [EX_ID] }),
+      Object.assign(cleared({ healthIds: [EX_ID], rowNum: 3 }),
         { date: bsDate(15), matchedHealthSession: '' })
     ];
     eq(selectBackstopRows_(rows, bsNow, 2).map(r => r.rowNum), [2], 'foreign re-review takes the row with content');
@@ -787,7 +833,7 @@ function runParserTests() {
 
   // exerciseUnchanged_: skip the recreate only when interval + notes all match.
   const priorEx = (startIso, endIso, notes) => ({
-    exercise: { interval: { startTime: startIso, endTime: endIso }, notes: notes }
+    exercise: { interval: { endTime: endIso, startTime: startIso }, notes: notes }
   });
   const exStart = Date.UTC(2026, 0, 15, 17, 0, 0);
   const exEnd = Date.UTC(2026, 0, 15, 17, 30, 0);
@@ -808,7 +854,7 @@ function runParserTests() {
 
   // selectOrphanDataPointNames_: delete untracked datapoints from our own web
   // client, leave tracked / foreign / other-client / unattributable ones alone.
-  const oCand = (name, clientId) => ({ name: name, googleWebClientId: clientId || null });
+  const oCand = (name, clientId) => ({ googleWebClientId: clientId || null, name: name });
   t('selectOrphanDataPointNames_ deletes our untracked datapoint (client derived from a tracked one)', () => {
     const candidates = [
       oCand('ex/tracked', 'ours'),   // tracked -> establishes "ours"
@@ -846,17 +892,17 @@ function runParserTests() {
   // 2026-01-15 12:00 UTC = 2026-01-15 07:00 EST, civil date 2026-01-15.
   const FOREIGN_DATE = new Date(Date.UTC(2026, 0, 15, 12, 0, 0));
   const fRow_ = (overrides) => Object.assign({
-    rowNum: 10,
     date: FOREIGN_DATE,
-    exercises: [{ name: 'Bench', entries: [{ weight: 135, reps: 5, sets: 3, assisted: false }] }],
+    exerciseFirstEditedAt: null,
+    exercises: [{ entries: [{ assisted: false, reps: 5, sets: 3, weight: 135 }], name: 'Bench' }],
+    exercisesLastEditedAt: null,
     healthIds: [],
     matchedHealthSession: '',
-    exerciseFirstEditedAt: null,
-    exercisesLastEditedAt: null
+    rowNum: 10
   }, overrides);
   const fCand_ = (name, startUtcMs, endUtcMs) => ({
-    name: name, startUtcMs: startUtcMs, endUtcMs: endUtcMs,
-    startUtcOffsetSeconds: EST, endUtcOffsetSeconds: EST
+    endUtcMs: endUtcMs, endUtcOffsetSeconds: EST, name: name,
+    startUtcMs: startUtcMs, startUtcOffsetSeconds: EST
   });
 
   t('resolveForeignMatches_ time-range matches on-date row to overlapping candidate', () => {
@@ -879,9 +925,10 @@ function runParserTests() {
     // just after midnight (12:00-12:30am EST Jan 16), a different civil date
     // than the row, and must still match on absolute-UTC overlap.
     const row = fRow_({
-      rowNum: 10,
-      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 16, 4, 45, 0)),   // 11:45pm EST Jan 15
-      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 16, 5, 15, 0))    // 12:15am EST Jan 16
+      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 16, 4, 45, 0)),
+      // 11:45pm EST Jan 15
+exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 16, 5, 15, 0)),   
+      rowNum: 10    // 12:15am EST Jan 16
     });
     const cand = fCand_('foreign/after-midnight',
       Date.UTC(2026, 0, 16, 5, 0, 0), Date.UTC(2026, 0, 16, 5, 30, 0));   // 12:00-12:30am EST Jan 16
@@ -923,10 +970,10 @@ function runParserTests() {
     // aligned to itself on re-sync.
     const ownName = 'users/me/dataTypes/exercise/dataPoints/123';
     const row = fRow_({
-      rowNum: 10,
-      healthIds: [ownName],
       exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),
-      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0))
+      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0)),
+      healthIds: [ownName],
+      rowNum: 10
     });
     const cand = fCand_(ownName,
       Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
@@ -942,14 +989,14 @@ function runParserTests() {
     // off the full-sheet allMatchedSessions list, so it holds whether row 5 is
     // merely not-ready this pass or was dropped by readRows for a blank Date.
     const readyRow = fRow_({
-      rowNum: 10,
       exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),
-      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0))
+      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0)),
+      rowNum: 10
     });
     const cand = fCand_('foreign/A',
       Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
     withStubbedList(() => [cand], () => {
-      const plan = resolveForeignMatches_([], [{ rowNum: 5, name: 'foreign/A' }], [readyRow]);
+      const plan = resolveForeignMatches_([], [{ name: 'foreign/A', rowNum: 5 }], [readyRow]);
       eq(plan[10], undefined);
     });
   });
@@ -961,9 +1008,10 @@ function runParserTests() {
     // at 5pm on row.date. With clamping (2h + 30min buffer = 12:30pm
     // cutoff), that candidate is excluded.
     const row = fRow_({
-      rowNum: 10,
-      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 14, 0, 0)),  // 9am EST Jan 15
-      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 20, 14, 0, 0))   // 9am EST Jan 20
+      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 14, 0, 0)),
+      // 9am EST Jan 15
+exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 20, 14, 0, 0)),  
+      rowNum: 10   // 9am EST Jan 20
     });
     // Candidate at 5pm-6pm EST Jan 15, outside the clamped window but
     // inside the unclamped one.
@@ -1000,14 +1048,16 @@ function runParserTests() {
   // timing rather than being aligned to a workout another row already owns.
   t('resolveForeignMatches_ gives one candidate to a single row, not to both', () => {
     const rowA = fRow_({
-      rowNum: 10,
-      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),    // 5:00pm EST
-      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 30, 0))
+      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),
+      // 5:00pm EST
+exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 30, 0)),    
+      rowNum: 10
     });
     const rowB = fRow_({
-      rowNum: 11,
-      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 15, 0)),   // 5:15pm EST
-      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 45, 0))
+      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 15, 0)),
+      // 5:15pm EST
+exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 45, 0)),   
+      rowNum: 11
     });
     const cand = fCand_('foreign/only',
       Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
@@ -1020,14 +1070,16 @@ function runParserTests() {
 
   t('resolveForeignMatches_ assigns each of two rows its own overlapping candidate', () => {
     const morningRow = fRow_({
-      rowNum: 10,
-      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 14, 0, 0)),    // 9:00am EST
-      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 14, 30, 0))
+      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 14, 0, 0)),
+      // 9:00am EST
+exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 14, 30, 0)),    
+      rowNum: 10
     });
     const eveningRow = fRow_({
-      rowNum: 11,
-      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),    // 5:00pm EST
-      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 30, 0))
+      exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),
+      // 5:00pm EST
+exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 30, 0)),    
+      rowNum: 11
     });
     const morningCand = fCand_('foreign/morning',
       Date.UTC(2026, 0, 15, 14, 0, 0), Date.UTC(2026, 0, 15, 15, 0, 0));
@@ -1044,10 +1096,10 @@ function runParserTests() {
   // not anchor a window and claim a candidate a real row could have used.
   t('resolveForeignMatches_ zero-set-only row anchors no window', () => {
     const row = fRow_({
-      rowNum: 10,
-      exercises: [{ name: 'Bench', entries: [{ weight: 200, reps: 5, sets: 0, assisted: false }] }],
       exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),
-      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0))
+      exercises: [{ entries: [{ assisted: false, reps: 5, sets: 0, weight: 200 }], name: 'Bench' }],
+      exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0)),
+      rowNum: 10
     });
     const cand = fCand_('foreign/A',
       Date.UTC(2026, 0, 15, 22, 0, 0), Date.UTC(2026, 0, 15, 23, 0, 0));
@@ -1077,8 +1129,8 @@ function runParserTests() {
     eq(sent.payload.exercise.notes, 'Bench press, 135 lbs, 3 sets of 5');
     eq(sent.payload.exercise.activeDuration, '1800s');
     eq(sent.payload.exercise.interval, {
-      startTime: '2026-01-15T17:00:00Z', startUtcOffset: '-18000s',
-      endTime: '2026-01-15T17:30:00Z', endUtcOffset: '-18000s'
+      endTime: '2026-01-15T17:30:00Z', endUtcOffset: '-18000s',
+      startTime: '2026-01-15T17:00:00Z', startUtcOffset: '-18000s'
     });
   });
 
@@ -1115,7 +1167,7 @@ function runParserTests() {
     let sent = null;
     withGlobals({
       httpJson_: (method, url, payload) => {
-        sent = { method: method, url: url, payload: payload };
+        sent = { method: method, payload: payload, url: url };
         return {};
       }
     }, () => patchWeight('users/123/dataTypes/weight/dataPoints/W1', sampleTime, 186));
@@ -1129,17 +1181,17 @@ function runParserTests() {
   // null googleWebClientId for device / first-party sources.
   t('listStrengthOnDate keeps usable STRENGTH_TRAINING only and maps the client id', () => {
     const point = (name, type, startTime, endTime, app) => ({
-      name: name,
+      dataSource: { application: app },
       exercise: startTime === null
         ? { exerciseType: type }
         : {
           exerciseType: type,
           interval: {
-            startTime: startTime, endTime: endTime,
-            startUtcOffset: '-18000s', endUtcOffset: '-18000s'
+            endTime: endTime, endUtcOffset: '-18000s',
+            startTime: startTime, startUtcOffset: '-18000s'
           }
         },
-      dataSource: { application: app }
+      name: name
     });
     const out = withGlobals({
       httpJson_: () => ({ dataPoints: [
@@ -1161,7 +1213,7 @@ function runParserTests() {
   // no duplicate dates, year within [MIN_ROW_DATE_YEAR, MAX_ROW_DATE_YEAR]).
   // UTC noon keeps the civil date stable in the test time zone.
   const vDate = (y, m, d) => new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
-  const vRow = (rowNum, date) => ({ rowNum: rowNum, date: date });
+  const vRow = (rowNum, date) => ({ date: date, rowNum: rowNum });
 
   t('findRowDateViolation_ empty rows -> null', () => eq(findRowDateViolation_([]), null));
   t('findRowDateViolation_ increasing in-range dates -> null', () =>

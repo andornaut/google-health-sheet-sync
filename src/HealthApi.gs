@@ -7,17 +7,17 @@ let cachedAuthHeaders_ = null;
 function authHeaders_() {
   if (cachedAuthHeaders_) return cachedAuthHeaders_;
   cachedAuthHeaders_ = {
-    Authorization: 'Bearer ' + getHealthAccessToken_(),
-    Accept: 'application/json'
+    Accept: 'application/json',
+    Authorization: 'Bearer ' + getHealthAccessToken_()
   };
   return cachedAuthHeaders_;
 }
 
 function httpJson_(method, url, payload) {
   const options = {
-    method: method,
     contentType: 'application/json',
     headers: authHeaders_(),
+    method: method,
     muteHttpExceptions: true
   };
   if (payload !== undefined) options.payload = JSON.stringify(payload);
@@ -173,7 +173,7 @@ function listWeightOnDate(date) {
   for (const p of points) {
     if (!p || !p.name) continue;
     const app = p.dataSource && p.dataSource.application;
-    out.push({ name: p.name, googleWebClientId: (app && app.googleWebClientId) || null });
+    out.push({ googleWebClientId: (app && app.googleWebClientId) || null, name: p.name });
   }
   return out;
 }
@@ -190,12 +190,12 @@ function getTzOffsetSeconds_(tz, date) {
 function civilDateParts_(tz, date) {
   const parts = Utilities.formatDate(date, tz, 'yyyy MM dd HH mm ss').split(' ');
   return {
-    year: Number(parts[0]),
-    month: Number(parts[1]),
     day: Number(parts[2]),
     hours: Number(parts[3]),
     minutes: Number(parts[4]),
-    seconds: Number(parts[5])
+    month: Number(parts[1]),
+    seconds: Number(parts[5]),
+    year: Number(parts[0])
   };
 }
 
@@ -213,15 +213,15 @@ function localCivilToUtcMs_(tz, year, month, day, hour, minute) {
     utcMs = baseMs - offset2 * 1000;
     offset = offset2;
   }
-  return { utcMs: utcMs, offsetSeconds: offset };
+  return { offsetSeconds: offset, utcMs: utcMs };
 }
 
 function buildIntervalFromUtc_(startUtcMs, startOffsetSeconds, endUtcMs, endOffsetSeconds) {
   return {
-    startTime: Utilities.formatDate(new Date(startUtcMs), 'GMT', "yyyy-MM-dd'T'HH:mm:ss'Z'"),
-    startUtcOffset: startOffsetSeconds + 's',
     endTime: Utilities.formatDate(new Date(endUtcMs), 'GMT', "yyyy-MM-dd'T'HH:mm:ss'Z'"),
-    endUtcOffset: endOffsetSeconds + 's'
+    endUtcOffset: endOffsetSeconds + 's',
+    startTime: Utilities.formatDate(new Date(startUtcMs), 'GMT', "yyyy-MM-dd'T'HH:mm:ss'Z'"),
+    startUtcOffset: startOffsetSeconds + 's'
   };
 }
 
@@ -229,12 +229,12 @@ function buildSampleTimeFromUtc_(utcMs, offsetSeconds) {
   const civil = new Date(utcMs);
   const p = civilDateParts_(getTz_(), civil);
   return {
-    physicalTime: Utilities.formatDate(civil, 'GMT', "yyyy-MM-dd'T'HH:mm:ss'Z'"),
-    utcOffset: offsetSeconds + 's',
     civilTime: {
-      date: { year: p.year, month: p.month, day: p.day },
+      date: { day: p.day, month: p.month, year: p.year },
       time: { hours: p.hours, minutes: p.minutes, seconds: p.seconds }
-    }
+    },
+    physicalTime: Utilities.formatDate(civil, 'GMT', "yyyy-MM-dd'T'HH:mm:ss'Z'"),
+    utcOffset: offsetSeconds + 's'
   };
 }
 
@@ -259,10 +259,10 @@ function syntheticExerciseInterval_(date, ordinal) {
   const start = localCivilToUtcMs_(tz, p.year, p.month, p.day, startHour, 0);
   const end = localCivilToUtcMs_(tz, p.year, p.month, p.day, endHour, 0);
   return {
-    startUtcMs: start.utcMs,
-    startOffsetSeconds: start.offsetSeconds,
+    endOffsetSeconds: end.offsetSeconds,
     endUtcMs: end.utcMs,
-    endOffsetSeconds: end.offsetSeconds
+    startOffsetSeconds: start.offsetSeconds,
+    startUtcMs: start.utcMs
   };
 }
 
@@ -270,7 +270,7 @@ function syntheticWeightSample_(date) {
   const tz = getTz_();
   const p = civilDateParts_(tz, date);
   const sample = localCivilToUtcMs_(tz, p.year, p.month, p.day, 12, 0);
-  return { utcMs: sample.utcMs, offsetSeconds: sample.offsetSeconds };
+  return { offsetSeconds: sample.offsetSeconds, utcMs: sample.utcMs };
 }
 
 // List all Strength Training datapoints whose civil start time falls on
@@ -298,12 +298,12 @@ function listStrengthOnDate(date) {
     if (isNaN(pStartMs) || isNaN(pEndMs)) continue;
     const app = p.dataSource && p.dataSource.application;
     out.push({
+      endUtcMs: pEndMs,
+      endUtcOffsetSeconds: parseOffsetSeconds_(interval.endUtcOffset),
+      googleWebClientId: (app && app.googleWebClientId) || null,
       name: p.name,
       startUtcMs: pStartMs,
-      endUtcMs: pEndMs,
-      startUtcOffsetSeconds: parseOffsetSeconds_(interval.startUtcOffset),
-      endUtcOffsetSeconds: parseOffsetSeconds_(interval.endUtcOffset),
-      googleWebClientId: (app && app.googleWebClientId) || null
+      startUtcOffsetSeconds: parseOffsetSeconds_(interval.startUtcOffset)
     });
   }
   // Already sorted by startUtcMs because listExercisesOnDate sorts by the
@@ -316,7 +316,7 @@ function listStrengthOnDate(date) {
 // Any name that doesn't match a known type goes into `other` and is left
 // untouched by both phases.
 function splitHealthIdsByType_(names) {
-  const out = { weight: [], exercise: [], other: [] };
+  const out = { exercise: [], other: [], weight: [] };
   (names || []).forEach(n => {
     const m = DATAPOINT_NAME_RE_.exec(n);
     if (!m) {
@@ -346,11 +346,11 @@ function createExerciseAt(startUtcMs, startOffsetSeconds, endUtcMs, endOffsetSec
   const payload = {
     dataSource: { recordingMethod: 'MANUAL' },
     exercise: {
-      interval: buildIntervalFromUtc_(startUtcMs, startOffsetSeconds, endUtcMs, endOffsetSeconds),
-      exerciseType: 'STRENGTH_TRAINING',
+      activeDuration: durationSec + 's',
       displayName: 'Strength Training',
-      notes: notes,
-      activeDuration: durationSec + 's'
+      exerciseType: 'STRENGTH_TRAINING',
+      interval: buildIntervalFromUtc_(startUtcMs, startOffsetSeconds, endUtcMs, endOffsetSeconds),
+      notes: notes
     }
   };
   const resp = httpJson_('POST', url, payload);
@@ -372,8 +372,8 @@ function createWeightAt(sampleUtcMs, sampleOffsetSeconds, lbs) {
   const payload = {
     dataSource: { recordingMethod: 'MANUAL' },
     weight: {
-      weightGrams: grams,
-      sampleTime: buildSampleTimeFromUtc_(sampleUtcMs, sampleOffsetSeconds)
+      sampleTime: buildSampleTimeFromUtc_(sampleUtcMs, sampleOffsetSeconds),
+      weightGrams: grams
     }
   };
   const resp = httpJson_('POST', url, payload);

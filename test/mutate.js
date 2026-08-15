@@ -155,7 +155,7 @@ const MUTATIONS = [
   { file: 'Sheet.gs', name: 'allHealthIds covers only rows with a parseable Date',
     find: '    healthIds.forEach(n => allHealthIds.push(n));', replace: '    void healthIds;' },
   { file: 'Sheet.gs', name: 'allMatchedSessions covers only rows with a parseable Date',
-    find: '      if (matched) allMatchedSessions.push({ rowNum: rowNum, name: matched });', replace: '      void matched;' },
+    find: '      if (matched) allMatchedSessions.push({ name: matched, rowNum: rowNum });', replace: '      void matched;' },
   { file: 'Sheet.gs', name: 'duplicate exercise column headers are accepted silently',
     find: '  if (duplicates.length > 0) {', replace: '  if (false) {' },
 

@@ -1,6 +1,8 @@
 import js from "@eslint/js";
 import globals from "globals";
 
+import { plugins, sourceRules, toolingRules } from "./eslint.config.base.mjs";
+
 export default [
   {
     ignores: ["node_modules/**"],
@@ -32,7 +34,9 @@ export default [
       },
       sourceType: "script",
     },
+    plugins,
     rules: {
+      ...sourceRules,
       "no-undef": "off",
       "no-unused-vars": [
         "error",
@@ -51,7 +55,9 @@ export default [
       },
       sourceType: "commonjs",
     },
+    plugins,
     rules: {
+      ...toolingRules,
       "no-unused-vars": ["error", { caughtErrors: "none" }],
     },
   },

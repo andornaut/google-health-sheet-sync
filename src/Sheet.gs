@@ -20,7 +20,7 @@ function getHeaderMap_(sheet) {
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
   const map = {};
   headers.forEach((h, i) => { map[String(h).trim()] = i + 1; });
-  return { map: map, headers: headers };
+  return { headers: headers, map: map };
 }
 
 // Format an edited range using column header names: `Header[row]` for one
@@ -65,7 +65,7 @@ function ensureManagedColumns() {
 
 function readRows() {
   const sheet = getSheet_();
-  const { map, headers } = getHeaderMap_(sheet);
+  const { headers, map } = getHeaderMap_(sheet);
   if (!map[DATE_COLUMN_HEADER]) throw new Error('Missing column: ' + DATE_COLUMN_HEADER);
   if (!map[WEIGHT_COLUMN_HEADER]) throw new Error('Missing column: ' + WEIGHT_COLUMN_HEADER);
 
@@ -92,7 +92,7 @@ function readRows() {
       return;
     }
     seenExerciseNames[name] = true;
-    exerciseCols.push({ name: name, col: i + 1 });
+    exerciseCols.push({ col: i + 1, name: name });
   });
   const duplicates = Object.keys(duplicateExerciseNames);
   if (duplicates.length > 0) {
@@ -103,17 +103,17 @@ function readRows() {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) {
     return {
-      rows: [],
       allHealthIds: [],
       allMatchedSessions: [],
-      exerciseSyncedAtCol: exerciseSyncedAtCol,
-      weightSyncedAtCol: weightSyncedAtCol,
-      weightCol: weightCol,
-      healthIdsCol: healthIdsCol,
       exerciseFirstEditedAtCol: exerciseFirstEditedAtCol,
+      exerciseSyncedAtCol: exerciseSyncedAtCol,
       exercisesLastEditedAtCol: exercisesLastEditedAtCol,
+      healthIdsCol: healthIdsCol,
+      matchedHealthSessionCol: matchedHealthSessionCol,
+      rows: [],
+      weightCol: weightCol,
       weightEditedAtCol: weightEditedAtCol,
-      matchedHealthSessionCol: matchedHealthSessionCol
+      weightSyncedAtCol: weightSyncedAtCol
     };
   }
 
@@ -145,7 +145,7 @@ function readRows() {
   // foreign matching would offer them to another row as a "foreign" session.
   // Callers that need ownership (not row content) use this, not `rows`.
   const allHealthIds = [];
-  // Companion to allHealthIds, same rationale: `{ rowNum, name }` for every data
+  // Companion to allHealthIds, same rationale: `{ name, rowNum }` for every data
   // row carrying a Matched Health Session, including dropped ones. A dropped row
   // can never be ready to sync, so the foreign session it borrowed must stay
   // excluded, otherwise another row claims the same session's interval.
@@ -156,7 +156,7 @@ function readRows() {
     healthIds.forEach(n => allHealthIds.push(n));
     if (matchedHealthSessionCol) {
       const matched = String(row[matchedHealthSessionCol - 1] || '').trim();
-      if (matched) allMatchedSessions.push({ rowNum: rowNum, name: matched });
+      if (matched) allMatchedSessions.push({ name: matched, rowNum: rowNum });
     }
     const dateVal = row[dateCol - 1];
     if (!dateVal) return;
@@ -165,7 +165,7 @@ function readRows() {
     const exercises = [];
     exerciseCols.forEach(c => {
       const entries = parseExerciseCell(row[c.col - 1]);
-      if (entries.length > 0) exercises.push({ name: c.name, entries: entries });
+      if (entries.length > 0) exercises.push({ entries: entries, name: c.name });
     });
     const bodyweight = parseBodyweight(row[weightCol - 1]);
     const exerciseSyncedAt = exerciseSyncedAtCol ? row[exerciseSyncedAtCol - 1] : '';
@@ -177,39 +177,69 @@ function readRows() {
       ? String(row[matchedHealthSessionCol - 1] || '').trim()
       : '';
     rows.push({
-      rowNum: rowNum,
-      date: date,
-      exercises: exercises,
       bodyweight: bodyweight,
-      exerciseSyncedAt: exerciseSyncedAt ? String(exerciseSyncedAt).trim() : '',
-      weightSyncedAt: weightSyncedAt ? String(weightSyncedAt).trim() : '',
-      healthIds: healthIds,
+      date: date,
       exerciseFirstEditedAt: exerciseFirstEditedAt,
+      exerciseSyncedAt: exerciseSyncedAt ? String(exerciseSyncedAt).trim() : '',
+      exercises: exercises,
       exercisesLastEditedAt: exercisesLastEditedAt,
-      weightEditedAt: weightEditedAt,
-      matchedHealthSession: matchedHealthSession,
       // Raw-text presence, NOT parse results. "The parser produced nothing" and
-      // "the cell is empty" are different claims, and only the second one means
-      // the user cleared something. selectStaleDataPointRows_ deletes on that
-      // second claim, so it must not be inferred from the first: an unparseable
-      // cell (a reformat to "185 lb", a bodyweight outside the plausible
-      // bounds, a typo) parses to nothing while plainly still holding data.
-      hasExerciseText: textCols.some(c => hasText(row[c - 1])),
-      hasWeightText: hasText(row[weightCol - 1])
+// "the cell is empty" are different claims, and only the second one means
+// the user cleared something. selectStaleDataPointRows_ deletes on that
+// second claim, so it must not be inferred from the first: an unparseable
+// cell (a reformat to "185 lb", a bodyweight outside the plausible
+// bounds, a typo) parses to nothing while plainly still holding data.
+hasExerciseText: textCols.some(c => hasText(row[c - 1])),
+      
+
+
+
+
+
+hasWeightText: hasText(row[weightCol - 1]),
+      
+
+
+
+
+
+healthIds: healthIds,
+      
+
+
+
+
+
+matchedHealthSession: matchedHealthSession,
+      
+
+
+
+
+
+rowNum: rowNum,
+      
+      
+      
+      
+      
+      
+      weightEditedAt: weightEditedAt,
+      weightSyncedAt: weightSyncedAt ? String(weightSyncedAt).trim() : ''
     });
   });
   return {
-    rows: rows,
     allHealthIds: allHealthIds,
     allMatchedSessions: allMatchedSessions,
-    exerciseSyncedAtCol: exerciseSyncedAtCol,
-    weightSyncedAtCol: weightSyncedAtCol,
-    weightCol: weightCol,
-    healthIdsCol: healthIdsCol,
     exerciseFirstEditedAtCol: exerciseFirstEditedAtCol,
+    exerciseSyncedAtCol: exerciseSyncedAtCol,
     exercisesLastEditedAtCol: exercisesLastEditedAtCol,
+    healthIdsCol: healthIdsCol,
+    matchedHealthSessionCol: matchedHealthSessionCol,
+    rows: rows,
+    weightCol: weightCol,
     weightEditedAtCol: weightEditedAtCol,
-    matchedHealthSessionCol: matchedHealthSessionCol
+    weightSyncedAtCol: weightSyncedAtCol
   };
 }
 
@@ -295,7 +325,7 @@ function onEditMarkDirty(e) {
   const lastRow = Math.min(rangeLastRow, sheet.getLastRow());
   if (lastRow < firstRow) return false;
 
-  const { map, headers } = getHeaderMap_(sheet);
+  const { headers, map } = getHeaderMap_(sheet);
   const exerciseSyncedAtCol = map[EXERCISE_SYNCED_AT_COLUMN_HEADER];
   if (!exerciseSyncedAtCol) return false;
   const weightSyncedAtCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER] || null;
@@ -395,13 +425,13 @@ function onEditMarkDirty(e) {
   // drives the weight sample time and the weight phase's concurrent-edit
   // guard, so it should reflect the latest weight cell change.
   writeEditMarkers_(sheet, {
-    exerciseRows: exerciseRows,
-    weightRows: weightRows,
-    exerciseSyncedAtCol: exerciseSyncedAtCol,
-    weightSyncedAtCol: weightSyncedAtCol,
     exerciseFirstEditedAtCol: exerciseFirstEditedAtCol,
+    exerciseRows: exerciseRows,
+    exerciseSyncedAtCol: exerciseSyncedAtCol,
     exercisesLastEditedAtCol: exercisesLastEditedAtCol,
-    weightEditedAtCol: weightEditedAtCol
+    weightEditedAtCol: weightEditedAtCol,
+    weightRows: weightRows,
+    weightSyncedAtCol: weightSyncedAtCol
   });
   return true;
 }
@@ -418,7 +448,7 @@ function rowBlock_(sheet, col, rows) {
     if (r > last) last = r;
   });
   const range = sheet.getRange(first, col, last - first + 1, 1);
-  return { range: range, values: range.getValues(), first: first };
+  return { first: first, range: range, values: range.getValues() };
 }
 
 // Overwrite `col` with `value` for the rows in `rows`, leaving every other row
