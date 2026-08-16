@@ -1793,8 +1793,8 @@ function syncOneRow_(
   if (weightStampMissing || exerciseStampMissing) {
     markPendingDirty_();
     console.info(
-      `${tag}: partial progress; row stays dirty `
-      + `(weightStamped=${!weightStampMissing}, exerciseStamped=${!exerciseStampMissing})`,
+      `${tag}: partial progress; row stays dirty ` +
+        `(weightStamped=${!weightStampMissing}, exerciseStamped=${!exerciseStampMissing})`,
     );
   } else {
     console.info(`${tag}: done`);
