@@ -309,7 +309,10 @@ const logs = [];
 const origLog = quietConsole.log;
 quietConsole.log = (...args) => {
   logs.push(args.join(" "));
-  origLog(...args);
+  // .apply rather than a spread call: console.log's declared signature is not
+  // a bare rest parameter, so spreading an unknown-length array into it is a
+  // type error (TS2556) even though the call is valid at runtime.
+  origLog.apply(quietConsole, args);
 };
 try {
   vm.runInContext("runParserTests();", sandbox);
