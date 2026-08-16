@@ -13,6 +13,7 @@
     "open": "clasp open-script",
     "test": "node test/run.js",
     "lint": "prettier --check . && eslint --max-warnings 0 . && tsc --noEmit -p jsconfig.json && markdownlint *.md",
+    "format": "prettier --write . && eslint --fix .",
     "mutate": "node test/mutate.js"
   },
   "devDependencies": {
