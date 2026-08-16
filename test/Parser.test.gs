@@ -182,17 +182,6 @@ function runParserTests() {
       "Bench press, 135 lbs, 1 set of 5",
     ),
   );
-  t("formatEntryNote_ single rep", () =>
-    eq(
-      formatEntryNote_("Bench press", {
-        assisted: false,
-        reps: 1,
-        sets: 1,
-        weight: 225,
-      }),
-      "Bench press, 225 lbs, 1 set of 1",
-    ),
-  );
   t("formatEntryNote_ assisted suffix", () =>
     eq(
       formatEntryNote_("Pull up", {
@@ -260,6 +249,10 @@ function runParserTests() {
     ),
   );
 
+  // Commas are the field delimiter WITHIN an entry, so the period that ends
+  // each line is what keeps entry boundaries readable, and the duration has to
+  // stand on its own line: glued on as ", 45 minute session" it reads as one
+  // more attribute of the last exercise.
   t(
     "buildNotes one period-terminated line per entry, duration on its own line",
     () => {
@@ -285,21 +278,6 @@ function runParserTests() {
       );
     },
   );
-
-  // The duration must never be glued onto the last entry's line: commas are the
-  // field delimiter within an entry, so a trailing ", 45 minute session" reads
-  // as another attribute of that exercise.
-  t("buildNotes does not append the duration to the last entry line", () => {
-    const notes = buildNotes(45 * 60 * 1000, [
-      {
-        entries: [{ assisted: false, reps: 5, sets: 3, weight: 225 }],
-        name: "Squat",
-      },
-    ]);
-    eq(notes.split("\n").length, 2);
-    eq(notes.split("\n")[0], "Squat, 225 lbs, 3 sets of 5.");
-    eq(notes.split("\n")[1], "45 minute session.");
-  });
 
   t("buildNotes suppresses zero-set entries (start-only markers)", () => {
     const notes = buildNotes(10 * 60 * 1000, [
@@ -327,25 +305,22 @@ function runParserTests() {
     },
   );
 
-  t("buildNotes matches foreign single-entry example", () => {
-    const notes = buildNotes(2700 * 1000, [
-      {
-        entries: [{ assisted: false, reps: 5, sets: 5, weight: 190 }],
-        name: "Bench press",
-      },
-    ]);
-    eq(notes, "Bench press, 190 lbs, 5 sets of 5.\n45 minute session.");
-  });
-
-  t("buildNotes rounds duration to nearest minute", () => {
-    const notes = buildNotes(29 * 1000, [
-      {
-        entries: [{ assisted: false, reps: 5, sets: 5, weight: 190 }],
-        name: "Bench press",
-      },
-    ]);
-    eq(notes, "Bench press, 190 lbs, 5 sets of 5.");
-  });
+  const oneSet = [
+    {
+      entries: [{ assisted: false, reps: 5, sets: 5, weight: 190 }],
+      name: "Bench press",
+    },
+  ];
+  // 90s is 1.5 minutes: rounded it reads "2 minute session", truncated "1".
+  t("buildNotes rounds the session duration to the nearest minute", () =>
+    eq(
+      buildNotes(90 * 1000, oneSet),
+      "Bench press, 190 lbs, 5 sets of 5.\n2 minute session.",
+    ),
+  );
+  t("buildNotes omits the session line when the duration rounds to zero", () =>
+    eq(buildNotes(29 * 1000, oneSet), "Bench press, 190 lbs, 5 sets of 5."),
+  );
 
   t("parseHealthIds_ empty/null", () => {
     eq(parseHealthIds_(""), []);
@@ -680,9 +655,12 @@ function runParserTests() {
     },
   );
 
+  // Fixture times are 9-10am EST, deliberately NOT noon: synthetic timing for
+  // ordinal 0 is noon-1pm, so a fixture there would assert values the synthetic
+  // fallback also produces and the interval checks would hold either way.
   t("resolveRowTiming_ edit source preserves interval within bounds", () => {
-    const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
-    const last = new Date(Date.UTC(2026, 0, 15, 18, 0, 0));
+    const first = new Date(Date.UTC(2026, 0, 15, 14, 0, 0));
+    const last = new Date(Date.UTC(2026, 0, 15, 15, 0, 0));
     const r = resolveRowTiming_(
       {
         date: JAN_15_NOON_UTC,
@@ -775,10 +753,11 @@ function runParserTests() {
   // The span test guards an interval we already recorded, so with no prior it
   // does not apply: the observed on-date start beats synthetic noon, and the
   // MAX clamp bounds the duration. This is the one path where that clamp works.
+  // 9am EST, so "kept the observed start" is distinguishable from synthetic noon.
   t(
     "resolveRowTiming_ span past MAX with no prior still uses the observed start",
     () => {
-      const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
+      const first = new Date(Date.UTC(2026, 0, 15, 14, 0, 0));
       const last = new Date(first.getTime() + 5 * 60 * 60 * 1000);
       const r = resolveRowTiming_(
         {
@@ -1759,11 +1738,9 @@ function runParserTests() {
   t(
     "resolveForeignMatches_ time-range window is clamped to MAX_EXERCISE_DURATION_MS",
     () => {
-      // Row's exerciseFirstEditedAt is 9am on row.date; exercisesLastEditedAt
-      // drifted 5 days forward to 9am the next workout week. Without clamping,
-      // the window would balloon to 5 days and incorrectly catch a candidate
-      // at 5pm on row.date. With clamping (2h + 30min buffer = 12:30pm
-      // cutoff), that candidate is excluded.
+      // First edit 9am on row.date, last edit drifted 5 days forward. Unclamped
+      // the window would span 5 days and catch the 5pm candidate; clamped it
+      // ends at 9am + 2h + the 10min buffer, well before it.
       const row = fRow_({
         exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 14, 0, 0)),
         // 9am EST Jan 15
@@ -1781,9 +1758,6 @@ function runParserTests() {
         () => [cand],
         () => {
           const plan = resolveForeignMatches_([], [], [row]);
-          // Clamped window (9am + 2h + 30min buffer = 12:30pm cutoff) doesn't
-          // reach the 5pm candidate, so no overlap and no alignment. (If clamping
-          // were absent, the 5-day window would have caught 'foreign/late'.)
           eq(plan[10], undefined);
         },
       );
@@ -1793,8 +1767,8 @@ function runParserTests() {
   t(
     "resolveForeignMatches_ time-range picks the best-overlap candidate when several exist",
     () => {
-      // Row window 4:30pm-6:30pm EST (5pm-6pm edit + 30min buffer each side).
-      // candA: 7am-8am EST, no overlap. candB: 5pm-6pm EST, full overlap.
+      // Row window 4:50pm-6:10pm EST (5pm-6pm edit + the 10min buffer each
+      // side). candA: 7am-8am EST, no overlap. candB: 5pm-6pm EST, full overlap.
       const row = fRow_({
         exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),
         exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0)),

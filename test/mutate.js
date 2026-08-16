@@ -14,6 +14,9 @@
 // `find` must match the source EXACTLY and exactly once. A pattern that no
 // longer matches is a hard error, not a skip: the code moved and the entry
 // needs re-anchoring, which is the moment to check the decision still holds.
+// Reformatting the sources breaks every anchor at once, so CI runs this check
+// alongside the suite; without that the catalog rots silently and proves
+// nothing while still reporting success on the entries that happen to match.
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
@@ -43,49 +46,67 @@ const MUTATIONS = [
   {
     file: "Format.gs",
     name: "zero-set entries are no longer suppressed from the notes",
-    find: "      if (!exerciseEntryIsSendable_(entry)) continue;",
+    find: "      if (!exerciseEntryIsSendable_(entry)) {\n        continue;\n      }",
     replace: "      void entry;",
   },
   {
     file: "Format.gs",
     name: "entry lines are no longer period-terminated",
-    find: "      lines.push(formatEntryNote_(ex.name, entry) + '.');",
+    find: "      lines.push(`${formatEntryNote_(ex.name, entry)}.`);",
     replace: "      lines.push(formatEntryNote_(ex.name, entry));",
   },
   {
     file: "Format.gs",
     name: "the duration is glued onto the last entry line again",
-    find: "    lines.push(minutes + ' minute session.');",
+    find: "    lines.push(`${minutes} minute session.`);",
     replace:
-      "    if (lines.length) lines[lines.length - 1] += ', ' + minutes + ' minute session';\n" +
-      "    else lines.push(minutes + ' minute session');",
+      "    if (lines.length) {\n" +
+      "      lines[lines.length - 1] += `, ${minutes} minute session`;\n" +
+      "    } else {\n" +
+      "      lines.push(`${minutes} minute session`);\n" +
+      "    }",
+  },
+  {
+    file: "Format.gs",
+    name: "the session duration is truncated instead of rounded",
+    find: "  const minutes = Math.round(durationMs / 60000);",
+    replace: "  const minutes = Math.floor(durationMs / 60000);",
   },
 
   // ---- Health API shaping -------------------------------------------------
   {
     file: "HealthApi.gs",
     name: "a create returning no resource name no longer throws (exercise)",
-    find: "    throw new Error('createExerciseAt: create returned no datapoint name: ' + JSON.stringify(resp));",
+    find:
+      "    throw new Error(\n" +
+      "      `createExerciseAt: create returned no datapoint name: ${JSON.stringify(resp)}`,\n" +
+      "    );",
     replace: "    return null;",
   },
   {
     file: "HealthApi.gs",
     name: "a create returning no resource name no longer throws (weight)",
-    find: "    throw new Error('createWeightAt: create returned no datapoint name: ' + JSON.stringify(resp));",
+    find:
+      "    throw new Error(\n" +
+      "      `createWeightAt: create returned no datapoint name: ${JSON.stringify(resp)}`,\n" +
+      "    );",
     replace: "    return null;",
   },
   {
     file: "HealthApi.gs",
     name: "listStrengthOnDate no longer filters to STRENGTH_TRAINING",
-    find: "    if (exType !== 'STRENGTH_TRAINING') continue;",
+    find: '    if (exType !== "STRENGTH_TRAINING") {\n      continue;\n    }',
     replace: "    void exType;",
   },
   {
     file: "HealthApi.gs",
     name: "patchWeight no longer rewrites the user id to the literal me",
-    find: "  const url = HEALTH_API_BASE + '/' + toMeName_(name);\n  const grams = Math.round(lbs * GRAMS_PER_LB);",
+    find:
+      "  const url = `${HEALTH_API_BASE}/${toMeName_(name)}`;\n" +
+      "  const grams = Math.round(lbs * GRAMS_PER_LB);",
     replace:
-      "  const url = HEALTH_API_BASE + '/' + name;\n  const grams = Math.round(lbs * GRAMS_PER_LB);",
+      "  const url = `${HEALTH_API_BASE}/${name}`;\n" +
+      "  const grams = Math.round(lbs * GRAMS_PER_LB);",
   },
 
   // ---- Timing resolution --------------------------------------------------
@@ -98,13 +119,13 @@ const MUTATIONS = [
   {
     file: "Main.gs",
     name: "exerciseUnchanged_ stops comparing startTime",
-    find: "  if (new Date(i.startTime).getTime() !== targetStartUtcMs) return false;\n",
+    find: "  if (new Date(i.startTime).getTime() !== targetStartUtcMs) {\n    return false;\n  }\n",
     replace: "",
   },
   {
     file: "Main.gs",
     name: "exerciseUnchanged_ stops comparing notes",
-    find: "  return (ex.notes || '') === (targetNotes || '');",
+    find: '  return (ex.notes || "") === (targetNotes || "");',
     replace: "  return true;",
   },
   {
@@ -116,7 +137,11 @@ const MUTATIONS = [
   {
     file: "Main.gs",
     name: "edit-derived duration loses its MIN floor / start-only default",
-    find: "  return Math.min(Math.max(rawDurationMs, MIN_EXERCISE_DURATION_MS), MAX_EXERCISE_DURATION_MS);",
+    find:
+      "  return Math.min(\n" +
+      "    Math.max(rawDurationMs, MIN_EXERCISE_DURATION_MS),\n" +
+      "    MAX_EXERCISE_DURATION_MS,\n" +
+      "  );",
     replace: "  return Math.min(rawDurationMs, MAX_EXERCISE_DURATION_MS);",
   },
 
@@ -130,25 +155,31 @@ const MUTATIONS = [
   {
     file: "Main.gs",
     name: "sync-created datapoints are no longer excluded as foreign candidates",
-    find: "  splitHealthIdsByType_(allHealthIds).exercise.forEach(name => { excluded[name] = true; });",
+    find:
+      "  splitHealthIdsByType_(allHealthIds).exercise.forEach((name) => {\n" +
+      "    excluded[name] = true;\n" +
+      "  });",
     replace: "  void allHealthIds;",
   },
   {
     file: "Main.gs",
     name: "a session aligned to a non-ready row is no longer excluded",
-    find: "    if (!readyRowNums[m.rowNum]) excluded[m.name] = true;",
+    find: "    if (!readyRowNums[m.rowNum]) {\n      excluded[m.name] = true;\n    }",
     replace: "    void m;",
   },
   {
     file: "Main.gs",
     name: "a zero-set-only row may anchor a foreign-match window",
-    find: "    .filter(r => hasSendableExercises_(r.exercises) && exerciseEditIsOnRowDate_(r))",
-    replace: "    .filter(r => exerciseEditIsOnRowDate_(r))",
+    find: "      (r) => hasSendableExercises_(r.exercises) && exerciseEditIsOnRowDate_(r),",
+    replace: "      (r) => exerciseEditIsOnRowDate_(r),",
   },
   {
     file: "Main.gs",
     name: "the foreign-match window is no longer clamped to MAX_EXERCISE_DURATION_MS",
-    find: "      const clampedEndMs = startMs + capExerciseDurationToMax_(r.exercisesLastEditedAt.getTime() - startMs);",
+    find:
+      "      const clampedEndMs =\n" +
+      "        startMs +\n" +
+      "        capExerciseDurationToMax_(r.exercisesLastEditedAt.getTime() - startMs);",
     replace: "      const clampedEndMs = r.exercisesLastEditedAt.getTime();",
   },
 
@@ -169,9 +200,15 @@ const MUTATIONS = [
   {
     file: "Main.gs",
     name: "a per-row failure aborts the pass instead of being isolated",
-    find: "      } catch (err) {\n        errors++;\n        unexpected.push('row ' + entry.row.rowNum + ': ' + err);",
+    find:
+      "      } catch (err) {\n" +
+      "        errors++;\n" +
+      "        unexpected.push(`row ${entry.row.rowNum}: ${err}`);",
     replace:
-      "      } catch (err) {\n        throw err;\n        // eslint-disable-next-line no-unreachable\n        unexpected.push('row ' + entry.row.rowNum + ': ' + err);",
+      "      } catch (err) {\n" +
+      "        throw err;\n" +
+      "        // eslint-disable-next-line no-unreachable\n" +
+      "        unexpected.push(`row ${entry.row.rowNum}: ${err}`);",
   },
   {
     file: "Main.gs",
@@ -182,8 +219,8 @@ const MUTATIONS = [
   {
     file: "Main.gs",
     name: "the summary throw drops the deferred count",
-    find: "        + (deferredCount > 0 ? ', ' + deferredCount + ' deferred by the row cap' : '')",
-    replace: "        + ''",
+    find: '          deferredCount > 0 ? `, ${deferredCount} deferred by the row cap` : ""',
+    replace: '          ""',
   },
   {
     file: "Main.gs",
@@ -208,8 +245,8 @@ const MUTATIONS = [
   {
     file: "Main.gs",
     name: "a partially-synced row no longer advances the dirty generation",
-    find: "    markPendingDirty_();\n    console.info(tag + ': partial progress",
-    replace: "    console.info(tag + ': partial progress",
+    find: "    markPendingDirty_();\n    console.info(\n      `${tag}: partial progress",
+    replace: "    console.info(\n      `${tag}: partial progress",
   },
   {
     file: "Main.gs",
@@ -220,27 +257,39 @@ const MUTATIONS = [
   {
     file: "Main.gs",
     name: "the idempotency skip no longer requires exactly one prior id",
-    find: "wantCreate && split.exercise.length === 1 && priorExercise",
-    replace: "wantCreate && split.exercise.length >= 1 && priorExercise",
+    find: "      split.exercise.length === 1 &&",
+    replace: "      split.exercise.length >= 1 &&",
   },
   {
     file: "Main.gs",
     name: "a 404 on a prior datapoint delete is retried forever instead of dropped",
-    find: "      if (isNotFoundError_(err)) {\n        console.warn(tag + ': previous ' + label",
+    find: "      if (isNotFoundError_(err)) {\n        console.warn(\n          `${tag}: previous ${label} datapoint",
     replace:
-      "      if (false) {\n        console.warn(tag + ': previous ' + label",
+      "      if (false) {\n        console.warn(\n          `${tag}: previous ${label} datapoint",
   },
   {
     file: "Main.gs",
     name: "prior datapoints are deleted in one batch instead of one name per call",
-    find: "  const remaining = [];\n  names.forEach(name => {\n    try {\n      deleteDataPointsByName([name]);",
+    find:
+      "  const remaining = [];\n" +
+      "  names.forEach((name) => {\n" +
+      "    try {\n" +
+      "      deleteDataPointsByName([name]);",
     replace:
-      "  const remaining = [];\n  names.forEach(name => {\n    try {\n      deleteDataPointsByName(names);",
+      "  const remaining = [];\n" +
+      "  names.forEach((name) => {\n" +
+      "    try {\n" +
+      "      deleteDataPointsByName(names);",
   },
   {
     file: "Main.gs",
     name: "the matched foreign session is no longer recorded on the row",
-    find: "    writeMatchedHealthSession(row.rowNum, cols.matchedHealthSessionCol, foreignMatch ? foreignMatch.name : '');",
+    find:
+      "    writeMatchedHealthSession(\n" +
+      "      row.rowNum,\n" +
+      "      cols.matchedHealthSessionCol,\n" +
+      '      foreignMatch ? foreignMatch.name : "",\n' +
+      "    );",
     replace: "    void foreignMatch;",
   },
 
@@ -260,28 +309,42 @@ const MUTATIONS = [
   {
     file: "Main.gs",
     name: "an unparseable exercise cell counts as cleared (mass-delete on a header change)",
-    find: "      && !hasSendableExercises_(r.exercises) && !r.hasExerciseText) {",
-    replace: "      && !hasSendableExercises_(r.exercises)) {",
+    find:
+      "      !hasSendableExercises_(r.exercises) &&\n" +
+      "      !r.hasExerciseText\n" +
+      "    ) {",
+    replace: "      !hasSendableExercises_(r.exercises)\n    ) {",
   },
   {
     file: "Main.gs",
     name: "an unparseable bodyweight counts as cleared (mass-delete on a reformat)",
-    find: "      && r.bodyweight === null && !r.hasWeightText) {",
-    replace: "      && r.bodyweight === null) {",
+    find:
+      "      r.bodyweight === null &&\n" +
+      "      !r.hasWeightText\n" +
+      "    ) {",
+    replace: "      r.bodyweight === null\n    ) {",
   },
   {
     file: "Main.gs",
     name: "reconciliation no longer requires a tracked datapoint to exist",
-    find: "    if (r.exerciseSyncedAt && split.exercise.length > 0\n      && !hasSendableExercises_(r.exercises) && !r.hasExerciseText) {",
+    find:
+      "      r.exerciseSyncedAt &&\n" +
+      "      split.exercise.length > 0 &&\n" +
+      "      !hasSendableExercises_(r.exercises) &&",
     replace:
-      "    if (r.exerciseSyncedAt\n      && !hasSendableExercises_(r.exercises) && !r.hasExerciseText) {",
+      "      r.exerciseSyncedAt &&\n" +
+      "      !hasSendableExercises_(r.exercises) &&",
   },
   {
     file: "Main.gs",
     name: "already-dirty rows are re-dirtied again",
-    find: "    if (r.exerciseSyncedAt && split.exercise.length > 0\n      && !hasSendableExercises_(r.exercises) && !r.hasExerciseText) {",
+    find:
+      "      r.exerciseSyncedAt &&\n" +
+      "      split.exercise.length > 0 &&\n" +
+      "      !hasSendableExercises_(r.exercises) &&",
     replace:
-      "    if (split.exercise.length > 0\n      && !hasSendableExercises_(r.exercises) && !r.hasExerciseText) {",
+      "      split.exercise.length > 0 &&\n" +
+      "      !hasSendableExercises_(r.exercises) &&",
   },
   {
     file: "Main.gs",
@@ -298,9 +361,19 @@ const MUTATIONS = [
   {
     file: "Sheet.gs",
     name: "hasExerciseText ignores blank-header columns (header change looks like a clear)",
-    find: "    if (managedColNums.indexOf(c) !== -1) continue;\n    textCols.push(c);",
+    find:
+      "    if (managedColNums.indexOf(c) !== -1) {\n" +
+      "      continue;\n" +
+      "    }\n" +
+      "    textCols.push(c);",
     replace:
-      "    if (managedColNums.indexOf(c) !== -1) continue;\n    if (!String(headers[c - 1] || '').trim()) continue;\n    textCols.push(c);",
+      "    if (managedColNums.indexOf(c) !== -1) {\n" +
+      "      continue;\n" +
+      "    }\n" +
+      '    if (!String(headers[c - 1] || "").trim()) {\n' +
+      "      continue;\n" +
+      "    }\n" +
+      "    textCols.push(c);",
   },
   {
     file: "Sheet.gs",
@@ -313,21 +386,26 @@ const MUTATIONS = [
   {
     file: "Main.gs",
     name: "the backstop re-reviews rows with no sendable content",
-    find: "    && hasSendableExercises_(r.exercises));",
-    replace: "  );",
+    find:
+      "      recentKeys.has(ymd(r.date)) &&\n" +
+      "      hasSendableExercises_(r.exercises),",
+    replace: "      recentKeys.has(ymd(r.date)),",
   },
 
   // ---- readRows contracts -------------------------------------------------
   {
     file: "Sheet.gs",
     name: "allHealthIds covers only rows with a parseable Date",
-    find: "    healthIds.forEach(n => allHealthIds.push(n));",
+    find: "    healthIds.forEach((n) => allHealthIds.push(n));",
     replace: "    void healthIds;",
   },
   {
     file: "Sheet.gs",
     name: "allMatchedSessions covers only rows with a parseable Date",
-    find: "      if (matched) allMatchedSessions.push({ name: matched, rowNum: rowNum });",
+    find:
+      "      if (matched) {\n" +
+      "        allMatchedSessions.push({ name: matched, rowNum });\n" +
+      "      }",
     replace: "      void matched;",
   },
   {
@@ -341,13 +419,21 @@ const MUTATIONS = [
   {
     file: "Sheet.gs",
     name: "a single-cell clear of real content is no longer an edit",
-    find: "  const clearedContent = singleCell\n    && isEmptyValue(newValues[0] && newValues[0][0])\n    && !isEmptyValue(e.oldValue);",
+    find:
+      "  const clearedContent =\n" +
+      "    singleCell &&\n" +
+      "    isEmptyValue(newValues[0] && newValues[0][0]) &&\n" +
+      "    !isEmptyValue(e.oldValue);",
     replace: "  const clearedContent = false;",
   },
   {
     file: "Sheet.gs",
     name: "clearing an already-blank cell now counts as an edit",
-    find: "  const clearedContent = singleCell\n    && isEmptyValue(newValues[0] && newValues[0][0])\n    && !isEmptyValue(e.oldValue);",
+    find:
+      "  const clearedContent =\n" +
+      "    singleCell &&\n" +
+      "    isEmptyValue(newValues[0] && newValues[0][0]) &&\n" +
+      "    !isEmptyValue(e.oldValue);",
     replace: "  const clearedContent = singleCell;",
   },
   {
@@ -355,52 +441,78 @@ const MUTATIONS = [
     name: "a weight edit also advances/seeds the exercise timestamps",
     find: "  if (marks.exerciseRows.size > 0) {",
     replace:
-      "  marks.weightRows.forEach(r => marks.exerciseRows.add(r));\n  if (marks.exerciseRows.size > 0) {",
+      "  marks.weightRows.forEach((r) => marks.exerciseRows.add(r));\n" +
+      "  if (marks.exerciseRows.size > 0) {",
   },
   {
     file: "Sheet.gs",
     name: "an exercise edit also advances the weight timestamps",
     find: "  if (marks.weightRows.size > 0) {",
     replace:
-      "  marks.exerciseRows.forEach(r => marks.weightRows.add(r));\n  if (marks.weightRows.size > 0) {",
+      "  marks.exerciseRows.forEach((r) => marks.weightRows.add(r));\n" +
+      "  if (marks.weightRows.size > 0) {",
   },
   {
     file: "Sheet.gs",
     name: "an exercise edit marks every row in the range, not just the ones with content",
-    find: "      if (headerName) exerciseRows.add(rowNum);",
+    find: "      if (headerName) {\n        exerciseRows.add(rowNum);\n      }",
     replace:
-      "      if (headerName) { for (let k = 0; k < numRows; k++) exerciseRows.add(firstRow + k); }",
+      "      if (headerName) {\n" +
+      "        for (let k = 0; k < numRows; k++) {\n" +
+      "          exerciseRows.add(firstRow + k);\n" +
+      "        }\n" +
+      "      }",
   },
   {
     file: "Sheet.gs",
     name: "a weight edit marks every row in the range, not just the ones with content",
-    find: "      if (c === weightCol) { weightRows.add(rowNum); continue; }",
+    find:
+      "      if (c === weightCol) {\n" +
+      "        weightRows.add(rowNum);\n" +
+      "        continue;\n" +
+      "      }",
     replace:
-      "      if (c === weightCol) { for (let k = 0; k < numRows; k++) weightRows.add(firstRow + k); continue; }",
+      "      if (c === weightCol) {\n" +
+      "        for (let k = 0; k < numRows; k++) {\n" +
+      "          weightRows.add(firstRow + k);\n" +
+      "        }\n" +
+      "        continue;\n" +
+      "      }",
   },
   {
     file: "Sheet.gs",
     name: "stampRows_ overwrites rows outside the marked set",
-    find: "  rows.forEach(r => {\n    const i = r - block.first;\n    if (block.values[i][0] === value) return;",
+    find:
+      "  rows.forEach((r) => {\n" +
+      "    const i = r - block.first;\n" +
+      "    if (block.values[i][0] === value) {\n" +
+      "      return;\n" +
+      "    }",
     replace:
-      "  block.values.forEach((_, i) => {\n    if (block.values[i][0] === value) return;",
+      "  block.values.forEach((_, i) => {\n" +
+      "    if (block.values[i][0] === value) {\n" +
+      "      return;\n" +
+      "    }",
   },
   {
     file: "Sheet.gs",
     name: "seedRows_ overwrites a non-blank Exercise First Edited At",
-    find: "    if (current !== '' && current !== null && current !== undefined) return;",
+    find:
+      '    if (current !== "" && current !== null && current !== undefined) {\n' +
+      "      return;\n" +
+      "    }",
     replace: "    void current;",
   },
   {
     file: "Sheet.gs",
     name: "a blank-header scratch column counts as an exercise column",
-    find: "      if (headerName) exerciseRows.add(rowNum);",
-    replace: "      exerciseRows.add(rowNum);",
+    find: "      if (headerName) {\n        exerciseRows.add(rowNum);\n      }",
+    replace: "      void headerName;\n      exerciseRows.add(rowNum);",
   },
   {
     file: "Sheet.gs",
     name: "edits on another sheet are no longer ignored",
-    find: "  if (sheet.getSheetId() !== getSheet_().getSheetId()) return false;",
+    find: "  if (sheet.getSheetId() !== getSheet_().getSheetId()) {\n    return false;\n  }",
     replace: "  void sheet;",
   },
 
@@ -426,14 +538,21 @@ const MUTATIONS = [
   {
     file: "Main.gs",
     name: "syncOnEdit swallows a date violation instead of alarming",
-    find: "  if (violation) throw new Error('syncOnEdit: date validation failed: ' + violation);",
-    replace: "  if (violation) return;",
+    find:
+      "  if (violation) {\n" +
+      "    throw new Error(`syncOnEdit: date validation failed: ${violation}`);\n" +
+      "  }",
+    replace: "  if (violation) {\n    return;\n  }",
   },
   {
     file: "Main.gs",
     name: "a time-based trigger throws on a date violation instead of skipping",
-    find: "  console.error(triggerName + ': date validation failed; skipping: ' + violation);\n  return true;",
-    replace: "  throw new Error(triggerName + ': ' + violation);",
+    find:
+      "  console.error(\n" +
+      "    `${triggerName}: date validation failed; skipping: ${violation}`,\n" +
+      "  );\n" +
+      "  return true;",
+    replace: "  throw new Error(`${triggerName}: ${violation}`);",
   },
 
   // ---- Orphan reconciliation ----------------------------------------------
@@ -446,8 +565,13 @@ const MUTATIONS = [
   {
     file: "Main.gs",
     name: "orphan reconciliation deletes tracked datapoints too",
-    find: "    if (knownNames[c.name]) return;",
-    replace: "    void knownNames;",
+    find:
+      "    if (knownNames[c.name]) {\n" +
+      "      return;\n" +
+      "    }\n" +
+      "    if (c.googleWebClientId && ourClientIds[c.googleWebClientId]) {",
+    replace:
+      "    if (c.googleWebClientId && ourClientIds[c.googleWebClientId]) {",
   },
 
   // ---- Manual entry points ------------------------------------------------
@@ -466,7 +590,11 @@ const MUTATIONS = [
   {
     file: "Main.gs",
     name: "the backstop runs without holding the script lock",
-    find: "  if (!lock.tryLock(LOCK_WAIT_MS)) {\n    console.warn('backstop: another run holds the lock; skipping this run.');\n    return;\n  }",
+    find:
+      "  if (!lock.tryLock(LOCK_WAIT_MS)) {\n" +
+      '    console.warn("backstop: another run holds the lock; skipping this run.");\n' +
+      "    return;\n" +
+      "  }",
     replace: "  lock.tryLock(LOCK_WAIT_MS);",
   },
 ];
