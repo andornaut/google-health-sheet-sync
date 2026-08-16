@@ -11,7 +11,7 @@
     "pull": "clasp pull",
     "open": "clasp open-script",
     "test": "node test/run.js",
-    "lint": "eslint . && tsc --noEmit -p jsconfig.json && markdownlint *.md",
+    "lint": "eslint --max-warnings 0 . && tsc --noEmit -p jsconfig.json && markdownlint *.md",
     "mutate": "node test/mutate.js"
   },
   "devDependencies": {
