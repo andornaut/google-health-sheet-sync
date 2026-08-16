@@ -55,6 +55,14 @@ jobs:
       - name: Run tests
         run: npm test
 
+      # Re-runs the suite once per catalogued mutation, so it costs about as
+      # long as the suite times the catalog size. Unrun, the catalog rots
+      # silently: its patterns quote the sources verbatim, so one reformat
+      # unanchors every entry while `npm test` stays green and the suite stops
+      # being checked for whether it would notice a regression at all.
+      - name: Check the tests catch what they pin
+        run: npm run mutate
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

@@ -108,10 +108,15 @@ export default [
   // describes silently stops being tested. Scoped to this file rather than the
   // repository, and to strings rather than to max-len, so a long line of code
   // here is still reported.
+  //
+  // no-template-curly-in-string is off for the same reason: the sources use
+  // template literals, so an excerpt quoting one holds a literal `${...}` that
+  // must stay unevaluated to match.
   {
     files: ["test/mutate.js"],
     rules: {
       "max-len": ["error", { code: 120, ignoreStrings: true }],
+      "no-template-curly-in-string": "off",
     },
   },
 ];

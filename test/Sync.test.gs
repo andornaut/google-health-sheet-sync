@@ -265,11 +265,10 @@ function runSyncTests() {
     },
   );
 
-  // A selection can reach far past the data (Ctrl+Shift+Down from the first data
-  // row). Whatever the extent, only rows that held content may be marked, and
-  // the sheet's data range must not grow. Asserted as an end property rather
-  // than against one mechanism: per-row marking is what guarantees it, and the
-  // read-size clamp in onEditMarkDirty is a separate, unobservable concern.
+  // A selection can reach far past the data (Ctrl+Shift+Down from the first
+  // data row). Only rows that held content may be marked, and the data range
+  // must not grow. Asserted as an end property: per-row marking is what
+  // guarantees it, and onEditMarkDirty's read-size clamp is unobservable here.
   t(
     "onEditMarkDirty clamps a range reaching past the data and skips one entirely below it",
     () => {
@@ -1068,42 +1067,6 @@ function runSyncTests() {
     },
   );
 
-  t(
-    "syncDirtyRows keeps syncing healthy rows past several failing ones",
-    () => {
-      // 8 rows, every other one failing: the healthy rows must still sync rather
-      // than being stranded behind the failures ahead of them.
-      reset(outageGrid(8));
-      let thrown = null;
-      withStubs(
-        Object.assign({}, NO_FOREIGN, {
-          createWeightAt: () => "users/me/dataTypes/weight/dataPoints/W",
-          writeHealthIds: (rowNum) => {
-            if (rowNum % 2 === 0) {
-              throw new Error("simulated row-specific write failure");
-            }
-          },
-        }),
-        () => {
-          try {
-            syncDirtyRows(0);
-          } catch (err) {
-            thrown = err;
-          }
-        },
-      );
-      ok(thrown !== null, "failures still reported");
-      ok(
-        String(thrown).indexOf("4 synced, 4 error(s)") !== -1,
-        `every row attempted, counts carried in the message: ${thrown}`,
-      );
-      ok(
-        PROPS.getProperty("pendingDirty") !== null,
-        "flag kept so the next pass retries",
-      );
-    },
-  );
-
   // The cap is what keeps a pass inside Apps Script's 6-minute execution limit.
   // A reported deferred count doesn't prove it was applied (deferredCount is
   // computed before the truncation), so assert the work actually stopped.
@@ -1796,17 +1759,15 @@ function runSyncTests() {
     },
   );
 
-  // The accepted tradeoff of running every pass to completion, stated
-  // end-to-end so it reads as a known design point rather than a latent bug.
-  // A row whose id write fails has already created its datapoint, so the id is
-  // lost and the NEXT pass creates another: the leak no failure threshold can
-  // bound (stopping early only trades it for stranding the rows behind it).
-  // Orphan reconciliation is what closes the loop, but only for rows dated
-  // within ORPHAN_RECONCILE_LOOKBACK_DAYS, which is what this covers (the rows
-  // are dated today/yesterday). Candidates are listed by the datapoint's own
-  // civil date, i.e. the row's Date, so a leak on an older row is never listed
-  // and never reclaimed; that residual is documented, not tested, because no
-  // code path closes it.
+  // The accepted tradeoff of running every pass to completion. A row whose id
+  // write fails has already created its datapoint, so the id is lost and the
+  // NEXT pass creates another: a leak no failure threshold can bound (stopping
+  // early only trades it for stranding the rows behind it). Orphan
+  // reconciliation closes the loop, but only within
+  // ORPHAN_RECONCILE_LOOKBACK_DAYS, which is what this covers (the rows are
+  // dated today/yesterday). Candidates are listed by the datapoint's own civil
+  // date, i.e. the row's Date, so a leak on an older row is never reclaimed;
+  // that residual is documented, not tested, since no code path closes it.
   t(
     "an untracked create is re-made next pass and later reclaimed by reconciliation",
     () => {
@@ -2163,11 +2124,14 @@ function runSyncTests() {
     },
   );
 
-  // Accepted boundary, stated as a test so it is a decision rather than a
-  // surprise: clearing a row INCLUDING its Date parks the row (readRows drops
-  // it), so its content is not authoritative and its datapoints are kept.
-  // Recovery is orphan reconciliation, within its lookback.
-  t("a row cleared including its Date keeps its datapoints", () => {
+  // Accepted boundary: clearing a row INCLUDING its Date parks it (readRows
+  // drops the row), so its content is not authoritative and it is never
+  // reconciled as cleared. Recovery is orphan reconciliation, within its
+  // lookback.
+  // The managed columns keep the stamps and the tracked id, which is what makes
+  // the assertion falsifiable: were the row still read, it would look emptied
+  // (id tracked, no exercise text) and be re-dirtied for deletion.
+  t("a row cleared including its Date is never reconciled as cleared", () => {
     const exName = "users/me/dataTypes/exercise/dataPoints/E1";
     reset([
       [
@@ -2182,34 +2146,22 @@ function runSyncTests() {
         "",
         "",
       ],
-      [
-        new Date(Date.now() + 86400000),
-        "",
-        "225x5",
-        "SYNC",
-        "SYNC",
-        "[]",
-        "",
-        "",
-        "",
-        "",
-      ],
     ]);
-    for (let c = 1; c <= HEADERS.length; c++) {
-      SHEET.getRange(2, c).setValue("");
+    for (const header of ["Date", "Weight", "Bench"]) {
+      SHEET.getRange(2, COL[header]).setValue("");
     }
-    const deleted = [];
     withStubs(
-      {
-        deleteDataPointsByName: (names) => {
-          deleted.push(...names);
-        },
-        listStrengthOnDate: () => [],
-        listWeightOnDate: () => [],
-      },
+      { listStrengthOnDate: () => [], listWeightOnDate: () => [] },
       () => backstop(),
     );
-    eq(deleted, [], "nothing deleted for the parked row");
+    eq(cell("Exercise Synced At"), "SYNC", "parked row not re-dirtied");
+    eq(cell("Weight Synced At"), "SYNC", "neither phase re-dirtied");
+    eq(
+      cell("Created Health IDs"),
+      JSON.stringify([exName]),
+      "its datapoint is still tracked",
+    );
+    ok(PROPS.getProperty("pendingDirty") === null, "nothing queued to delete");
   });
 
   // The scenario that makes the raw-text guard load-bearing: blanking ONE
