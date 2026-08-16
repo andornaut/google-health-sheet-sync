@@ -4,23 +4,23 @@ function setup() {
 }
 
 function onOpen() {
-  console.info('onOpen: installing Sync menu');
+  console.info("onOpen: installing Sync menu");
   SpreadsheetApp.getUi()
-    .createMenu('Sync')
-    .addItem('Run now', 'runSyncNow')
-    .addItem('Resync selected rows', 'resyncSelectedRows')
-    .addItem('Resync all rows', 'resyncAllRows')
+    .createMenu("Sync")
+    .addItem("Run now", "runSyncNow")
+    .addItem("Resync selected rows", "resyncSelectedRows")
+    .addItem("Resync all rows", "resyncAllRows")
     .addSeparator()
-    .addItem('Run setup', 'setup')
-    .addItem('Authorize Health API', 'authorizeHealthApi')
-    .addItem('Revoke Health API', 'revokeHealthApi')
+    .addItem("Run setup", "setup")
+    .addItem("Authorize Health API", "authorizeHealthApi")
+    .addItem("Revoke Health API", "revokeHealthApi")
     .addSeparator()
     // Only the parser / pure-helper suite is wired here. The orchestration
     // suite (runSyncTests) depends on the in-memory sheet/properties fakes that
     // test/run.js injects as SYNC_TEST_HARNESS_, which does not exist in the
     // Apps Script runtime: running it here throws ReferenceError. Run it
     // locally with `npm test`.
-    .addItem('Run tests', 'runParserTests')
+    .addItem("Run tests", "runParserTests")
     .addToUi();
 }
 
@@ -30,37 +30,55 @@ function authorizeHealthApi() {
   try {
     service = getHealthService();
   } catch (err) {
-    toast_('Setup needed: ' + String(err.message || err), 30);
+    toast_(`Setup needed: ${String(err.message || err)}`, 30);
     return;
   }
   if (service.hasAccess()) {
-    toast_('Already authorized. Use "Revoke" first if you want to re-authorize.', 10);
+    toast_(
+      'Already authorized. Use "Revoke" first if you want to re-authorize.',
+      10,
+    );
     return;
   }
   const url = service.getAuthorizationUrl();
-  console.log('Authorize Google Health API: ' + url);
-  const html = '<p>Click the link below, sign in with the Google account that owns your Google Health '
-    + 'data, and grant the requested scopes.</p>'
-    + '<p><a href="' + url + '" target="_blank" rel="noopener">Authorize Google Health API</a></p>'
-    + '<p>After the success page appears, you can close that tab and return here.</p>';
-  ui.showModalDialog(HtmlService.createHtmlOutput(html).setWidth(480).setHeight(220), 'Authorize Google Health');
+  console.log(`Authorize Google Health API: ${url}`);
+  const html =
+    `<p>Click the link below, sign in with the Google account that owns your Google Health ` +
+    `data, and grant the requested scopes.</p>` +
+    `<p><a href="${url}" target="_blank" rel="noopener">Authorize Google Health API</a></p>` +
+    `<p>After the success page appears, you can close that tab and return here.</p>`;
+  ui.showModalDialog(
+    HtmlService.createHtmlOutput(html).setWidth(480).setHeight(220),
+    "Authorize Google Health",
+  );
 }
 
 function revokeHealthApi() {
   resetHealthAuth();
-  toast_('Google Health authorization cleared. Use "Authorize Health API" to grant again.', 10);
+  toast_(
+    'Google Health authorization cleared. Use "Authorize Health API" to grant again.',
+    10,
+  );
 }
 
 function installTriggers() {
-  const handlers = new Set(['syncOnEdit', 'flushPending', 'backstop']);
-  ScriptApp.getProjectTriggers().forEach(t => {
-    if (handlers.has(t.getHandlerFunction())) ScriptApp.deleteTrigger(t);
+  const handlers = new Set(["syncOnEdit", "flushPending", "backstop"]);
+  ScriptApp.getProjectTriggers().forEach((t) => {
+    if (handlers.has(t.getHandlerFunction())) {
+      ScriptApp.deleteTrigger(t);
+    }
   });
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  ScriptApp.newTrigger('syncOnEdit').forSpreadsheet(ss).onEdit().create();
-  ScriptApp.newTrigger('flushPending').timeBased().everyMinutes(POLL_INTERVAL_MIN).create();
-  ScriptApp.newTrigger('backstop').timeBased().everyHours(BACKSTOP_INTERVAL_HOURS).create();
+  ScriptApp.newTrigger("syncOnEdit").forSpreadsheet(ss).onEdit().create();
+  ScriptApp.newTrigger("flushPending")
+    .timeBased()
+    .everyMinutes(POLL_INTERVAL_MIN)
+    .create();
+  ScriptApp.newTrigger("backstop")
+    .timeBased()
+    .everyHours(BACKSTOP_INTERVAL_HOURS)
+    .create();
 }
 
 // Return the first date violation among `datedRows` ([{ rowNum, date }] in
@@ -76,19 +94,21 @@ function findRowDateViolation_(datedRows) {
     const key = ymd(r.date);
     const year = Number(key.slice(0, 4));
     if (year < MIN_ROW_DATE_YEAR || year > MAX_ROW_DATE_YEAR) {
-      return 'row ' + r.rowNum + ': date ' + key + ' is outside the allowed years '
-        + MIN_ROW_DATE_YEAR + '-' + MAX_ROW_DATE_YEAR;
+      return `row ${r.rowNum}: date ${key} is outside the allowed years ${
+        MIN_ROW_DATE_YEAR
+      }-${MAX_ROW_DATE_YEAR}`;
     }
     if (prev) {
       if (key === prev.key) {
-        return 'rows ' + prev.rowNum + ' and ' + r.rowNum + ' share the date ' + key;
+        return `rows ${prev.rowNum} and ${r.rowNum} share the date ${key}`;
       }
       if (key < prev.key) {
-        return 'row ' + r.rowNum + ' (' + key + ') is dated before row '
-          + prev.rowNum + ' (' + prev.key + '); rows must be in increasing date order';
+        return `row ${r.rowNum} (${key}) is dated before row ${
+          prev.rowNum
+        } (${prev.key}); rows must be in increasing date order`;
       }
     }
-    prev = { key: key, rowNum: r.rowNum };
+    prev = { key, rowNum: r.rowNum };
   }
   return null;
 }
@@ -104,15 +124,23 @@ function findRowDateViolation_(datedRows) {
 function validateRowDates_() {
   const sheet = getSheet_();
   const dateCol = getHeaderMap_(sheet).map[DATE_COLUMN_HEADER];
-  if (!dateCol) return null;
+  if (!dateCol) {
+    return null;
+  }
   const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return null;
+  if (lastRow < 2) {
+    return null;
+  }
   const values = sheet.getRange(2, dateCol, lastRow - 1, 1).getValues();
   const datedRows = [];
   values.forEach((v, idx) => {
-    if (!v[0]) return;
+    if (!v[0]) {
+      return;
+    }
     const date = toDate_(v[0]);
-    if (date) datedRows.push({ date: date, rowNum: idx + 2 });
+    if (date) {
+      datedRows.push({ date, rowNum: idx + 2 });
+    }
   });
   return findRowDateViolation_(datedRows);
 }
@@ -124,8 +152,12 @@ function validateRowDates_() {
 // untouched, so any backlog syncs on the first run after the fix.
 function dateValidationBlocksTrigger_(triggerName) {
   const violation = validateRowDates_();
-  if (!violation) return false;
-  console.error(triggerName + ': date validation failed; skipping: ' + violation);
+  if (!violation) {
+    return false;
+  }
+  console.error(
+    `${triggerName}: date validation failed; skipping: ${violation}`,
+  );
   return true;
 }
 
@@ -135,9 +167,11 @@ function dateValidationBlocksTrigger_(triggerName) {
 // Returns true when the action should abort.
 function dateValidationBlocksManual_() {
   const violation = validateRowDates_();
-  if (!violation) return false;
-  console.error('date validation failed: ' + violation);
-  toast_('Date validation failed: ' + violation, 30);
+  if (!violation) {
+    return false;
+  }
+  console.error(`date validation failed: ${violation}`);
+  toast_(`Date validation failed: ${violation}`, 30);
   return true;
 }
 
@@ -154,7 +188,9 @@ function syncOnEdit(e) {
   // the following poll syncs them. Older exercise rows and weight edits need
   // a re-edit of the cell or "Resync selected rows".
   const violation = validateRowDates_();
-  if (violation) throw new Error('syncOnEdit: date validation failed: ' + violation);
+  if (violation) {
+    throw new Error(`syncOnEdit: date validation failed: ${violation}`);
+  }
   try {
     // onEditMarkDirty does the fast, lock-free work (clear stamps, advance edit
     // timestamps, bump the dirty generation) and reports whether anything was
@@ -167,7 +203,7 @@ function syncOnEdit(e) {
       syncDirtyRows(0);
     }
   } catch (err) {
-    console.error('syncOnEdit error: ' + err);
+    console.error(`syncOnEdit error: ${err}`);
   }
 }
 
@@ -180,14 +216,16 @@ function flushPending() {
   // every 5 minutes.
   const props = PropertiesService.getScriptProperties();
   if (!props.getProperty(PENDING_DIRTY_KEY)) {
-    console.info('flushPending: no pending edits, skipping');
+    console.info("flushPending: no pending edits, skipping");
     return;
   }
   // Validation sits after the fast-path return above so an idle poll stays a
   // single PropertiesService read (no sheet I/O); nothing can sync without
   // pending work, so the late check gates every sync all the same.
-  if (dateValidationBlocksTrigger_('flushPending')) return;
-  console.info('flushPending: pending edits detected, syncing');
+  if (dateValidationBlocksTrigger_("flushPending")) {
+    return;
+  }
+  console.info("flushPending: pending edits detected, syncing");
   syncDirtyRows(0);
 }
 
@@ -214,10 +252,14 @@ function selectBackstopRows_(rows, nowMs, lookbackDays, wantMatched) {
   // Order by cost: the free matched-state test, then the ymd date-key lookup
   // (a timezone op), then the nested-loop hasSendableExercises_ last so it runs
   // only on rows that already qualify.
-  return rows.filter(r =>
-    (wantMatched ? !!r.matchedHealthSession : !r.matchedHealthSession)
-    && recentKeys.has(ymd(r.date))
-    && hasSendableExercises_(r.exercises));
+  return rows.filter(
+    (r) =>
+      (wantMatched
+        ? Boolean(r.matchedHealthSession)
+        : !r.matchedHealthSession) &&
+      recentKeys.has(ymd(r.date)) &&
+      hasSendableExercises_(r.exercises),
+  );
 }
 
 // Rows whose recorded Health datapoints contradict their current cell content:
@@ -251,18 +293,26 @@ function selectBackstopRows_(rows, nowMs, lookbackDays, wantMatched) {
 function selectStaleDataPointRows_(rows) {
   const exerciseRowNums = [];
   const weightRowNums = [];
-  rows.forEach(r => {
+  rows.forEach((r) => {
     const split = splitHealthIdsByType_(r.healthIds);
-    if (r.exerciseSyncedAt && split.exercise.length > 0
-      && !hasSendableExercises_(r.exercises) && !r.hasExerciseText) {
+    if (
+      r.exerciseSyncedAt &&
+      split.exercise.length > 0 &&
+      !hasSendableExercises_(r.exercises) &&
+      !r.hasExerciseText
+    ) {
       exerciseRowNums.push(r.rowNum);
     }
-    if (r.weightSyncedAt && split.weight.length > 0
-      && r.bodyweight === null && !r.hasWeightText) {
+    if (
+      r.weightSyncedAt &&
+      split.weight.length > 0 &&
+      r.bodyweight === null &&
+      !r.hasWeightText
+    ) {
       weightRowNums.push(r.rowNum);
     }
   });
-  return { exerciseRowNums: exerciseRowNums, weightRowNums: weightRowNums };
+  return { exerciseRowNums, weightRowNums };
 }
 
 // Backstop trigger (every BACKSTOP_INTERVAL_HOURS): re-dirty recent exercise rows
@@ -280,7 +330,9 @@ function selectStaleDataPointRows_(rows) {
 // a GET + no-op rather than churning the datapoint.
 // Also reconciles orphans. No-arg so it's editor-runnable.
 function backstop() {
-  if (dateValidationBlocksTrigger_('backstop')) return;
+  if (dateValidationBlocksTrigger_("backstop")) {
+    return;
+  }
   // Take the script lock for the whole run. Orphan reconciliation deletes
   // exercise datapoints no row references; without the lock it could race an
   // in-flight syncOneRow_ that has POSTed a datapoint but not yet persisted its
@@ -289,12 +341,13 @@ function backstop() {
   // complete. If a sync holds the lock, skip: the next backstop run retries.
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(LOCK_WAIT_MS)) {
-    console.warn('backstop: another run holds the lock; skipping this run.');
+    console.warn("backstop: another run holds the lock; skipping this run.");
     return;
   }
   try {
     const now = Date.now();
-    const { allHealthIds, exerciseSyncedAtCol, rows, weightSyncedAtCol } = readRows();
+    const { allHealthIds, exerciseSyncedAtCol, rows, weightSyncedAtCol } =
+      readRows();
 
     // Reconcile orphans first, while the rows snapshot is unmodified. (reDirty
     // below doesn't touch Created Health IDs, so order is not load-bearing, but
@@ -302,24 +355,48 @@ function backstop() {
     // Both take allHealthIds, the full-sheet id list, which includes rows
     // readRows drops for a blank/unparseable Date.
     try {
-      reconcileExerciseOrphans_(allHealthIds, now, ORPHAN_RECONCILE_LOOKBACK_DAYS);
+      reconcileExerciseOrphans_(
+        allHealthIds,
+        now,
+        ORPHAN_RECONCILE_LOOKBACK_DAYS,
+      );
     } catch (err) {
-      console.warn('backstop: exercise orphan reconciliation failed (continuing): ' + err);
+      console.warn(
+        `backstop: exercise orphan reconciliation failed (continuing): ${err}`,
+      );
     }
     try {
-      reconcileWeightOrphans_(allHealthIds, now, ORPHAN_RECONCILE_LOOKBACK_DAYS);
+      reconcileWeightOrphans_(
+        allHealthIds,
+        now,
+        ORPHAN_RECONCILE_LOOKBACK_DAYS,
+      );
     } catch (err) {
-      console.warn('backstop: weight orphan reconciliation failed (continuing): ' + err);
+      console.warn(
+        `backstop: weight orphan reconciliation failed (continuing): ${err}`,
+      );
     }
 
     if (!exerciseSyncedAtCol) {
-      console.warn('backstop: Exercise Synced At column missing; run "Run setup".');
+      console.warn(
+        'backstop: Exercise Synced At column missing; run "Run setup".',
+      );
       return;
     }
     // Re-dirty both matched and unmatched recent rows (a row is exactly one of
     // the two, so the union needs no dedup).
-    const unmatched = selectBackstopRows_(rows, now, BACKSTOP_LOOKBACK_DAYS, false);
-    const matched = selectBackstopRows_(rows, now, BACKSTOP_LOOKBACK_DAYS, true);
+    const unmatched = selectBackstopRows_(
+      rows,
+      now,
+      BACKSTOP_LOOKBACK_DAYS,
+      false,
+    );
+    const matched = selectBackstopRows_(
+      rows,
+      now,
+      BACKSTOP_LOOKBACK_DAYS,
+      true,
+    );
     // Plus rows whose recorded datapoints contradict their content, i.e. the
     // user cleared cells. Deliberately NOT bounded by BACKSTOP_LOOKBACK_DAYS:
     // the scan is pure sheet state with no API calls, a clear on an old row is
@@ -333,19 +410,27 @@ function backstop() {
     // reformat) where reconciling would destroy history rather than repair it.
     // Log and reconcile NOTHING rather than part of it, so the sheet is left
     // exactly as found for a human to inspect. Foreign re-review still runs.
-    const staleCount = stale.exerciseRowNums.length + stale.weightRowNums.length;
+    const staleCount =
+      stale.exerciseRowNums.length + stale.weightRowNums.length;
     if (staleCount > STALE_RECONCILE_MAX_ROWS) {
-      console.error('backstop: ' + staleCount + ' rows look cleared (limit '
-        + STALE_RECONCILE_MAX_ROWS + '). That is more than a person clears by hand, so this is'
-        + ' probably a column or format change rather than a clear. Reconciling nothing;'
-        + ' use "Resync selected rows" if the change really was intended.');
+      console.error(
+        `backstop: ${staleCount} rows look cleared (limit ${
+          STALE_RECONCILE_MAX_ROWS
+        }). That is more than a person clears by hand, so this is` +
+          ` probably a column or format change rather than a clear. Reconciling nothing;` +
+          ` use "Resync selected rows" if the change really was intended.`,
+      );
       stale = { exerciseRowNums: [], weightRowNums: [] };
     }
-    const exerciseTargets = unmatched.concat(matched).map(r => r.rowNum)
+    const exerciseTargets = unmatched
+      .concat(matched)
+      .map((r) => r.rowNum)
       .concat(stale.exerciseRowNums);
     const weightTargets = stale.weightRowNums;
     if (exerciseTargets.length === 0 && weightTargets.length === 0) {
-      console.info('backstop: no exercise rows to re-review and no stale datapoints.');
+      console.info(
+        "backstop: no exercise rows to re-review and no stale datapoints.",
+      );
       return;
     }
     if (exerciseTargets.length > 0) {
@@ -354,10 +439,13 @@ function backstop() {
     if (weightTargets.length > 0) {
       reDirtyRows_(weightTargets, { weightCol: weightSyncedAtCol });
     }
-    console.info('backstop: re-dirtied ' + exerciseTargets.length + ' exercise row(s) ('
-      + unmatched.length + ' unmatched, ' + matched.length + ' matched for foreign re-review, '
-      + stale.exerciseRowNums.length + ' stale) and ' + weightTargets.length
-      + ' stale weight row(s).');
+    console.info(
+      `backstop: re-dirtied ${exerciseTargets.length} exercise row(s) (${
+        unmatched.length
+      } unmatched, ${matched.length} matched for foreign re-review, ${
+        stale.exerciseRowNums.length
+      } stale) and ${weightTargets.length} stale weight row(s).`,
+    );
   } finally {
     lock.releaseLock();
   }
@@ -380,14 +468,16 @@ function backstop() {
 // for both exercise and weight reconciliation.
 function selectOrphanDataPointNames_(candidates, knownNames) {
   const ourClientIds = {};
-  candidates.forEach(c => {
+  candidates.forEach((c) => {
     if (c.googleWebClientId && knownNames[c.name]) {
       ourClientIds[c.googleWebClientId] = true;
     }
   });
   const orphans = [];
-  candidates.forEach(c => {
-    if (knownNames[c.name]) return;
+  candidates.forEach((c) => {
+    if (knownNames[c.name]) {
+      return;
+    }
     if (c.googleWebClientId && ourClientIds[c.googleWebClientId]) {
       orphans.push(c.name);
     }
@@ -412,42 +502,60 @@ function selectOrphanDataPointNames_(candidates, knownNames) {
 // from its `rows`: a row whose Date is blank or unparseable is absent from
 // `rows` while its datapoints are still live, and reconciling against the
 // narrower set would delete them.
-function reconcileDataPointOrphans_(allHealthIds, nowMs, lookbackDays, typeKey, listOnDate) {
-  const tag = 'reconcileDataPointOrphans_(' + typeKey + ')';
+function reconcileDataPointOrphans_(
+  allHealthIds,
+  nowMs,
+  lookbackDays,
+  typeKey,
+  listOnDate,
+) {
+  const tag = `reconcileDataPointOrphans_(${typeKey})`;
   const known = {};
-  splitHealthIdsByType_(allHealthIds)[typeKey].forEach(n => { known[n] = true; });
+  splitHealthIdsByType_(allHealthIds)[typeKey].forEach((n) => {
+    known[n] = true;
+  });
 
   const candidates = [];
   for (let i = 0; i < lookbackDays; i++) {
     const date = new Date(nowMs - i * 24 * 60 * 60 * 1000);
     try {
-      listOnDate(date).forEach(c => candidates.push(c));
+      listOnDate(date).forEach((c) => candidates.push(c));
     } catch (err) {
-      console.warn(tag + ': list failed for ' + ymd(date) + ': ' + err);
+      console.warn(`${tag}: list failed for ${ymd(date)}: ${err}`);
     }
   }
 
   const orphans = selectOrphanDataPointNames_(candidates, known);
   if (orphans.length === 0) {
-    console.info(tag + ': no orphans found (' + candidates.length + ' datapoint(s) scanned).');
+    console.info(
+      `${tag}: no orphans found (${candidates.length} datapoint(s) scanned).`,
+    );
     return;
   }
   let deleted = 0;
-  orphans.forEach(name => {
+  orphans.forEach((name) => {
     try {
       deleteDataPointsByName([name]);
       deleted++;
-      console.info(tag + ': deleted orphan ' + name);
+      console.info(`${tag}: deleted orphan ${name}`);
     } catch (err) {
-      console.warn(tag + ': delete failed for ' + name + ': ' + err);
+      console.warn(`${tag}: delete failed for ${name}: ${err}`);
     }
   });
-  console.info(tag + ': removed ' + deleted + ' of ' + orphans.length + ' orphan datapoint(s).');
+  console.info(
+    `${tag}: removed ${deleted} of ${orphans.length} orphan datapoint(s).`,
+  );
 }
 
 // Reconcile orphaned sync-created exercise datapoints (STRENGTH_TRAINING).
 function reconcileExerciseOrphans_(allHealthIds, nowMs, lookbackDays) {
-  reconcileDataPointOrphans_(allHealthIds, nowMs, lookbackDays, 'exercise', listStrengthOnDate);
+  reconcileDataPointOrphans_(
+    allHealthIds,
+    nowMs,
+    lookbackDays,
+    "exercise",
+    listStrengthOnDate,
+  );
 }
 
 // Reconcile orphaned sync-created weight datapoints. The exercise path's
@@ -457,15 +565,23 @@ function reconcileExerciseOrphans_(allHealthIds, nowMs, lookbackDays) {
 // ownership logic: only datapoints from our web client, referenced by no row,
 // are deleted.
 function reconcileWeightOrphans_(allHealthIds, nowMs, lookbackDays) {
-  reconcileDataPointOrphans_(allHealthIds, nowMs, lookbackDays, 'weight', listWeightOnDate);
+  reconcileDataPointOrphans_(
+    allHealthIds,
+    nowMs,
+    lookbackDays,
+    "weight",
+    listWeightOnDate,
+  );
 }
 
 // Write a fresh generation marker into PENDING_DIRTY_KEY. The value matters
 // (syncDirtyRows compares start vs end to detect concurrent edits), so always
 // advance it: never just re-write the same string.
 function markPendingDirty_() {
-  PropertiesService.getScriptProperties()
-    .setProperty(PENDING_DIRTY_KEY, String(Date.now()));
+  PropertiesService.getScriptProperties().setProperty(
+    PENDING_DIRTY_KEY,
+    String(Date.now()),
+  );
 }
 
 // Re-dirty a set of rows: clear the requested synced stamp(s), persist the
@@ -475,9 +591,13 @@ function markPendingDirty_() {
 // "resync all rows" path clears its columns in a single batched setValues
 // instead, so it doesn't route through here.)
 function reDirtyRows_(rowNums, cols) {
-  rowNums.forEach(rowNum => {
-    if (cols.exerciseCol) clearRowExerciseSynced(rowNum, cols.exerciseCol);
-    if (cols.weightCol) clearRowWeightSynced(rowNum, cols.weightCol);
+  rowNums.forEach((rowNum) => {
+    if (cols.exerciseCol) {
+      clearRowExerciseSynced(rowNum, cols.exerciseCol);
+    }
+    if (cols.weightCol) {
+      clearRowWeightSynced(rowNum, cols.weightCol);
+    }
   });
   SpreadsheetApp.flush();
   markPendingDirty_();
@@ -488,8 +608,10 @@ function reDirtyRows_(rowNums, cols) {
 // the lock is held). If the user keeps editing afterward, the row goes dirty
 // again and the next sync reconciles the Health datapoint(s).
 function runSyncNow() {
-  if (dateValidationBlocksManual_()) return;
-  runSyncAndToast_('Synced');
+  if (dateValidationBlocksManual_()) {
+    return;
+  }
+  runSyncAndToast_("Synced");
 }
 
 // Manual sync entry points share this wrapper so an unexpected throw from
@@ -501,24 +623,26 @@ function runSyncAndToast_(verb) {
   try {
     result = syncDirtyRows(LOCK_WAIT_MS);
   } catch (err) {
-    toast_('Sync failed: ' + String(err.message || err), 30);
+    toast_(`Sync failed: ${String(err.message || err)}`, 30);
     throw err;
   }
   toastSyncResult_(result, verb);
 }
 
 function resyncSelectedRows() {
-  if (dateValidationBlocksManual_()) return;
+  if (dateValidationBlocksManual_()) {
+    return;
+  }
   const sheet = getSheet_();
   const { map } = getHeaderMap_(sheet);
   const exerciseCol = map[EXERCISE_SYNCED_AT_COLUMN_HEADER];
   if (!exerciseCol) {
-    toast_('Exercise Synced At column missing. Run setup.', 30);
+    toast_("Exercise Synced At column missing. Run setup.", 30);
     return;
   }
   const weightSyncedAtCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER];
   if (!weightSyncedAtCol) {
-    toast_('Weight Synced At column missing. Run setup.', 30);
+    toast_("Weight Synced At column missing. Run setup.", 30);
     return;
   }
   // The selection is spreadsheet-global: it belongs to whichever tab is
@@ -527,14 +651,14 @@ function resyncSelectedRows() {
   // hit unrelated rows here, so require the synced tab to be active.
   const activeSheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   if (activeSheet.getSheetId() !== sheet.getSheetId()) {
-    toast_('Select rows on the "' + sheet.getName() + '" tab first.', 10);
+    toast_(`Select rows on the "${sheet.getName()}" tab first.`, 10);
     return;
   }
   const rows = {};
   // Null when nothing is selected at all.
   const rangeList = sheet.getActiveRangeList();
   if (!rangeList) {
-    toast_('No data rows selected.', 10);
+    toast_("No data rows selected.", 10);
     return;
   }
   const ranges = rangeList.getRanges();
@@ -546,56 +670,73 @@ function resyncSelectedRows() {
     const start = range.getRow();
     const end = Math.min(start + range.getNumRows() - 1, lastDataRow);
     for (let row = start; row <= end; row++) {
-      if (row >= 2) rows[row] = true;
+      if (row >= 2) {
+        rows[row] = true;
+      }
     }
   }
   const rowNums = Object.keys(rows);
   if (rowNums.length === 0) {
-    toast_('No data rows selected.', 10);
+    toast_("No data rows selected.", 10);
     return;
   }
-  reDirtyRows_(rowNums.map(Number), { exerciseCol: exerciseCol, weightCol: weightSyncedAtCol });
-  runSyncAndToast_('Resynced');
+  reDirtyRows_(rowNums.map(Number), {
+    exerciseCol,
+    weightCol: weightSyncedAtCol,
+  });
+  runSyncAndToast_("Resynced");
 }
 
 function resyncAllRows() {
-  if (dateValidationBlocksManual_()) return;
+  if (dateValidationBlocksManual_()) {
+    return;
+  }
   const sheet = getSheet_();
   const { map } = getHeaderMap_(sheet);
   const exerciseCol = map[EXERCISE_SYNCED_AT_COLUMN_HEADER];
   if (!exerciseCol) {
-    toast_('Exercise Synced At column missing. Run setup.', 30);
+    toast_("Exercise Synced At column missing. Run setup.", 30);
     return;
   }
   const weightSyncedAtCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER];
   if (!weightSyncedAtCol) {
-    toast_('Weight Synced At column missing. Run setup.', 30);
+    toast_("Weight Synced At column missing. Run setup.", 30);
     return;
   }
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) {
-    toast_('No data rows.', 10);
+    toast_("No data rows.", 10);
     return;
   }
   const dataRowCount = lastRow - 1;
 
   const blanks = [];
-  for (let i = 0; i < dataRowCount; i++) blanks.push(['']);
+  for (let i = 0; i < dataRowCount; i++) {
+    blanks.push([""]);
+  }
   sheet.getRange(2, exerciseCol, dataRowCount, 1).setValues(blanks);
   sheet.getRange(2, weightSyncedAtCol, dataRowCount, 1).setValues(blanks);
   SpreadsheetApp.flush();
   markPendingDirty_();
 
-  runSyncAndToast_('Resynced');
+  runSyncAndToast_("Resynced");
 }
 
 function formatSyncResult_(result, verb) {
-  if (!result) return 'Sync skipped (another run holds the lock). Try again shortly.';
-  let msg = verb + ' ' + result.ok + ' row(s)';
-  if (result.errors > 0) msg += ', ' + result.errors + ' error(s)';
-  if (result.deferred > 0) msg += ', ' + result.deferred + ' deferred';
-  msg += '.';
-  if (result.errors > 0) msg += '\n\nSee Executions for details.';
+  if (!result) {
+    return "Sync skipped (another run holds the lock). Try again shortly.";
+  }
+  let msg = `${verb} ${result.ok} row(s)`;
+  if (result.errors > 0) {
+    msg += `, ${result.errors} error(s)`;
+  }
+  if (result.deferred > 0) {
+    msg += `, ${result.deferred} deferred`;
+  }
+  msg += ".";
+  if (result.errors > 0) {
+    msg += "\n\nSee Executions for details.";
+  }
   return msg;
 }
 
@@ -603,37 +744,46 @@ function formatSyncResult_(result, verb) {
 // counts against the 6-minute execution budget, which caused timeouts on
 // large resyncs. Toasts auto-dismiss and don't block the script.
 function toast_(msg, seconds) {
-  SpreadsheetApp.getActiveSpreadsheet().toast(msg, 'Sync', seconds);
+  SpreadsheetApp.getActiveSpreadsheet().toast(msg, "Sync", seconds);
 }
 
 function toastSyncResult_(result, verb) {
-  const seconds = (result && result.errors > 0) ? 30 : 10;
+  const seconds = result && result.errors > 0 ? 30 : 10;
   toast_(formatSyncResult_(result, verb), seconds);
 }
 
 function humanizeMs_(ms) {
-  if (ms < 0) ms = 0;
-  if (ms < 1000) return ms + 'ms';
-  const totalSec = Math.round(ms / 1000);
-  if (totalSec < 60) return totalSec + 's';
+  const elapsed = ms < 0 ? 0 : ms;
+  if (elapsed < 1000) {
+    return `${elapsed}ms`;
+  }
+  const totalSec = Math.round(elapsed / 1000);
+  if (totalSec < 60) {
+    return `${totalSec}s`;
+  }
   const min = Math.floor(totalSec / 60);
   const sec = totalSec % 60;
-  return sec === 0 ? min + 'm' : min + 'm ' + sec + 's';
+  return sec === 0 ? `${min}m` : `${min}m ${sec}s`;
 }
 
 function humanizeDate_(date) {
-  if (!date) return '<none>';
-  return Utilities.formatDate(date, getTz_(), 'yyyy-MM-dd HH:mm:ss');
+  if (!date) {
+    return "<none>";
+  }
+  return Utilities.formatDate(date, getTz_(), "yyyy-MM-dd HH:mm:ss");
 }
 
 function syncDirtyRows(lockWaitMs) {
   const lock = LockService.getScriptLock();
-  const waitMs = (lockWaitMs === undefined || lockWaitMs === null) ? LOCK_WAIT_MS : lockWaitMs;
+  const waitMs =
+    lockWaitMs === undefined || lockWaitMs === null ? LOCK_WAIT_MS : lockWaitMs;
   if (!lock.tryLock(waitMs)) {
     if (waitMs > 0) {
-      console.warn('syncDirtyRows: another run holds the lock; skipping.');
+      console.warn("syncDirtyRows: another run holds the lock; skipping.");
     } else {
-      console.info('syncDirtyRows: another run holds the lock; skipping this tick.');
+      console.info(
+        "syncDirtyRows: another run holds the lock; skipping this tick.",
+      );
     }
     return null;
   }
@@ -658,13 +808,22 @@ function syncDirtyRows(lockWaitMs) {
   let unrecoverable = false;
   try {
     const {
-      allHealthIds, allMatchedSessions, exerciseSyncedAtCol, exercisesLastEditedAtCol, healthIdsCol,
-      matchedHealthSessionCol, rows, weightEditedAtCol, weightSyncedAtCol
+      allHealthIds,
+      allMatchedSessions,
+      exerciseSyncedAtCol,
+      exercisesLastEditedAtCol,
+      healthIdsCol,
+      matchedHealthSessionCol,
+      rows,
+      weightEditedAtCol,
+      weightSyncedAtCol,
     } = readRows();
     if (!exerciseSyncedAtCol || !weightSyncedAtCol || !healthIdsCol) {
-      throw new Error('Managed columns missing; run "Run setup" from the Sync menu before syncing.');
+      throw new Error(
+        'Managed columns missing; run "Run setup" from the Sync menu before syncing.',
+      );
     }
-    const dirty = rows.filter(r => !r.exerciseSyncedAt || !r.weightSyncedAt);
+    const dirty = rows.filter((r) => !r.exerciseSyncedAt || !r.weightSyncedAt);
     if (dirty.length === 0) {
       return { errors: 0, ok: 0 };
     }
@@ -677,16 +836,16 @@ function syncDirtyRows(lockWaitMs) {
     // poll firing mid-burst just re-pushes current state, and the idempotent
     // exercise re-sync (syncOneRow_) skips the recreate when nothing changed.
     const ready = [];
-    dirty.forEach(r => {
+    dirty.forEach((r) => {
       const weightReady = !r.weightSyncedAt;
       const exerciseReady = !r.exerciseSyncedAt;
       if (weightReady || exerciseReady) {
-        ready.push({ exerciseReady: exerciseReady, row: r, weightReady: weightReady });
+        ready.push({ exerciseReady, row: r, weightReady });
       }
     });
 
     if (ready.length === 0) {
-      console.info('syncDirtyRows: no rows ready to sync.');
+      console.info("syncDirtyRows: no rows ready to sync.");
       return { errors: 0, ok: 0 };
     }
 
@@ -699,25 +858,34 @@ function syncDirtyRows(lockWaitMs) {
     });
     if (ready.length > MAX_ROWS_PER_SYNC) {
       deferredCount = ready.length - MAX_ROWS_PER_SYNC;
-      console.info('syncDirtyRows: ' + ready.length + ' ready row(s); capping at '
-        + MAX_ROWS_PER_SYNC + ', deferring ' + deferredCount + ' to next pass');
+      console.info(
+        `syncDirtyRows: ${ready.length} ready row(s); capping at ${
+          MAX_ROWS_PER_SYNC
+        }, deferring ${deferredCount} to next pass`,
+      );
       ready.length = MAX_ROWS_PER_SYNC;
     } else {
-      console.info('syncDirtyRows: ' + ready.length + ' ready row(s)');
+      console.info(`syncDirtyRows: ${ready.length} ready row(s)`);
     }
 
     // Every exercise-dirty row creates its own datapoint; the plan only
     // supplies a foreign session's interval to align timing when one overlaps
     // the row's edit window. See FOREIGN_MATCH_BUFFER_MS in Config.gs.
-    const exerciseReadyRows = ready.filter(r => r.exerciseReady).map(r => r.row);
-    const alignmentPlan = resolveForeignMatches_(allHealthIds, allMatchedSessions, exerciseReadyRows);
+    const exerciseReadyRows = ready
+      .filter((r) => r.exerciseReady)
+      .map((r) => r.row);
+    const alignmentPlan = resolveForeignMatches_(
+      allHealthIds,
+      allMatchedSessions,
+      exerciseReadyRows,
+    );
     const cols = {
-      exerciseSyncedAtCol: exerciseSyncedAtCol,
-      exercisesLastEditedAtCol: exercisesLastEditedAtCol,
-      healthIdsCol: healthIdsCol,
-      matchedHealthSessionCol: matchedHealthSessionCol,
-      weightEditedAtCol: weightEditedAtCol,
-      weightSyncedAtCol: weightSyncedAtCol
+      exerciseSyncedAtCol,
+      exercisesLastEditedAtCol,
+      healthIdsCol,
+      matchedHealthSessionCol,
+      weightEditedAtCol,
+      weightSyncedAtCol,
     };
     // A throw out of syncOneRow_ is unexpected: it catches its own Health API
     // failures, so what reaches here is sheet I/O failing on a transient
@@ -754,14 +922,30 @@ function syncDirtyRows(lockWaitMs) {
       const ordinal = ordinalByRowNum[entry.row.rowNum];
       const foreignMatch = alignmentPlan[entry.row.rowNum] || null;
       try {
-        if (syncOneRow_(entry.row, ordinal, foreignMatch, entry.weightReady, entry.exerciseReady,
-          cols, i + 1, ready.length)) ok++;
-        else errors++;
+        if (
+          syncOneRow_(
+            entry.row,
+            ordinal,
+            foreignMatch,
+            entry.weightReady,
+            entry.exerciseReady,
+            cols,
+            i + 1,
+            ready.length,
+          )
+        ) {
+          ok++;
+        } else {
+          errors++;
+        }
       } catch (err) {
         errors++;
-        unexpected.push('row ' + entry.row.rowNum + ': ' + err);
-        console.error('syncDirtyRows: unexpected error on row ' + entry.row.rowNum
-          + '; skipping it and continuing the pass: ' + err);
+        unexpected.push(`row ${entry.row.rowNum}: ${err}`);
+        console.error(
+          `syncDirtyRows: unexpected error on row ${
+            entry.row.rowNum
+          }; skipping it and continuing the pass: ${err}`,
+        );
       }
     }
     if (unexpected.length > 0) {
@@ -786,11 +970,13 @@ function syncDirtyRows(lockWaitMs) {
       const MAX_NAMED_FAILURES = 5;
       const named = unexpected.slice(0, MAX_NAMED_FAILURES);
       const unnamed = unexpected.length - named.length;
-      throw new Error(ok + ' synced, ' + errors + ' error(s)'
-        + (deferredCount > 0 ? ', ' + deferredCount + ' deferred by the row cap' : '')
-        + '. Unexpected per-row failure(s): ' + named.join('; ')
-        + (unnamed > 0 ? '; +' + unnamed + ' more (see Executions)' : '')
-        + '.');
+      throw new Error(
+        `${ok} synced, ${errors} error(s)${
+          deferredCount > 0 ? `, ${deferredCount} deferred by the row cap` : ""
+        }. Unexpected per-row failure(s): ${named.join("; ")}${
+          unnamed > 0 ? `; +${unnamed} more (see Executions)` : ""
+        }.`,
+      );
     }
   } catch (err) {
     // Unrecoverable: a throw out of the sync body (missing required columns,
@@ -806,7 +992,7 @@ function syncDirtyRows(lockWaitMs) {
     // trigger's notification cadence (Apps Script ▸ Triggers ▸ notifications),
     // not by suppressing the retry.
     unrecoverable = true;
-    console.error('syncDirtyRows: unrecoverable error: ' + err);
+    console.error(`syncDirtyRows: unrecoverable error: ${err}`);
     throw err;
   } finally {
     // NB: no `return` in this finally. A finally-return would swallow the
@@ -830,21 +1016,26 @@ function syncDirtyRows(lockWaitMs) {
       const concurrentEdit = genAtEnd !== genAtStart;
       const workRemaining = errors > 0 || deferredCount > 0;
       if (workRemaining) {
-        if (!concurrentEdit) markPendingDirty_();
+        if (!concurrentEdit) {
+          markPendingDirty_();
+        }
       } else if (!concurrentEdit) {
         props.deleteProperty(PENDING_DIRTY_KEY);
       }
       // Bookend the pass: outcome counts plus whether the dirty flag survives
       // (so a reader knows if another poll will follow without inspecting it).
       const willRetry = workRemaining || concurrentEdit;
-      console.info('syncDirtyRows: pass complete, ' + ok + ' synced, ' + errors + ' error(s)'
-        + (deferredCount ? ', ' + deferredCount + ' deferred' : '')
-        + (concurrentEdit ? ', concurrent edit landed' : '')
-        + (willRetry ? '; pending flag kept, next poll will retry.' : '; queue drained.'));
+      console.info(
+        `syncDirtyRows: pass complete, ${ok} synced, ${errors} error(s)${
+          deferredCount ? `, ${deferredCount} deferred` : ""
+        }${
+          concurrentEdit ? ", concurrent edit landed" : ""
+        }${willRetry ? "; pending flag kept, next poll will retry." : "; queue drained."}`,
+      );
     }
     lock.releaseLock();
   }
-  return { deferred: deferredCount, errors: errors, ok: ok };
+  return { deferred: deferredCount, errors, ok };
 }
 
 // Returns rowNum -> foreign Strength Training session whose interval should be
@@ -883,12 +1074,18 @@ function syncDirtyRows(lockWaitMs) {
 function resolveForeignMatches_(allHealthIds, allMatchedSessions, readyRows) {
   const plan = {};
   const readyRowNums = {};
-  readyRows.forEach(r => { readyRowNums[r.rowNum] = true; });
+  readyRows.forEach((r) => {
+    readyRowNums[r.rowNum] = true;
+  });
 
   const excluded = {};
-  splitHealthIdsByType_(allHealthIds).exercise.forEach(name => { excluded[name] = true; });
-  allMatchedSessions.forEach(m => {
-    if (!readyRowNums[m.rowNum]) excluded[m.name] = true;
+  splitHealthIdsByType_(allHealthIds).exercise.forEach((name) => {
+    excluded[name] = true;
+  });
+  allMatchedSessions.forEach((m) => {
+    if (!readyRowNums[m.rowNum]) {
+      excluded[m.name] = true;
+    }
   });
 
   // Only rows with on-row-date edit timestamps anchor a trustworthy window.
@@ -898,53 +1095,65 @@ function resolveForeignMatches_(allHealthIds, allMatchedSessions, readyRows) {
   // first-edit + advance last-edit) doesn't produce a multi-day window biased
   // toward the longest unrelated candidate.
   const windows = readyRows
-    .filter(r => hasSendableExercises_(r.exercises) && exerciseEditIsOnRowDate_(r))
-    .map(r => {
+    .filter(
+      (r) => hasSendableExercises_(r.exercises) && exerciseEditIsOnRowDate_(r),
+    )
+    .map((r) => {
       const startMs = r.exerciseFirstEditedAt.getTime();
-      const clampedEndMs = startMs + capExerciseDurationToMax_(r.exercisesLastEditedAt.getTime() - startMs);
+      const clampedEndMs =
+        startMs +
+        capExerciseDurationToMax_(r.exercisesLastEditedAt.getTime() - startMs);
       return {
         rowNum: r.rowNum,
         windowEnd: clampedEndMs + FOREIGN_MATCH_BUFFER_MS,
-        windowStart: startMs - FOREIGN_MATCH_BUFFER_MS
+        windowStart: startMs - FOREIGN_MATCH_BUFFER_MS,
       };
     });
-  if (windows.length === 0) return plan;
+  if (windows.length === 0) {
+    return plan;
+  }
 
   // Gather candidates across every civil date a window touches (start and end
   // edges, which are adjacent when a window straddles midnight), deduped by name and
   // with our own / aligned-elsewhere names dropped.
   const probeDates = {};
-  windows.forEach(w => {
+  windows.forEach((w) => {
     const start = new Date(w.windowStart);
     const end = new Date(w.windowEnd);
     probeDates[ymd(start)] = start;
     probeDates[ymd(end)] = end;
   });
   const byName = {};
-  Object.keys(probeDates).forEach(key => {
+  Object.keys(probeDates).forEach((key) => {
     let list;
     try {
       list = listStrengthOnDate(probeDates[key]);
     } catch (err) {
-      console.warn('resolveForeignMatches_: list failed for ' + key + ': ' + err);
+      console.warn(`resolveForeignMatches_: list failed for ${key}: ${err}`);
       return;
     }
-    list.forEach(c => {
-      if (excluded[c.name]) return;
+    list.forEach((c) => {
+      if (excluded[c.name]) {
+        return;
+      }
       byName[c.name] = c;
     });
   });
   const candidates = Object.values(byName);
-  if (candidates.length === 0) return plan;
+  if (candidates.length === 0) {
+    return plan;
+  }
 
   // Assign in rowNum order; each row claims its best-overlap remaining
   // candidate so two rows can't align to the same foreign session.
   windows.sort((a, b) => a.rowNum - b.rowNum);
-  windows.forEach(w => {
+  windows.forEach((w) => {
     let bestIdx = -1;
     let bestOverlap = 0;
     candidates.forEach((c, i) => {
-      const overlap = Math.min(c.endUtcMs, w.windowEnd) - Math.max(c.startUtcMs, w.windowStart);
+      const overlap =
+        Math.min(c.endUtcMs, w.windowEnd) -
+        Math.max(c.startUtcMs, w.windowStart);
       if (overlap > bestOverlap) {
         bestIdx = i;
         bestOverlap = overlap;
@@ -952,8 +1161,11 @@ function resolveForeignMatches_(allHealthIds, allMatchedSessions, readyRows) {
     });
     if (bestIdx >= 0) {
       plan[w.rowNum] = candidates[bestIdx];
-      console.info('resolveForeignMatches_: row ' + w.rowNum + ' aligns to '
-        + candidates[bestIdx].name + ' (overlap=' + humanizeMs_(bestOverlap) + ')');
+      console.info(
+        `resolveForeignMatches_: row ${w.rowNum} aligns to ${
+          candidates[bestIdx].name
+        } (overlap=${humanizeMs_(bestOverlap)})`,
+      );
       candidates.splice(bestIdx, 1);
     }
   });
@@ -962,7 +1174,7 @@ function resolveForeignMatches_(allHealthIds, allMatchedSessions, readyRows) {
 
 function groupRowsByDate_(rows) {
   const byDate = {};
-  rows.forEach(r => {
+  rows.forEach((r) => {
     const key = ymd(r.date);
     (byDate[key] = byDate[key] || []).push(r);
   });
@@ -974,10 +1186,12 @@ function groupRowsByDate_(rows) {
 function buildOrdinalMap_(rows) {
   const byDate = groupRowsByDate_(rows);
   const ordinalByRowNum = {};
-  Object.keys(byDate).forEach(dateKey => {
+  Object.keys(byDate).forEach((dateKey) => {
     const dateRows = byDate[dateKey];
     dateRows.sort((a, b) => a.rowNum - b.rowNum);
-    dateRows.forEach((r, i) => { ordinalByRowNum[r.rowNum] = i; });
+    dateRows.forEach((r, i) => {
+      ordinalByRowNum[r.rowNum] = i;
+    });
   });
   return ordinalByRowNum;
 }
@@ -998,8 +1212,11 @@ function capExerciseDurationToMax_(rawDurationMs) {
 // itself is clamped to MAX_EXERCISE_DURATION_MS from the first edit, so a late
 // last-edit can't distort it.
 function exerciseEditIsOnRowDate_(row) {
-  return !!(row.exerciseFirstEditedAt && row.exercisesLastEditedAt
-    && ymd(row.exerciseFirstEditedAt) === ymd(row.date));
+  return Boolean(
+    row.exerciseFirstEditedAt &&
+    row.exercisesLastEditedAt &&
+    ymd(row.exerciseFirstEditedAt) === ymd(row.date),
+  );
 }
 
 // True when those timestamps describe the workout itself rather than a later
@@ -1026,8 +1243,11 @@ function exerciseEditIsOnRowDate_(row) {
 // run, so an edit further out than that is treated as a correction. Logging
 // sets as you go keeps the interval accurate.
 function exerciseEditSpansWorkout_(row) {
-  if (!exerciseEditIsOnRowDate_(row)) return false;
-  const spanMs = row.exercisesLastEditedAt.getTime() - row.exerciseFirstEditedAt.getTime();
+  if (!exerciseEditIsOnRowDate_(row)) {
+    return false;
+  }
+  const spanMs =
+    row.exercisesLastEditedAt.getTime() - row.exerciseFirstEditedAt.getTime();
   return spanMs <= MAX_EXERCISE_DURATION_MS;
 }
 
@@ -1038,7 +1258,9 @@ function exerciseEditSpansWorkout_(row) {
 // that case the timestamps are used with editDerivedDurationMs_'s clamp, which
 // is the only path where its MAX cap still does work.
 function exerciseEditIsUsable_(row, priorExercise) {
-  if (!exerciseEditIsOnRowDate_(row)) return false;
+  if (!exerciseEditIsOnRowDate_(row)) {
+    return false;
+  }
   return exerciseEditSpansWorkout_(row) || !priorExercise;
 }
 
@@ -1052,7 +1274,10 @@ function exerciseEditIsUsable_(row, priorExercise) {
 // refuses the 'edit' path once the raw span passes the cap, so a row with a
 // recorded interval keeps it instead of being stretched to the cap.
 function editDerivedDurationMs_(rawDurationMs) {
-  return Math.min(Math.max(rawDurationMs, MIN_EXERCISE_DURATION_MS), MAX_EXERCISE_DURATION_MS);
+  return Math.min(
+    Math.max(rawDurationMs, MIN_EXERCISE_DURATION_MS),
+    MAX_EXERCISE_DURATION_MS,
+  );
 }
 
 // Resolve the exercise interval and weight sample time independently, per
@@ -1097,9 +1322,9 @@ function resolveRowTiming_(row, ordinal, priorExercise, foreignInterval) {
       endOffsetSeconds: foreignInterval.endUtcOffsetSeconds,
       endUtcMs: foreignInterval.endUtcMs,
       startOffsetSeconds: foreignInterval.startUtcOffsetSeconds,
-      startUtcMs: foreignInterval.startUtcMs
+      startUtcMs: foreignInterval.startUtcMs,
     };
-    exerciseSource = 'foreign';
+    exerciseSource = "foreign";
   } else if (exerciseEditIsUsable) {
     const startMs = row.exerciseFirstEditedAt.getTime();
     const rawDuration = row.exercisesLastEditedAt.getTime() - startMs;
@@ -1111,9 +1336,9 @@ function resolveRowTiming_(row, ordinal, priorExercise, foreignInterval) {
       endOffsetSeconds: getTzOffsetSeconds_(tz, new Date(endMs)),
       endUtcMs: endMs,
       startOffsetSeconds: getTzOffsetSeconds_(tz, row.exerciseFirstEditedAt),
-      startUtcMs: startMs
+      startUtcMs: startMs,
     };
-    exerciseSource = 'edit';
+    exerciseSource = "edit";
   } else if (priorExercise) {
     const i = priorExercise.exercise && priorExercise.exercise.interval;
     if (i && i.startTime && i.endTime) {
@@ -1121,14 +1346,14 @@ function resolveRowTiming_(row, ordinal, priorExercise, foreignInterval) {
         endOffsetSeconds: parseOffsetSeconds_(i.endUtcOffset),
         endUtcMs: new Date(i.endTime).getTime(),
         startOffsetSeconds: parseOffsetSeconds_(i.startUtcOffset),
-        startUtcMs: new Date(i.startTime).getTime()
+        startUtcMs: new Date(i.startTime).getTime(),
       };
-      exerciseSource = 'prior';
+      exerciseSource = "prior";
     }
   }
   if (!exercise) {
     exercise = syntheticExerciseInterval_(row.date, ordinal);
-    exerciseSource = 'synthetic';
+    exerciseSource = "synthetic";
   }
 
   let weight;
@@ -1136,18 +1361,18 @@ function resolveRowTiming_(row, ordinal, priorExercise, foreignInterval) {
   if (row.weightEditedAt && ymd(row.weightEditedAt) === rowDateKey) {
     weight = {
       offsetSeconds: getTzOffsetSeconds_(tz, row.weightEditedAt),
-      utcMs: row.weightEditedAt.getTime()
+      utcMs: row.weightEditedAt.getTime(),
     };
-    weightSource = 'edit';
+    weightSource = "edit";
   } else {
     weight = syntheticWeightSample_(row.date);
-    weightSource = 'synthetic';
+    weightSource = "synthetic";
   }
   return {
-    exercise: exercise,
-    exerciseSource: exerciseSource,
-    weight: weight,
-    weightSource: weightSource
+    exercise,
+    exerciseSource,
+    weight,
+    weightSource,
   };
 }
 
@@ -1157,13 +1382,24 @@ function resolveRowTiming_(row, ordinal, priorExercise, foreignInterval) {
 // (the offsets are derived from the same instants, so ms equality suffices) and
 // the notes string exactly. A missing interval/endpoint counts as changed so
 // the row recreates. Pure (no API/sheet access).
-function exerciseUnchanged_(prior, targetStartUtcMs, targetEndUtcMs, targetNotes) {
+function exerciseUnchanged_(
+  prior,
+  targetStartUtcMs,
+  targetEndUtcMs,
+  targetNotes,
+) {
   const ex = prior && prior.exercise;
   const i = ex && ex.interval;
-  if (!i || !i.startTime || !i.endTime) return false;
-  if (new Date(i.startTime).getTime() !== targetStartUtcMs) return false;
-  if (new Date(i.endTime).getTime() !== targetEndUtcMs) return false;
-  return (ex.notes || '') === (targetNotes || '');
+  if (!i || !i.startTime || !i.endTime) {
+    return false;
+  }
+  if (new Date(i.startTime).getTime() !== targetStartUtcMs) {
+    return false;
+  }
+  if (new Date(i.endTime).getTime() !== targetEndUtcMs) {
+    return false;
+  }
+  return (ex.notes || "") === (targetNotes || "");
 }
 
 // Delete a row's prior datapoints of one type, ONE NAME PER CALL, and return
@@ -1181,15 +1417,19 @@ function exerciseUnchanged_(prior, targetStartUtcMs, targetEndUtcMs, targetNotes
 // single id per type, so this is the same one call in the common case.
 function deletePriorDataPoints_(tag, label, names) {
   const remaining = [];
-  names.forEach(name => {
+  names.forEach((name) => {
     try {
       deleteDataPointsByName([name]);
     } catch (err) {
       if (isNotFoundError_(err)) {
-        console.warn(tag + ': previous ' + label + ' datapoint not found (404); treating as deleted: ' + name);
+        console.warn(
+          `${tag}: previous ${label} datapoint not found (404); treating as deleted: ${name}`,
+        );
         return;
       }
-      console.error(tag + ': delete previous ' + label + ' datapoint failed (' + name + '): ' + err);
+      console.error(
+        `${tag}: delete previous ${label} datapoint failed (${name}): ${err}`,
+      );
       remaining.push(name);
     }
   });
@@ -1211,16 +1451,34 @@ function deletePriorDataPoints_(tag, label, names) {
 // Returns true if the pass made forward progress on the row without errors
 // (including the case where the row stays dirty because the other phase is
 // still pending). Returns false if any attempted phase failed.
-function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, cols, doneIdx, total) {
+function syncOneRow_(
+  row,
+  ordinal,
+  foreignMatch,
+  weightReady,
+  exerciseReady,
+  cols,
+  doneIdx,
+  total,
+) {
   const dateKey = ymd(row.date);
-  const tag = '[' + doneIdx + '/' + total + '] ' + dateKey + ' row ' + row.rowNum;
+  const tag = `[${doneIdx}/${total}] ${dateKey} row ${row.rowNum}`;
   const phases = [];
-  if (weightReady) phases.push('weight');
-  if (exerciseReady) phases.push('exercise');
-  console.info(tag + ': starting phases=[' + phases.join(',') + '] (exercises=' + row.exercises.length
-    + ', bodyweight=' + (row.bodyweight === null ? 'none' : row.bodyweight)
-    + ', oldIds=' + row.healthIds.length
-    + (foreignMatch ? ', align=' + foreignMatch.name : '') + ')');
+  if (weightReady) {
+    phases.push("weight");
+  }
+  if (exerciseReady) {
+    phases.push("exercise");
+  }
+  console.info(
+    `${tag}: starting phases=[${phases.join(",")}] (exercises=${
+      row.exercises.length
+    }, bodyweight=${
+      row.bodyweight === null ? "none" : row.bodyweight
+    }, oldIds=${
+      row.healthIds.length
+    }${foreignMatch ? `, align=${foreignMatch.name}` : ""})`,
+  );
 
   const split = splitHealthIdsByType_(row.healthIds);
 
@@ -1229,7 +1487,8 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
   // timing log line shows only the phases listed here, so weight-only rows
   // don't surface a misleading "edit/synthetic" label for an interval that
   // will never be sent.
-  const exerciseWillCreate = exerciseReady && hasSendableExercises_(row.exercises);
+  const exerciseWillCreate =
+    exerciseReady && hasSendableExercises_(row.exercises);
 
   // Fetch prior datapoints. Exercise: whenever the row has a prior exercise id
   // and the phase will create: the GET serves two purposes now. (1) The 'prior'
@@ -1248,10 +1507,13 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
     try {
       priorExercise = getDataPoint(split.exercise[0]);
     } catch (err) {
-      console.warn(tag + ': GET prior exercise failed; will recompute timing and recreate: ' + err);
+      console.warn(
+        `${tag}: GET prior exercise failed; will recompute timing and recreate: ${err}`,
+      );
     }
   }
-  const weightWillPatch = weightReady && row.bodyweight !== null && split.weight.length > 0;
+  const weightWillPatch =
+    weightReady && row.bodyweight !== null && split.weight.length > 0;
   if (weightWillPatch) {
     try {
       priorWeight = getDataPoint(split.weight[0]);
@@ -1260,10 +1522,14 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
         // The prior weight datapoint is gone server-side (e.g. deleted in the
         // Health app). Drop the stale ID so the dispatch below falls through to
         // POST a fresh one instead of PATCHing/GETting a name that 404s forever.
-        console.warn(tag + ': prior weight datapoint not found (404); dropping stale ID and recreating.');
+        console.warn(
+          `${tag}: prior weight datapoint not found (404); dropping stale ID and recreating.`,
+        );
         split.weight = [];
       } else {
-        console.warn(tag + ': GET prior weight failed; PATCH will fail and the row will retry: ' + err);
+        console.warn(
+          `${tag}: GET prior weight failed; PATCH will fail and the row will retry: ${err}`,
+        );
         priorWeightFetchFailed = true;
       }
     }
@@ -1272,7 +1538,8 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
   // present + bodyweight set) preserves sampleTime server-side, so no prior
   // GET and no timing label. Computed after the GET block so a 404-dropped
   // stale ID is reflected here (the row now POSTs rather than PATCHes).
-  const weightWillCreate = weightReady && row.bodyweight !== null && split.weight.length === 0;
+  const weightWillCreate =
+    weightReady && row.bodyweight !== null && split.weight.length === 0;
 
   let timing;
   try {
@@ -1281,13 +1548,19 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
     // edit/prior/synthetic).
     timing = resolveRowTiming_(row, ordinal, priorExercise, foreignMatch);
   } catch (err) {
-    console.error(tag + ': resolveRowTiming_ failed: ' + err);
+    console.error(`${tag}: resolveRowTiming_ failed: ${err}`);
     return false;
   }
   const labelParts = [];
-  if (exerciseWillCreate) labelParts.push('exercise=' + timing.exerciseSource);
-  if (weightWillCreate) labelParts.push('weight=' + timing.weightSource);
-  if (labelParts.length > 0) console.info(tag + ': timing ' + labelParts.join(' '));
+  if (exerciseWillCreate) {
+    labelParts.push(`exercise=${timing.exerciseSource}`);
+  }
+  if (weightWillCreate) {
+    labelParts.push(`weight=${timing.weightSource}`);
+  }
+  if (labelParts.length > 0) {
+    console.info(`${tag}: timing ${labelParts.join(" ")}`);
+  }
   let newWeightIds = split.weight;
   let newExerciseIds = split.exercise;
   let weightFailed = false;
@@ -1300,29 +1573,38 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
       // GET: the API rejects PATCH bodies without sampleTime), createTime,
       // dataSource. Resource name stays the same so Created Health IDs
       // doesn't churn.
-      const sampleTime = priorWeight && priorWeight.weight && priorWeight.weight.sampleTime;
+      const sampleTime =
+        priorWeight && priorWeight.weight && priorWeight.weight.sampleTime;
       if (!sampleTime) {
         const reason = priorWeightFetchFailed
-          ? 'prior weight GET failed'
-          : 'prior datapoint missing sampleTime';
-        console.error(tag + ': patchWeight skipped (' + reason + '); will retry next sync.');
+          ? "prior weight GET failed"
+          : "prior datapoint missing sampleTime";
+        console.error(
+          `${tag}: patchWeight skipped (${reason}); will retry next sync.`,
+        );
         weightFailed = true;
       } else {
         try {
           patchWeight(split.weight[0], sampleTime, row.bodyweight);
-          console.info(tag + ': patchWeight(' + row.bodyweight + ' lb) -> ' + split.weight[0]);
+          console.info(
+            `${tag}: patchWeight(${row.bodyweight} lb) -> ${split.weight[0]}`,
+          );
         } catch (err) {
-          console.error(tag + ': patchWeight failed: ' + err);
+          console.error(`${tag}: patchWeight failed: ${err}`);
           weightFailed = true;
         }
       }
     } else if (split.weight.length > 0 && !hasBodyweight) {
       // Bodyweight cleared on a row that previously had one: delete.
-      console.info(tag + ': deleting ' + split.weight.length + ' previous weight datapoint(s)');
+      console.info(
+        `${tag}: deleting ${split.weight.length} previous weight datapoint(s)`,
+      );
       // Names left in newWeightIds are the ones whose delete failed; they stay
       // in Created Health IDs so the next sync retries them.
-      newWeightIds = deletePriorDataPoints_(tag, 'weight', split.weight);
-      if (newWeightIds.length > 0) weightFailed = true;
+      newWeightIds = deletePriorDataPoints_(tag, "weight", split.weight);
+      if (newWeightIds.length > 0) {
+        weightFailed = true;
+      }
     } else if (split.weight.length === 0 && hasBodyweight) {
       // First weight for this row: POST.
       newWeightIds = [];
@@ -1335,10 +1617,14 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
         // Persist immediately so a 6-minute kill before the end-of-row
         // write can't orphan a freshly-created datapoint we no longer
         // have a sheet reference for.
-        writeHealthIds(row.rowNum, cols.healthIdsCol, newWeightIds.concat(newExerciseIds).concat(split.other));
-        console.info(tag + ': createWeightAt(' + row.bodyweight + ' lb) -> ' + name);
+        writeHealthIds(
+          row.rowNum,
+          cols.healthIdsCol,
+          newWeightIds.concat(newExerciseIds).concat(split.other),
+        );
+        console.info(`${tag}: createWeightAt(${row.bodyweight} lb) -> ${name}`);
       } catch (err) {
-        console.error(tag + ': createWeightAt failed: ' + err);
+        console.error(`${tag}: createWeightAt failed: ${err}`);
         weightFailed = true;
       }
     } else {
@@ -1350,7 +1636,9 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
   if (exerciseReady) {
     const ex = timing.exercise;
     const wantCreate = hasSendableExercises_(row.exercises);
-    const notes = wantCreate ? buildNotes(ex.endUtcMs - ex.startUtcMs, row.exercises) : null;
+    const notes = wantCreate
+      ? buildNotes(ex.endUtcMs - ex.startUtcMs, row.exercises)
+      : null;
 
     // Idempotency: if the row's single existing exercise datapoint already
     // carries the target interval + notes, skip the delete+recreate entirely
@@ -1358,19 +1646,32 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
     // re-dirty cheap: an unchanged row costs just the prior GET, no write and
     // no resource-name churn. Only applies when there's exactly one prior id
     // (multiple priors are consolidated by recreating).
-    const unchanged = wantCreate && split.exercise.length === 1 && priorExercise
-      && exerciseUnchanged_(priorExercise, ex.startUtcMs, ex.endUtcMs, notes);
+    const unchanged =
+      wantCreate &&
+      split.exercise.length === 1 &&
+      priorExercise &&
+      exerciseUnchanged_(priorExercise, ex.startUtcMs, ex.endUtcMs, notes);
 
     if (unchanged) {
-      console.info(tag + ': exercise unchanged; skip recreate -> ' + split.exercise[0]);
+      console.info(
+        `${tag}: exercise unchanged; skip recreate -> ${split.exercise[0]}`,
+      );
       newExerciseIds = split.exercise;
     } else {
       if (split.exercise.length > 0) {
-        console.info(tag + ': deleting ' + split.exercise.length + ' previous exercise datapoint(s)');
+        console.info(
+          `${tag}: deleting ${split.exercise.length} previous exercise datapoint(s)`,
+        );
         // Same contract as the weight delete above: survivors are the failures,
         // and any survivor blocks the recreate so the next sync retries them.
-        newExerciseIds = deletePriorDataPoints_(tag, 'exercise', split.exercise);
-        if (newExerciseIds.length > 0) exerciseFailed = true;
+        newExerciseIds = deletePriorDataPoints_(
+          tag,
+          "exercise",
+          split.exercise,
+        );
+        if (newExerciseIds.length > 0) {
+          exerciseFailed = true;
+        }
       } else {
         newExerciseIds = [];
       }
@@ -1378,25 +1679,45 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
         try {
           // createExerciseAt throws if the create returns no resource name, so a
           // returned name is always usable here.
-          const name = createExerciseAt(ex.startUtcMs, ex.startOffsetSeconds,
-            ex.endUtcMs, ex.endOffsetSeconds, notes);
+          const name = createExerciseAt(
+            ex.startUtcMs,
+            ex.startOffsetSeconds,
+            ex.endUtcMs,
+            ex.endOffsetSeconds,
+            notes,
+          );
           newExerciseIds.push(name);
           // Same rationale as the weight write above: persist before any
           // later step can fail and leave the datapoint untracked.
-          writeHealthIds(row.rowNum, cols.healthIdsCol, newWeightIds.concat(newExerciseIds).concat(split.other));
-          console.info(tag + ': createExerciseAt' + (foreignMatch ? ' (foreign-aligned)' : '')
-            + ' -> ' + name);
+          writeHealthIds(
+            row.rowNum,
+            cols.healthIdsCol,
+            newWeightIds.concat(newExerciseIds).concat(split.other),
+          );
+          console.info(
+            `${tag}: createExerciseAt${
+              foreignMatch ? " (foreign-aligned)" : ""
+            } -> ${name}`,
+          );
         } catch (err) {
-          console.error(tag + ': createExerciseAt failed: ' + err);
+          console.error(`${tag}: createExerciseAt failed: ${err}`);
           exerciseFailed = true;
         }
       }
     }
   }
 
-  writeHealthIds(row.rowNum, cols.healthIdsCol, newWeightIds.concat(newExerciseIds).concat(split.other));
+  writeHealthIds(
+    row.rowNum,
+    cols.healthIdsCol,
+    newWeightIds.concat(newExerciseIds).concat(split.other),
+  );
   if (exerciseReady) {
-    writeMatchedHealthSession(row.rowNum, cols.matchedHealthSessionCol, foreignMatch ? foreignMatch.name : '');
+    writeMatchedHealthSession(
+      row.rowNum,
+      cols.matchedHealthSessionCol,
+      foreignMatch ? foreignMatch.name : "",
+    );
   }
 
   // Concurrent-edit guards, phase-isolated. Each phase compares its own
@@ -1409,27 +1730,41 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
   // doesn't defer the exercise stamp and vice versa.
   let exerciseConcurrentEdit = false;
   if (exerciseReady && cols.exercisesLastEditedAtCol) {
-    const currentEdit = toDate_(getSheet_().getRange(row.rowNum, cols.exercisesLastEditedAtCol).getValue());
-    const previousMs = row.exercisesLastEditedAt ? row.exercisesLastEditedAt.getTime() : null;
+    const currentEdit = toDate_(
+      getSheet_()
+        .getRange(row.rowNum, cols.exercisesLastEditedAtCol)
+        .getValue(),
+    );
+    const previousMs = row.exercisesLastEditedAt
+      ? row.exercisesLastEditedAt.getTime()
+      : null;
     const currentMs = currentEdit ? currentEdit.getTime() : null;
     if (currentMs !== previousMs) {
-      console.info(tag + ': concurrent exercise edit detected (Exercises Last Edited At '
-        + humanizeDate_(row.exercisesLastEditedAt) + ' -> '
-        + (currentEdit ? humanizeDate_(currentEdit) : '<cleared>')
-        + '); deferring Exercise Synced At stamp.');
+      console.info(
+        `${tag}: concurrent exercise edit detected (Exercises Last Edited At ${humanizeDate_(
+          row.exercisesLastEditedAt,
+        )} -> ${
+          currentEdit ? humanizeDate_(currentEdit) : "<cleared>"
+        }); deferring Exercise Synced At stamp.`,
+      );
       exerciseConcurrentEdit = true;
     }
   }
   let weightConcurrentEdit = false;
   if (weightReady && cols.weightEditedAtCol) {
-    const currentEdit = toDate_(getSheet_().getRange(row.rowNum, cols.weightEditedAtCol).getValue());
+    const currentEdit = toDate_(
+      getSheet_().getRange(row.rowNum, cols.weightEditedAtCol).getValue(),
+    );
     const previousMs = row.weightEditedAt ? row.weightEditedAt.getTime() : null;
     const currentMs = currentEdit ? currentEdit.getTime() : null;
     if (currentMs !== previousMs) {
-      console.info(tag + ': concurrent weight edit detected (Weight Edited At '
-        + humanizeDate_(row.weightEditedAt) + ' -> '
-        + (currentEdit ? humanizeDate_(currentEdit) : '<cleared>')
-        + '); deferring Weight Synced At stamp.');
+      console.info(
+        `${tag}: concurrent weight edit detected (Weight Edited At ${humanizeDate_(
+          row.weightEditedAt,
+        )} -> ${
+          currentEdit ? humanizeDate_(currentEdit) : "<cleared>"
+        }); deferring Weight Synced At stamp.`,
+      );
       weightConcurrentEdit = true;
     }
   }
@@ -1443,7 +1778,7 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
   }
 
   if (weightFailed || exerciseFailed) {
-    console.warn(tag + ': FAILED (partial); will retry on next sync.');
+    console.warn(`${tag}: FAILED (partial); will retry on next sync.`);
     return false;
   }
 
@@ -1451,14 +1786,18 @@ function syncOneRow_(row, ordinal, foreignMatch, weightReady, exerciseReady, col
   // this pass or a concurrent edit blocked the stamp), advance the dirty
   // generation so syncDirtyRows' end-of-pass check leaves the flag set
   // (and a future poll picks the row up).
-  const weightStampMissing = !row.weightSyncedAt && !(weightReady && !weightConcurrentEdit);
-  const exerciseStampMissing = !row.exerciseSyncedAt && !(exerciseReady && !exerciseConcurrentEdit);
+  const weightStampMissing =
+    !row.weightSyncedAt && !(weightReady && !weightConcurrentEdit);
+  const exerciseStampMissing =
+    !row.exerciseSyncedAt && !(exerciseReady && !exerciseConcurrentEdit);
   if (weightStampMissing || exerciseStampMissing) {
     markPendingDirty_();
-    console.info(tag + ': partial progress; row stays dirty (weightStamped='
-      + (!weightStampMissing) + ', exerciseStamped=' + (!exerciseStampMissing) + ')');
+    console.info(
+      `${tag}: partial progress; row stays dirty `
+      + `(weightStamped=${!weightStampMissing}, exerciseStamped=${!exerciseStampMissing})`,
+    );
   } else {
-    console.info(tag + ': done');
+    console.info(`${tag}: done`);
   }
   return true;
 }

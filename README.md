@@ -35,14 +35,14 @@ The script always operates on the **first (leftmost) tab**: selected by position
 
 One entry per line (newline, comma, or semicolon separated):
 
-| Cell | Meaning |
-| ------ | --------- |
-| `135` | 135 lb (reps and sets unspecified) |
-| `135x5` | 5 reps at 135 lb |
-| `135x5x3` | 5 reps × 3 sets at 135 lb |
-| `135x5x0` | Start marker: 0 sets done; anchors start time, not shown in notes |
-| `*135x5x3` | Assisted reps |
-| `135x5x3, 145x3x2` | Multiple entries in one cell |
+| Cell               | Meaning                                                           |
+| ------------------ | ----------------------------------------------------------------- |
+| `135`              | 135 lb (reps and sets unspecified)                                |
+| `135x5`            | 5 reps at 135 lb                                                  |
+| `135x5x3`          | 5 reps × 3 sets at 135 lb                                         |
+| `135x5x0`          | Start marker: 0 sets done; anchors start time, not shown in notes |
+| `*135x5x3`         | Assisted reps                                                     |
+| `135x5x3, 145x3x2` | Multiple entries in one cell                                      |
 
 Unspecified fields are omitted from the notes. A `Bench press` cell with `135` renders as `Bench press, 135 lbs`; `135x5` as `Bench press, 135 lbs, 5 reps`; `135x5x3` as `Bench press, 135 lbs, 3 sets of 5`.
 
@@ -52,12 +52,12 @@ A **zero-set** entry (`135x5x0`) is retained but suppressed from notes: it ancho
 
 Trimmed to a few columns; Health resource names abbreviated. `Exercise Synced At` / `Weight Synced At` are stamped independently per phase.
 
-| Date         | Bench press | Deadlift         | Weight | Exercise Synced At   | Weight Synced At     | Created Health IDs | Matched Health Session |
-| ------------ | ----------- | ---------------- | ------ | -------------------- | -------------------- | ------------------ | ---------------------- |
-| Jan 2, 2026  | 210         |                  | 190.0  | 2026-01-02T18:30:00Z | 2026-01-02T17:45:00Z | [ex/001, wt/002]   |                        |
-| Jan 15, 2026 | 215x4       |                  |        | 2026-01-15T20:00:00Z |                      | [ex/004]           |                        |
-| Jan 18, 2026 |             | 295x4x6          | 187.5  | 2026-01-18T17:45:00Z | 2026-01-18T17:00:00Z | [ex/005, wt/006]   |                        |
-| May 24, 2026 |             | 335x5x5          | 182.4  | 2026-05-24T18:00:00Z | 2026-05-24T17:15:00Z | [ex/010, wt/009]   | ex/777                 |
+| Date         | Bench press | Deadlift | Weight | Exercise Synced At   | Weight Synced At     | Created Health IDs | Matched Health Session |
+| ------------ | ----------- | -------- | ------ | -------------------- | -------------------- | ------------------ | ---------------------- |
+| Jan 2, 2026  | 210         |          | 190.0  | 2026-01-02T18:30:00Z | 2026-01-02T17:45:00Z | [ex/001, wt/002]   |                        |
+| Jan 15, 2026 | 215x4       |          |        | 2026-01-15T20:00:00Z |                      | [ex/004]           |                        |
+| Jan 18, 2026 |             | 295x4x6  | 187.5  | 2026-01-18T17:45:00Z | 2026-01-18T17:00:00Z | [ex/005, wt/006]   |                        |
+| May 24, 2026 |             | 335x5x5  | 182.4  | 2026-05-24T18:00:00Z | 2026-05-24T17:15:00Z | [ex/010, wt/009]   | ex/777                 |
 
 The last row was also logged on a watch: the script still wrote its own datapoint (`ex/010`) but borrowed the watch session's start/end times and recorded the watch session (`ex/777`) in `Matched Health Session`. The watch datapoint is untouched.
 
@@ -76,7 +76,7 @@ The last row was also logged on a watch: the script still wrote its own datapoin
 2. Enable the **Google Health API**.
 3. Configure the **OAuth Consent Screen** (User type: **External**), then pick a publishing option:
    - **In production** (recommended): set **Branding** home/privacy/terms URLs to a domain you've verified in Search Console, then publish. A single-user sync stays under the 100-user cap, so it runs **without** Google verification and restricted-scope refresh tokens **don't** expire weekly. Ignore the "verification required" banner. (A misconfigured consent screen can make the consent page return `Error 500`, see caveats.)
-   - **Testing** (simpler, weekly re-auth): leave status on *Testing* and add your email under **Test Users** (avoids `Error 403: access_denied`). Restricted-scope refresh tokens expire after 7 days, so re-run **Sync ▸ Authorize Health API** about weekly.
+   - **Testing** (simpler, weekly re-auth): leave status on _Testing_ and add your email under **Test Users** (avoids `Error 403: access_denied`). Restricted-scope refresh tokens expire after 7 days, so re-run **Sync ▸ Authorize Health API** about weekly.
 4. Note your **Project Number** from IAM & Admin Settings.
 
 ### 2. Link Apps Script
@@ -127,10 +127,10 @@ The **Sync** menu also exposes:
 
 The Google Health API uses **restricted** OAuth scopes. Gotchas worth knowing:
 
-- **7-day refresh-token expiry in Testing mode.** Restricted-scope refresh tokens expire after 7 days regardless of activity, requiring weekly re-auth. No supported workaround for personal Gmail on Testing: move to *In production* under the 100-user cap to escape it.
+- **7-day refresh-token expiry in Testing mode.** Restricted-scope refresh tokens expire after 7 days regardless of activity, requiring weekly re-auth. No supported workaround for personal Gmail on Testing: move to _In production_ under the 100-user cap to escape it.
 - **"In production" under the 100-user cap works without verification.** It keeps refresh tokens alive indefinitely, and a single-user sync stays under the cap so **no verification submission is required** (ignore the "verification required" banner). Catch: the **Branding** home/privacy/terms URLs must point at a domain verified in Search Console. A misconfigured production consent screen makes the sign-in page itself return `Error 500`, check Branding and Authorized Domains first if the flow 500s.
 - **Verification for restricted scopes is impractical for personal use.** Exceeding the 100-user cap requires brand verification, scope justification, demo video, and a third-party **CASA security assessment** (~$500–$3000, 6–12 weeks, annual re-cert). Staying under the cap avoids it entirely.
-- **Cloud Identity Free is a no-fee alternative, if you can still sign up.** A custom domain under [Cloud Identity Free](https://workspace.google.com/signup/gcpfree/welcome) lets you set *User type* to **Internal** (removes the 7-day expiry and the cap). Google has been hiding the free signup; as of 2026 it often redirects to paid Workspace. Fallbacks: production-under-the-cap, paid Workspace (~$7/mo), or weekly re-auth.
+- **Cloud Identity Free is a no-fee alternative, if you can still sign up.** A custom domain under [Cloud Identity Free](https://workspace.google.com/signup/gcpfree/welcome) lets you set _User type_ to **Internal** (removes the 7-day expiry and the cap). Google has been hiding the free signup; as of 2026 it often redirects to paid Workspace. Fallbacks: production-under-the-cap, paid Workspace (~$7/mo), or weekly re-auth.
 - **The unsuffixed `googlehealth.*` scopes are legacy.** The combined read+write scopes were retired 2026-05-26 (see [release notes](https://developers.google.com/health/release-notes)); the data plane returns `ACCESS_TOKEN_SCOPE_INSUFFICIENT` for them. Use the `.readonly` + `.writeonly` variants only (the consent screen still shows stale descriptions for the old scopes).
 - **Foreign datapoints cannot be modified by any client.** DELETE returns `403 DATA_POINT_NOT_OWNED_BY_CLIENT`, PATCH returns `400`, and PUT/POST-to-resource don't exist. For workouts your watch logged independently, attach notes in the sheet only; the foreign-match logic records the foreign session's name in `Matched Health Session` for cross-reference.
 - **No newer API version exists.** Only `health:v4` is published; `v1`/`v1beta`/`v5` all 404.

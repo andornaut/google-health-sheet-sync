@@ -25,7 +25,8 @@ const sharedScope = () => {
       for (const [, keyword, name] of source.matchAll(
         /^(function|const|let|var)\s+([A-Za-z_$][\w$]*)/gm,
       )) {
-        names[name] = keyword === "let" || keyword === "var" ? "writable" : "readonly";
+        names[name] =
+          keyword === "let" || keyword === "var" ? "writable" : "readonly";
       }
     }
   }
@@ -83,10 +84,7 @@ export default [
       // Reported per file, so a top-level declaration used only from another
       // one reads as unused. Locals and parameters are what a single file can
       // settle, and they are where an actual mistake shows up.
-      "no-unused-vars": [
-        "error",
-        { argsIgnorePattern: "^_", vars: "local" },
-      ],
+      "no-unused-vars": ["error", { argsIgnorePattern: "^_", vars: "local" }],
     },
   },
   // The local test runner, which Apps Script never loads: `.claspignore` keeps

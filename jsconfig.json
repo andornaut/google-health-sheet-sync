@@ -4,22 +4,12 @@
     "checkJs": true,
     "allowJs": true,
     "noEmit": true,
-    "lib": [
-      "ES2019"
-    ],
-    "types": [
-      "google-apps-script",
-      "node"
-    ],
+    "lib": ["ES2019"],
+    "types": ["google-apps-script", "node"],
     "moduleResolution": "node",
     "skipLibCheck": true,
     "maxNodeModuleJsDepth": 0
   },
-  "include": [
-    "src/**/*",
-    "test/**/*"
-  ],
-  "exclude": [
-    "node_modules"
-  ]
+  "include": ["src/**/*", "test/**/*"],
+  "exclude": ["node_modules"]
 }

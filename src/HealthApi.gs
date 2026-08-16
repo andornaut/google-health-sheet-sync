@@ -5,22 +5,26 @@
 let cachedAuthHeaders_ = null;
 
 function authHeaders_() {
-  if (cachedAuthHeaders_) return cachedAuthHeaders_;
+  if (cachedAuthHeaders_) {
+    return cachedAuthHeaders_;
+  }
   cachedAuthHeaders_ = {
-    Accept: 'application/json',
-    Authorization: 'Bearer ' + getHealthAccessToken_()
+    Accept: "application/json",
+    Authorization: `Bearer ${getHealthAccessToken_()}`,
   };
   return cachedAuthHeaders_;
 }
 
 function httpJson_(method, url, payload) {
   const options = {
-    contentType: 'application/json',
+    contentType: "application/json",
     headers: authHeaders_(),
-    method: method,
-    muteHttpExceptions: true
+    method,
+    muteHttpExceptions: true,
   };
-  if (payload !== undefined) options.payload = JSON.stringify(payload);
+  if (payload !== undefined) {
+    options.payload = JSON.stringify(payload);
+  }
 
   // Retry caveat: a create POST that succeeded server-side but timed out
   // client-side (UrlFetchApp.fetch throws -> transient -> retry) will be
@@ -45,18 +49,22 @@ function httpJson_(method, url, payload) {
       if (code >= 200 && code < 300) {
         return body ? JSON.parse(body) : {};
       }
-      lastErr = new Error('Health API ' + method + ' ' + url + ' -> ' + code + ': ' + body);
+      lastErr = new Error(`Health API ${method} ${url} -> ${code}: ${body}`);
       lastErr.statusCode = code;
       transient = code === 429 || (code >= 500 && code < 600);
     }
     const isLastAttempt = attempt === maxAttempts - 1;
-    const prefix = 'Health API ' + method + ' attempt ' + (attempt + 1) + '/' + maxAttempts + ' failed';
+    const prefix = `Health API ${method} attempt ${attempt + 1}/${maxAttempts} failed`;
     if (!transient || isLastAttempt) {
-      if (transient) console.warn(prefix + '; giving up. Error: ' + lastErr);
+      if (transient) {
+        console.warn(`${prefix}; giving up. Error: ${lastErr}`);
+      }
       throw lastErr;
     }
     const backoffMs = 500 * Math.pow(2, attempt);
-    console.warn(prefix + '; retrying in ' + humanizeMs_(backoffMs) + '. Error: ' + lastErr);
+    console.warn(
+      `${prefix}; retrying in ${humanizeMs_(backoffMs)}. Error: ${lastErr}`,
+    );
     Utilities.sleep(backoffMs);
   }
   throw lastErr;
@@ -67,28 +75,35 @@ function httpJson_(method, url, payload) {
 // recover (recreate weight, treat an exercise delete as already done) instead
 // of retrying a GET/DELETE that will never succeed and wedging the row.
 function isNotFoundError_(err) {
-  return !!(err && err.statusCode === 404);
+  return Boolean(err && err.statusCode === 404);
 }
 
 // Canonical datapoint resource name, e.g.
 //   users/{user}/dataTypes/{type}/dataPoints/{id}
 // Capture group 1 is the data type. No /g flag, so .exec is stateless and the
 // shared instance is safe to reuse.
-const DATAPOINT_NAME_RE_ = /^users\/[^/]+\/dataTypes\/([^/]+)\/dataPoints\/[^/]+$/;
+const DATAPOINT_NAME_RE_ =
+  /^users\/[^/]+\/dataTypes\/([^/]+)\/dataPoints\/[^/]+$/;
 
 // Rewrite a stored resource name's numeric user id to the literal `me` the
 // API requires on GET/PATCH/batchDelete URLs.
 function toMeName_(name) {
-  return String(name).replace(/^users\/[^/]+\//, 'users/me/');
+  return String(name).replace(/^users\/[^/]+\//, "users/me/");
 }
 
 // POST/create response is a Long-Running Operation wrapper:
 //   { done: true, response: { name: "users/.../dataPoints/<id>", ... } }
 // Returns the created datapoint's resource name (or null if absent).
 function extractDataPointName_(createResponse) {
-  if (!createResponse) return null;
-  if (createResponse.response && createResponse.response.name) return createResponse.response.name;
-  if (createResponse.name && /\/dataPoints\//.test(createResponse.name)) return createResponse.name;
+  if (!createResponse) {
+    return null;
+  }
+  if (createResponse.response && createResponse.response.name) {
+    return createResponse.response.name;
+  }
+  if (createResponse.name && /\/dataPoints\//.test(createResponse.name)) {
+    return createResponse.name;
+  }
   return null;
 }
 
@@ -100,8 +115,8 @@ function extractDataPointName_(createResponse) {
 // the client (matches the literal-`me` requirement already documented for
 // batchDelete).
 function getDataPoint(name) {
-  const url = HEALTH_API_BASE + '/' + toMeName_(name);
-  return httpJson_('GET', url);
+  const url = `${HEALTH_API_BASE}/${toMeName_(name)}`;
+  return httpJson_("GET", url);
 }
 
 // Lists raw dataPoints of `dataType` whose civil time (per the AIP-160 filter
@@ -114,22 +129,26 @@ function getDataPoint(name) {
 // and wrong spelling in the filter returns 400 INVALID_DATA_POINT_FILTER.
 function listDataPointsByCivilDate_(dataType, filterMember, date) {
   const startDay = ymd(date);
-  const nextDay = ymd(new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1));
+  const nextDay = ymd(
+    new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1),
+  );
 
-  const filter = filterMember + ' >= "' + startDay + '"'
-    + ' AND ' + filterMember + ' < "' + nextDay + '"';
-  const url = HEALTH_API_BASE
-    + '/users/me/dataTypes/' + dataType + '/dataPoints'
-    + '?filter=' + encodeURIComponent(filter)
-    + '&pageSize=100';
+  const filter = `${filterMember} >= "${startDay}" AND ${filterMember} < "${nextDay}"`;
+  const url =
+    `${HEALTH_API_BASE}/users/me/dataTypes/${dataType}/dataPoints` +
+    `?filter=${encodeURIComponent(filter)}&pageSize=100`;
 
   const points = [];
   let pageToken = null;
   do {
-    const pagedUrl = pageToken ? url + '&pageToken=' + encodeURIComponent(pageToken) : url;
-    const json = httpJson_('GET', pagedUrl);
+    const pagedUrl = pageToken
+      ? `${url}&pageToken=${encodeURIComponent(pageToken)}`
+      : url;
+    const json = httpJson_("GET", pagedUrl);
     const page = json.dataPoints || [];
-    for (const p of page) points.push(p);
+    for (const p of page) {
+      points.push(p);
+    }
     pageToken = json.nextPageToken || null;
   } while (pageToken);
   return points;
@@ -140,10 +159,15 @@ function listDataPointsByCivilDate_(dataType, filterMember, date) {
 // to discover non-sync-created activities to match against.
 function listExercisesOnDate(date) {
   const sessions = listDataPointsByCivilDate_(
-    'exercise', 'exercise.interval.civil_start_time', date);
+    "exercise",
+    "exercise.interval.civil_start_time",
+    date,
+  );
   sessions.sort((a, b) => {
-    const aStart = a.exercise && a.exercise.interval && a.exercise.interval.startTime;
-    const bStart = b.exercise && b.exercise.interval && b.exercise.interval.startTime;
+    const aStart =
+      a.exercise && a.exercise.interval && a.exercise.interval.startTime;
+    const bStart =
+      b.exercise && b.exercise.interval && b.exercise.interval.startTime;
     return new Date(aStart || 0) - new Date(bStart || 0);
   });
   return sessions;
@@ -169,18 +193,26 @@ function listExercisesOnDate(date) {
 function listWeightOnDate(date) {
   const out = [];
   const points = listDataPointsByCivilDate_(
-    'weight', 'weight.sample_time.civil_time', date);
+    "weight",
+    "weight.sample_time.civil_time",
+    date,
+  );
   for (const p of points) {
-    if (!p || !p.name) continue;
+    if (!p || !p.name) {
+      continue;
+    }
     const app = p.dataSource && p.dataSource.application;
-    out.push({ googleWebClientId: (app && app.googleWebClientId) || null, name: p.name });
+    out.push({
+      googleWebClientId: (app && app.googleWebClientId) || null,
+      name: p.name,
+    });
   }
   return out;
 }
 
 function getTzOffsetSeconds_(tz, date) {
-  const offsetStr = Utilities.formatDate(date, tz, 'Z');
-  const sign = offsetStr.startsWith('-') ? -1 : 1;
+  const offsetStr = Utilities.formatDate(date, tz, "Z");
+  const sign = offsetStr.startsWith("-") ? -1 : 1;
   const hours = Number(offsetStr.slice(1, 3));
   const mins = Number(offsetStr.slice(3, 5));
   return sign * (hours * 3600 + mins * 60);
@@ -188,14 +220,16 @@ function getTzOffsetSeconds_(tz, date) {
 
 // One formatDate call instead of six. Caller picks the fields it needs.
 function civilDateParts_(tz, date) {
-  const parts = Utilities.formatDate(date, tz, 'yyyy MM dd HH mm ss').split(' ');
+  const parts = Utilities.formatDate(date, tz, "yyyy MM dd HH mm ss").split(
+    " ",
+  );
   return {
     day: Number(parts[2]),
     hours: Number(parts[3]),
     minutes: Number(parts[4]),
     month: Number(parts[1]),
     seconds: Number(parts[5]),
-    year: Number(parts[0])
+    year: Number(parts[0]),
   };
 }
 
@@ -213,15 +247,28 @@ function localCivilToUtcMs_(tz, year, month, day, hour, minute) {
     utcMs = baseMs - offset2 * 1000;
     offset = offset2;
   }
-  return { offsetSeconds: offset, utcMs: utcMs };
+  return { offsetSeconds: offset, utcMs };
 }
 
-function buildIntervalFromUtc_(startUtcMs, startOffsetSeconds, endUtcMs, endOffsetSeconds) {
+function buildIntervalFromUtc_(
+  startUtcMs,
+  startOffsetSeconds,
+  endUtcMs,
+  endOffsetSeconds,
+) {
   return {
-    endTime: Utilities.formatDate(new Date(endUtcMs), 'GMT', "yyyy-MM-dd'T'HH:mm:ss'Z'"),
-    endUtcOffset: endOffsetSeconds + 's',
-    startTime: Utilities.formatDate(new Date(startUtcMs), 'GMT', "yyyy-MM-dd'T'HH:mm:ss'Z'"),
-    startUtcOffset: startOffsetSeconds + 's'
+    endTime: Utilities.formatDate(
+      new Date(endUtcMs),
+      "GMT",
+      "yyyy-MM-dd'T'HH:mm:ss'Z'",
+    ),
+    endUtcOffset: `${endOffsetSeconds}s`,
+    startTime: Utilities.formatDate(
+      new Date(startUtcMs),
+      "GMT",
+      "yyyy-MM-dd'T'HH:mm:ss'Z'",
+    ),
+    startUtcOffset: `${startOffsetSeconds}s`,
   };
 }
 
@@ -231,10 +278,14 @@ function buildSampleTimeFromUtc_(utcMs, offsetSeconds) {
   return {
     civilTime: {
       date: { day: p.day, month: p.month, year: p.year },
-      time: { hours: p.hours, minutes: p.minutes, seconds: p.seconds }
+      time: { hours: p.hours, minutes: p.minutes, seconds: p.seconds },
     },
-    physicalTime: Utilities.formatDate(civil, 'GMT', "yyyy-MM-dd'T'HH:mm:ss'Z'"),
-    utcOffset: offsetSeconds + 's'
+    physicalTime: Utilities.formatDate(
+      civil,
+      "GMT",
+      "yyyy-MM-dd'T'HH:mm:ss'Z'",
+    ),
+    utcOffset: `${offsetSeconds}s`,
   };
 }
 
@@ -249,8 +300,10 @@ function syntheticExerciseInterval_(date, ordinal) {
     // than error the row (which would re-fail every pass), clamp it into the
     // final slot. Synthetic timing is the bulk-import fallback, so overlapping
     // a few rows at end-of-day is acceptable: the goal is a valid interval.
-    console.warn('syntheticExerciseInterval_: ordinal ' + ordinal + ' would spill past '
-      + 'midnight; clamping to the final ' + SYNTHETIC_DURATION_HOURS + 'h slot of the day.');
+    console.warn(
+      `syntheticExerciseInterval_: ordinal ${ordinal} would spill past ` +
+        `midnight; clamping to the final ${SYNTHETIC_DURATION_HOURS}h slot of the day.`,
+    );
     endHour = 24;
     startHour = endHour - SYNTHETIC_DURATION_HOURS;
   }
@@ -262,7 +315,7 @@ function syntheticExerciseInterval_(date, ordinal) {
     endOffsetSeconds: end.offsetSeconds,
     endUtcMs: end.utcMs,
     startOffsetSeconds: start.offsetSeconds,
-    startUtcMs: start.utcMs
+    startUtcMs: start.utcMs,
   };
 }
 
@@ -288,14 +341,22 @@ function listStrengthOnDate(date) {
   const points = listExercisesOnDate(date);
   const out = [];
   for (const p of points) {
-    if (!p || !p.name) continue;
+    if (!p || !p.name) {
+      continue;
+    }
     const exType = p.exercise && p.exercise.exerciseType;
-    if (exType !== 'STRENGTH_TRAINING') continue;
+    if (exType !== "STRENGTH_TRAINING") {
+      continue;
+    }
     const interval = p.exercise && p.exercise.interval;
-    if (!interval || !interval.startTime || !interval.endTime) continue;
+    if (!interval || !interval.startTime || !interval.endTime) {
+      continue;
+    }
     const pStartMs = new Date(interval.startTime).getTime();
     const pEndMs = new Date(interval.endTime).getTime();
-    if (isNaN(pStartMs) || isNaN(pEndMs)) continue;
+    if (isNaN(pStartMs) || isNaN(pEndMs)) {
+      continue;
+    }
     const app = p.dataSource && p.dataSource.application;
     out.push({
       endUtcMs: pEndMs,
@@ -303,7 +364,7 @@ function listStrengthOnDate(date) {
       googleWebClientId: (app && app.googleWebClientId) || null,
       name: p.name,
       startUtcMs: pStartMs,
-      startUtcOffsetSeconds: parseOffsetSeconds_(interval.startUtcOffset)
+      startUtcOffsetSeconds: parseOffsetSeconds_(interval.startUtcOffset),
     });
   }
   // Already sorted by startUtcMs because listExercisesOnDate sorts by the
@@ -317,50 +378,71 @@ function listStrengthOnDate(date) {
 // untouched by both phases.
 function splitHealthIdsByType_(names) {
   const out = { exercise: [], other: [], weight: [] };
-  (names || []).forEach(n => {
+  (names || []).forEach((n) => {
     const m = DATAPOINT_NAME_RE_.exec(n);
     if (!m) {
       out.other.push(n);
       return;
     }
-    if (m[1] === 'weight') out.weight.push(n);
-    else if (m[1] === 'exercise') out.exercise.push(n);
-    else out.other.push(n);
+    if (m[1] === "weight") {
+      out.weight.push(n);
+    } else if (m[1] === "exercise") {
+      out.exercise.push(n);
+    } else {
+      out.other.push(n);
+    }
   });
   return out;
 }
 
 function parseOffsetSeconds_(raw) {
-  if (!raw) return 0;
+  if (!raw) {
+    return 0;
+  }
   const m = /^(-?\d+)s$/.exec(String(raw));
-  if (m) return Number(m[1]);
+  if (m) {
+    return Number(m[1]);
+  }
   const n = Number(raw);
   return isNaN(n) ? 0 : n;
 }
 
 // Returns the created datapoint's resource name. Accepts an explicit interval
 // in UTC ms plus the offsets that applied at each endpoint.
-function createExerciseAt(startUtcMs, startOffsetSeconds, endUtcMs, endOffsetSeconds, notes) {
-  const url = HEALTH_API_BASE + '/users/me/dataTypes/exercise/dataPoints';
+function createExerciseAt(
+  startUtcMs,
+  startOffsetSeconds,
+  endUtcMs,
+  endOffsetSeconds,
+  notes,
+) {
+  const url = `${HEALTH_API_BASE}/users/me/dataTypes/exercise/dataPoints`;
   const durationSec = Math.max(0, Math.round((endUtcMs - startUtcMs) / 1000));
   const payload = {
-    dataSource: { recordingMethod: 'MANUAL' },
+    dataSource: { recordingMethod: "MANUAL" },
     exercise: {
-      activeDuration: durationSec + 's',
-      displayName: 'Strength Training',
-      exerciseType: 'STRENGTH_TRAINING',
-      interval: buildIntervalFromUtc_(startUtcMs, startOffsetSeconds, endUtcMs, endOffsetSeconds),
-      notes: notes
-    }
+      activeDuration: `${durationSec}s`,
+      displayName: "Strength Training",
+      exerciseType: "STRENGTH_TRAINING",
+      interval: buildIntervalFromUtc_(
+        startUtcMs,
+        startOffsetSeconds,
+        endUtcMs,
+        endOffsetSeconds,
+      ),
+      notes,
+    },
   };
-  const resp = httpJson_('POST', url, payload);
+  const resp = httpJson_("POST", url, payload);
   const name = extractDataPointName_(resp);
   if (!name) {
     // POST returned 2xx but no parseable resource name. We can't track an
     // untracked datapoint (no ID to delete/re-sync later), so treat it as a
     // failed create: throw so the caller retries instead of silently stamping
     // the row synced and orphaning whatever may have been created server-side.
-    throw new Error('createExerciseAt: create returned no datapoint name: ' + JSON.stringify(resp));
+    throw new Error(
+      `createExerciseAt: create returned no datapoint name: ${JSON.stringify(resp)}`,
+    );
   }
   return name;
 }
@@ -368,20 +450,22 @@ function createExerciseAt(startUtcMs, startOffsetSeconds, endUtcMs, endOffsetSec
 // Returns the created datapoint's resource name.
 function createWeightAt(sampleUtcMs, sampleOffsetSeconds, lbs) {
   const grams = Math.round(lbs * GRAMS_PER_LB);
-  const url = HEALTH_API_BASE + '/users/me/dataTypes/weight/dataPoints';
+  const url = `${HEALTH_API_BASE}/users/me/dataTypes/weight/dataPoints`;
   const payload = {
-    dataSource: { recordingMethod: 'MANUAL' },
+    dataSource: { recordingMethod: "MANUAL" },
     weight: {
       sampleTime: buildSampleTimeFromUtc_(sampleUtcMs, sampleOffsetSeconds),
-      weightGrams: grams
-    }
+      weightGrams: grams,
+    },
   };
-  const resp = httpJson_('POST', url, payload);
+  const resp = httpJson_("POST", url, payload);
   const name = extractDataPointName_(resp);
   if (!name) {
     // See createExerciseAt: a create with no parseable resource name is a
     // failed create, not a no-op success. Throw so the row retries.
-    throw new Error('createWeightAt: create returned no datapoint name: ' + JSON.stringify(resp));
+    throw new Error(
+      `createWeightAt: create returned no datapoint name: ${JSON.stringify(resp)}`,
+    );
   }
   return name;
 }
@@ -396,12 +480,12 @@ function createWeightAt(sampleUtcMs, sampleOffsetSeconds, lbs) {
 // echoed back unchanged. createTime, dataSource, and the resource name are
 // preserved server-side.
 function patchWeight(name, sampleTime, lbs) {
-  const url = HEALTH_API_BASE + '/' + toMeName_(name);
+  const url = `${HEALTH_API_BASE}/${toMeName_(name)}`;
   const grams = Math.round(lbs * GRAMS_PER_LB);
   const payload = {
-    weight: { sampleTime: sampleTime, weightGrams: grams }
+    weight: { sampleTime, weightGrams: grams },
   };
-  httpJson_('PATCH', url, payload);
+  httpJson_("PATCH", url, payload);
 }
 
 // Delete previously-created datapoints. Groups by data type and calls
@@ -415,19 +499,23 @@ function patchWeight(name, sampleTime, lbs) {
 //   - body names MUST be the canonical numeric form returned by the API.
 // Mixing these yields opaque 400 / 500 errors.
 function deleteDataPointsByName(names) {
-  if (!names || names.length === 0) return;
+  if (!names || names.length === 0) {
+    return;
+  }
   const byType = {};
-  names.forEach(n => {
+  names.forEach((n) => {
     const m = DATAPOINT_NAME_RE_.exec(n);
     if (!m) {
-      console.warn('deleteDataPointsByName: unparseable name "' + n + '"; skipping.');
+      console.warn(
+        `deleteDataPointsByName: unparseable name "${n}"; skipping.`,
+      );
       return;
     }
     const dataType = m[1];
     (byType[dataType] = byType[dataType] || []).push(n);
   });
-  Object.keys(byType).forEach(dataType => {
-    const url = HEALTH_API_BASE + '/users/me/dataTypes/' + dataType + '/dataPoints:batchDelete';
-    httpJson_('POST', url, { names: byType[dataType] });
+  Object.keys(byType).forEach((dataType) => {
+    const url = `${HEALTH_API_BASE}/users/me/dataTypes/${dataType}/dataPoints:batchDelete`;
+    httpJson_("POST", url, { names: byType[dataType] });
   });
 }

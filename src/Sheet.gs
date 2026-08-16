@@ -5,13 +5,17 @@ let cachedSheet_ = null;
 let cachedTz_ = null;
 
 function getSheet_() {
-  if (cachedSheet_) return cachedSheet_;
+  if (cachedSheet_) {
+    return cachedSheet_;
+  }
   cachedSheet_ = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
   return cachedSheet_;
 }
 
 function getTz_() {
-  if (cachedTz_) return cachedTz_;
+  if (cachedTz_) {
+    return cachedTz_;
+  }
   cachedTz_ = Session.getScriptTimeZone();
   return cachedTz_;
 }
@@ -19,40 +23,59 @@ function getTz_() {
 function getHeaderMap_(sheet) {
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
   const map = {};
-  headers.forEach((h, i) => { map[String(h).trim()] = i + 1; });
-  return { headers: headers, map: map };
+  headers.forEach((h, i) => {
+    map[String(h).trim()] = i + 1;
+  });
+  return { headers, map };
 }
 
 // Format an edited range using column header names: `Header[row]` for one
 // cell, `H1,H2[row]` for multi-column, `Header[r1-r2]` for multi-row. Falls
 // back to the range's bounding box when no cells had content (all-empty
 // edits like clearing already-blank cells).
-function describeEditRange_(headers, touched, firstRow, lastRow, firstCol, lastCol) {
+function describeEditRange_(
+  headers,
+  touched,
+  firstRow,
+  lastRow,
+  firstCol,
+  lastCol,
+) {
   let cells = touched;
   if (cells.length === 0) {
     cells = [];
     for (let r = firstRow; r <= lastRow; r++) {
-      for (let c = firstCol; c <= lastCol; c++) cells.push({ col: c, row: r });
+      for (let c = firstCol; c <= lastCol; c++) {
+        cells.push({ col: c, row: r });
+      }
     }
   }
   const seen = {};
   const headerList = [];
-  let minRow = Infinity, maxRow = -Infinity;
+  let minRow = Infinity,
+    maxRow = -Infinity;
   for (let i = 0; i < cells.length; i++) {
     const { col, row } = cells[i];
-    const name = String(headers[col - 1] || '').trim() || 'col' + col;
-    if (!seen[name]) { seen[name] = true; headerList.push(name); }
-    if (row < minRow) minRow = row;
-    if (row > maxRow) maxRow = row;
+    const name = String(headers[col - 1] || "").trim() || `col${col}`;
+    if (!seen[name]) {
+      seen[name] = true;
+      headerList.push(name);
+    }
+    if (row < minRow) {
+      minRow = row;
+    }
+    if (row > maxRow) {
+      maxRow = row;
+    }
   }
-  const rowDesc = minRow === maxRow ? String(minRow) : minRow + '-' + maxRow;
-  return headerList.join(',') + '[' + rowDesc + ']';
+  const rowDesc = minRow === maxRow ? String(minRow) : `${minRow}-${maxRow}`;
+  return `${headerList.join(",")}[${rowDesc}]`;
 }
 
 function ensureManagedColumns() {
   const sheet = getSheet_();
   const { map } = getHeaderMap_(sheet);
-  MANAGED_COLUMN_HEADERS.forEach(header => {
+  MANAGED_COLUMN_HEADERS.forEach((header) => {
     let col = map[header];
     if (!col) {
       col = sheet.getLastColumn() + 1;
@@ -66,16 +89,23 @@ function ensureManagedColumns() {
 function readRows() {
   const sheet = getSheet_();
   const { headers, map } = getHeaderMap_(sheet);
-  if (!map[DATE_COLUMN_HEADER]) throw new Error('Missing column: ' + DATE_COLUMN_HEADER);
-  if (!map[WEIGHT_COLUMN_HEADER]) throw new Error('Missing column: ' + WEIGHT_COLUMN_HEADER);
+  if (!map[DATE_COLUMN_HEADER]) {
+    throw new Error(`Missing column: ${DATE_COLUMN_HEADER}`);
+  }
+  if (!map[WEIGHT_COLUMN_HEADER]) {
+    throw new Error(`Missing column: ${WEIGHT_COLUMN_HEADER}`);
+  }
 
   const exerciseSyncedAtCol = map[EXERCISE_SYNCED_AT_COLUMN_HEADER] || null;
   const weightSyncedAtCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER] || null;
   const healthIdsCol = map[HEALTH_IDS_COLUMN_HEADER] || null;
-  const exerciseFirstEditedAtCol = map[EXERCISE_FIRST_EDITED_AT_COLUMN_HEADER] || null;
-  const exercisesLastEditedAtCol = map[EXERCISES_LAST_EDITED_AT_COLUMN_HEADER] || null;
+  const exerciseFirstEditedAtCol =
+    map[EXERCISE_FIRST_EDITED_AT_COLUMN_HEADER] || null;
+  const exercisesLastEditedAtCol =
+    map[EXERCISES_LAST_EDITED_AT_COLUMN_HEADER] || null;
   const weightEditedAtCol = map[WEIGHT_EDITED_AT_COLUMN_HEADER] || null;
-  const matchedHealthSessionCol = map[MATCHED_HEALTH_SESSION_COLUMN_HEADER] || null;
+  const matchedHealthSessionCol =
+    map[MATCHED_HEALTH_SESSION_COLUMN_HEADER] || null;
   const dateCol = map[DATE_COLUMN_HEADER];
   const weightCol = map[WEIGHT_COLUMN_HEADER];
 
@@ -84,20 +114,29 @@ function readRows() {
   const duplicateExerciseNames = {};
   headers.forEach((h, i) => {
     const name = String(h).trim();
-    if (!name) return;
-    if (name === DATE_COLUMN_HEADER || name === WEIGHT_COLUMN_HEADER) return;
-    if (MANAGED_COLUMN_HEADERS.indexOf(name) !== -1) return;
+    if (!name) {
+      return;
+    }
+    if (name === DATE_COLUMN_HEADER || name === WEIGHT_COLUMN_HEADER) {
+      return;
+    }
+    if (MANAGED_COLUMN_HEADERS.indexOf(name) !== -1) {
+      return;
+    }
     if (seenExerciseNames[name]) {
       duplicateExerciseNames[name] = true;
       return;
     }
     seenExerciseNames[name] = true;
-    exerciseCols.push({ col: i + 1, name: name });
+    exerciseCols.push({ col: i + 1, name });
   });
   const duplicates = Object.keys(duplicateExerciseNames);
   if (duplicates.length > 0) {
-    throw new Error('Duplicate exercise column header(s): ' + duplicates.sort().join(', ')
-      + '. Each exercise column header must be unique.');
+    throw new Error(
+      `Duplicate exercise column header(s): ${duplicates
+        .sort()
+        .join(", ")}. Each exercise column header must be unique.`,
+    );
   }
 
   const lastRow = sheet.getLastRow();
@@ -105,15 +144,15 @@ function readRows() {
     return {
       allHealthIds: [],
       allMatchedSessions: [],
-      exerciseFirstEditedAtCol: exerciseFirstEditedAtCol,
-      exerciseSyncedAtCol: exerciseSyncedAtCol,
-      exercisesLastEditedAtCol: exercisesLastEditedAtCol,
-      healthIdsCol: healthIdsCol,
-      matchedHealthSessionCol: matchedHealthSessionCol,
+      exerciseFirstEditedAtCol,
+      exerciseSyncedAtCol,
+      exercisesLastEditedAtCol,
+      healthIdsCol,
+      matchedHealthSessionCol,
       rows: [],
-      weightCol: weightCol,
-      weightEditedAtCol: weightEditedAtCol,
-      weightSyncedAtCol: weightSyncedAtCol
+      weightCol,
+      weightEditedAtCol,
+      weightSyncedAtCol,
     };
   }
 
@@ -129,14 +168,21 @@ function readRows() {
   // The cost is that a scratch column with notes in it suppresses backstop
   // reconciliation for that row; single-cell clears still reconcile via onEdit,
   // and "Resync selected rows" still works.
-  const managedColNums = MANAGED_COLUMN_HEADERS.map(h => map[h]).filter(c => c);
+  const managedColNums = MANAGED_COLUMN_HEADERS.map((h) => map[h]).filter(
+    (c) => c,
+  );
   const textCols = [];
   for (let c = 1; c <= width; c++) {
-    if (c === dateCol || c === weightCol) continue;
-    if (managedColNums.indexOf(c) !== -1) continue;
+    if (c === dateCol || c === weightCol) {
+      continue;
+    }
+    if (managedColNums.indexOf(c) !== -1) {
+      continue;
+    }
     textCols.push(c);
   }
-  const hasText = v => v !== null && v !== undefined && String(v).trim() !== '';
+  const hasText = (v) =>
+    v !== null && v !== undefined && String(v).trim() !== "";
 
   const rows = [];
   // Every data row's Created Health IDs, including the rows dropped below for a
@@ -152,112 +198,113 @@ function readRows() {
   const allMatchedSessions = [];
   values.forEach((row, idx) => {
     const rowNum = idx + 2;
-    const healthIds = healthIdsCol ? parseHealthIds_(row[healthIdsCol - 1]) : [];
-    healthIds.forEach(n => allHealthIds.push(n));
+    const healthIds = healthIdsCol
+      ? parseHealthIds_(row[healthIdsCol - 1])
+      : [];
+    healthIds.forEach((n) => allHealthIds.push(n));
     if (matchedHealthSessionCol) {
-      const matched = String(row[matchedHealthSessionCol - 1] || '').trim();
-      if (matched) allMatchedSessions.push({ name: matched, rowNum: rowNum });
+      const matched = String(row[matchedHealthSessionCol - 1] || "").trim();
+      if (matched) {
+        allMatchedSessions.push({ name: matched, rowNum });
+      }
     }
     const dateVal = row[dateCol - 1];
-    if (!dateVal) return;
+    if (!dateVal) {
+      return;
+    }
     const date = toDate_(dateVal);
-    if (!date) return;
+    if (!date) {
+      return;
+    }
     const exercises = [];
-    exerciseCols.forEach(c => {
+    exerciseCols.forEach((c) => {
       const entries = parseExerciseCell(row[c.col - 1]);
-      if (entries.length > 0) exercises.push({ entries: entries, name: c.name });
+      if (entries.length > 0) {
+        exercises.push({ entries, name: c.name });
+      }
     });
     const bodyweight = parseBodyweight(row[weightCol - 1]);
-    const exerciseSyncedAt = exerciseSyncedAtCol ? row[exerciseSyncedAtCol - 1] : '';
-    const weightSyncedAt = weightSyncedAtCol ? row[weightSyncedAtCol - 1] : '';
-    const exerciseFirstEditedAt = exerciseFirstEditedAtCol ? toDate_(row[exerciseFirstEditedAtCol - 1]) : null;
-    const exercisesLastEditedAt = exercisesLastEditedAtCol ? toDate_(row[exercisesLastEditedAtCol - 1]) : null;
-    const weightEditedAt = weightEditedAtCol ? toDate_(row[weightEditedAtCol - 1]) : null;
+    const exerciseSyncedAt = exerciseSyncedAtCol
+      ? row[exerciseSyncedAtCol - 1]
+      : "";
+    const weightSyncedAt = weightSyncedAtCol ? row[weightSyncedAtCol - 1] : "";
+    const exerciseFirstEditedAt = exerciseFirstEditedAtCol
+      ? toDate_(row[exerciseFirstEditedAtCol - 1])
+      : null;
+    const exercisesLastEditedAt = exercisesLastEditedAtCol
+      ? toDate_(row[exercisesLastEditedAtCol - 1])
+      : null;
+    const weightEditedAt = weightEditedAtCol
+      ? toDate_(row[weightEditedAtCol - 1])
+      : null;
     const matchedHealthSession = matchedHealthSessionCol
-      ? String(row[matchedHealthSessionCol - 1] || '').trim()
-      : '';
+      ? String(row[matchedHealthSessionCol - 1] || "").trim()
+      : "";
     rows.push({
-      bodyweight: bodyweight,
-      date: date,
-      exerciseFirstEditedAt: exerciseFirstEditedAt,
-      exerciseSyncedAt: exerciseSyncedAt ? String(exerciseSyncedAt).trim() : '',
-      exercises: exercises,
-      exercisesLastEditedAt: exercisesLastEditedAt,
+      bodyweight,
+      date,
+      exerciseFirstEditedAt,
+      exerciseSyncedAt: exerciseSyncedAt ? String(exerciseSyncedAt).trim() : "",
+      exercises,
+      exercisesLastEditedAt,
       // Raw-text presence, NOT parse results. "The parser produced nothing" and
-// "the cell is empty" are different claims, and only the second one means
-// the user cleared something. selectStaleDataPointRows_ deletes on that
-// second claim, so it must not be inferred from the first: an unparseable
-// cell (a reformat to "185 lb", a bodyweight outside the plausible
-// bounds, a typo) parses to nothing while plainly still holding data.
-hasExerciseText: textCols.some(c => hasText(row[c - 1])),
-      
+      // "the cell is empty" are different claims, and only the second one means
+      // the user cleared something. selectStaleDataPointRows_ deletes on that
+      // second claim, so it must not be inferred from the first: an unparseable
+      // cell (a reformat to "185 lb", a bodyweight outside the plausible
+      // bounds, a typo) parses to nothing while plainly still holding data.
+      hasExerciseText: textCols.some((c) => hasText(row[c - 1])),
 
+      hasWeightText: hasText(row[weightCol - 1]),
 
+      healthIds,
 
+      matchedHealthSession,
 
+      rowNum,
 
-hasWeightText: hasText(row[weightCol - 1]),
-      
-
-
-
-
-
-healthIds: healthIds,
-      
-
-
-
-
-
-matchedHealthSession: matchedHealthSession,
-      
-
-
-
-
-
-rowNum: rowNum,
-      
-      
-      
-      
-      
-      
-      weightEditedAt: weightEditedAt,
-      weightSyncedAt: weightSyncedAt ? String(weightSyncedAt).trim() : ''
+      weightEditedAt,
+      weightSyncedAt: weightSyncedAt ? String(weightSyncedAt).trim() : "",
     });
   });
   return {
-    allHealthIds: allHealthIds,
-    allMatchedSessions: allMatchedSessions,
-    exerciseFirstEditedAtCol: exerciseFirstEditedAtCol,
-    exerciseSyncedAtCol: exerciseSyncedAtCol,
-    exercisesLastEditedAtCol: exercisesLastEditedAtCol,
-    healthIdsCol: healthIdsCol,
-    matchedHealthSessionCol: matchedHealthSessionCol,
-    rows: rows,
-    weightCol: weightCol,
-    weightEditedAtCol: weightEditedAtCol,
-    weightSyncedAtCol: weightSyncedAtCol
+    allHealthIds,
+    allMatchedSessions,
+    exerciseFirstEditedAtCol,
+    exerciseSyncedAtCol,
+    exercisesLastEditedAtCol,
+    healthIdsCol,
+    matchedHealthSessionCol,
+    rows,
+    weightCol,
+    weightEditedAtCol,
+    weightSyncedAtCol,
   };
 }
 
 function writeMatchedHealthSession(rowNum, matchedHealthSessionCol, name) {
-  if (!matchedHealthSessionCol) return;
+  if (!matchedHealthSessionCol) {
+    return;
+  }
   const sheet = getSheet_();
-  sheet.getRange(rowNum, matchedHealthSessionCol).setValue(name || '');
+  sheet.getRange(rowNum, matchedHealthSessionCol).setValue(name || "");
 }
 
 function parseHealthIds_(raw) {
-  if (!raw) return [];
+  if (!raw) {
+    return [];
+  }
   const text = String(raw).trim();
-  if (!text) return [];
+  if (!text) {
+    return [];
+  }
   try {
     const parsed = JSON.parse(text);
-    return Array.isArray(parsed) ? parsed.filter(s => typeof s === 'string') : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((s) => typeof s === "string")
+      : [];
   } catch (err) {
-    console.warn('parseHealthIds_: could not parse "' + text + '": ' + err);
+    console.warn(`parseHealthIds_: could not parse "${text}": ${err}`);
     return [];
   }
 }
@@ -268,37 +315,47 @@ function writeHealthIds(rowNum, healthIdsCol, names) {
 }
 
 function toDate_(value) {
-  if (value instanceof Date) return value;
+  if (value instanceof Date) {
+    return value;
+  }
   const d = new Date(value);
   return isNaN(d.getTime()) ? null : d;
 }
 
 function ymd(date) {
-  return Utilities.formatDate(date, getTz_(), 'yyyy-MM-dd');
+  return Utilities.formatDate(date, getTz_(), "yyyy-MM-dd");
 }
 
 function markRowExerciseSynced(rowNum, exerciseSyncedAtCol, isoTimestamp) {
-  if (!exerciseSyncedAtCol) return;
+  if (!exerciseSyncedAtCol) {
+    return;
+  }
   const sheet = getSheet_();
   sheet.getRange(rowNum, exerciseSyncedAtCol).setValue(isoTimestamp);
 }
 
 function clearRowExerciseSynced(rowNum, exerciseSyncedAtCol) {
-  if (!exerciseSyncedAtCol) return;
+  if (!exerciseSyncedAtCol) {
+    return;
+  }
   const sheet = getSheet_();
-  sheet.getRange(rowNum, exerciseSyncedAtCol).setValue('');
+  sheet.getRange(rowNum, exerciseSyncedAtCol).setValue("");
 }
 
 function markRowWeightSynced(rowNum, weightSyncedAtCol, isoTimestamp) {
-  if (!weightSyncedAtCol) return;
+  if (!weightSyncedAtCol) {
+    return;
+  }
   const sheet = getSheet_();
   sheet.getRange(rowNum, weightSyncedAtCol).setValue(isoTimestamp);
 }
 
 function clearRowWeightSynced(rowNum, weightSyncedAtCol) {
-  if (!weightSyncedAtCol) return;
+  if (!weightSyncedAtCol) {
+    return;
+  }
   const sheet = getSheet_();
-  sheet.getRange(rowNum, weightSyncedAtCol).setValue('');
+  sheet.getRange(rowNum, weightSyncedAtCol).setValue("");
 }
 
 // Classify the edited range and apply phase-isolated dirty marking (clear the
@@ -306,12 +363,18 @@ function clearRowWeightSynced(rowNum, weightSyncedAtCol) {
 // Returns true when the row was marked dirty (so syncOnEdit knows to run an
 // immediate sync), false on every no-op/early-return path.
 function onEditMarkDirty(e) {
-  if (!e || !e.range) return false;
+  if (!e || !e.range) {
+    return false;
+  }
   const sheet = e.range.getSheet();
-  if (sheet.getSheetId() !== getSheet_().getSheetId()) return false;
+  if (sheet.getSheetId() !== getSheet_().getSheetId()) {
+    return false;
+  }
 
   const firstRow = e.range.getRow();
-  if (firstRow < 2) return false;
+  if (firstRow < 2) {
+    return false;
+  }
   const rangeLastRow = e.range.getLastRow();
   const firstCol = e.range.getColumn();
   const lastCol = e.range.getLastColumn();
@@ -323,14 +386,20 @@ function onEditMarkDirty(e) {
   // the data holds nothing by definition. A true whole-column selection starts
   // at row 1 and has already exited at the firstRow < 2 guard above.
   const lastRow = Math.min(rangeLastRow, sheet.getLastRow());
-  if (lastRow < firstRow) return false;
+  if (lastRow < firstRow) {
+    return false;
+  }
 
   const { headers, map } = getHeaderMap_(sheet);
   const exerciseSyncedAtCol = map[EXERCISE_SYNCED_AT_COLUMN_HEADER];
-  if (!exerciseSyncedAtCol) return false;
+  if (!exerciseSyncedAtCol) {
+    return false;
+  }
   const weightSyncedAtCol = map[WEIGHT_SYNCED_AT_COLUMN_HEADER] || null;
-  const exerciseFirstEditedAtCol = map[EXERCISE_FIRST_EDITED_AT_COLUMN_HEADER] || null;
-  const exercisesLastEditedAtCol = map[EXERCISES_LAST_EDITED_AT_COLUMN_HEADER] || null;
+  const exerciseFirstEditedAtCol =
+    map[EXERCISE_FIRST_EDITED_AT_COLUMN_HEADER] || null;
+  const exercisesLastEditedAtCol =
+    map[EXERCISES_LAST_EDITED_AT_COLUMN_HEADER] || null;
   const weightEditedAtCol = map[WEIGHT_EDITED_AT_COLUMN_HEADER] || null;
   const dateCol = map[DATE_COLUMN_HEADER] || null;
   const weightCol = map[WEIGHT_COLUMN_HEADER] || null;
@@ -355,17 +424,22 @@ function onEditMarkDirty(e) {
   // The Date column is metadata that doesn't itself trigger a sync;
   // typing a Date alone on a new row is a no-op until exercise or weight
   // content lands.
-  const managedCols = MANAGED_COLUMN_HEADERS.map(h => map[h]).filter(c => c);
+  const managedCols = MANAGED_COLUMN_HEADERS.map((h) => map[h]).filter(
+    (c) => c,
+  );
   const numRows = lastRow - firstRow + 1;
   // Read the CLAMPED range, not e.range: a Ctrl+Shift+Down selection from row 2
   // reports every row of the sheet, and pulling all of them into memory inside
   // an onEdit trigger costs more than the one read this replaces.
-  const newValues = sheet.getRange(firstRow, firstCol, numRows, lastCol - firstCol + 1).getValues();
-  const isEmptyValue = v => v === '' || v === null || v === undefined;
+  const newValues = sheet
+    .getRange(firstRow, firstCol, numRows, lastCol - firstCol + 1)
+    .getValues();
+  const isEmptyValue = (v) => v === "" || v === null || v === undefined;
   const singleCell = firstRow === rangeLastRow && firstCol === lastCol;
-  const clearedContent = singleCell
-    && isEmptyValue(newValues[0] && newValues[0][0])
-    && !isEmptyValue(e.oldValue);
+  const clearedContent =
+    singleCell &&
+    isEmptyValue(newValues[0] && newValues[0][0]) &&
+    !isEmptyValue(e.oldValue);
   // Relevance is tracked PER ROW, not per range. A multi-row edit is not
   // uniform: pasting a block whose content sits in its first row leaves the
   // rest of the range empty, and stamping those rows would clear their Synced
@@ -378,13 +452,22 @@ function onEditMarkDirty(e) {
   for (let i = 0; i < numRows; i++) {
     for (let j = 0; j < newValues[i].length; j++) {
       const v = newValues[i][j];
-      if (isEmptyValue(v) && !clearedContent) continue;
+      if (isEmptyValue(v) && !clearedContent) {
+        continue;
+      }
       const c = firstCol + j;
       const rowNum = firstRow + i;
       touched.push({ col: c, row: rowNum });
-      if (managedCols.indexOf(c) !== -1) continue;
-      if (c === dateCol) continue;
-      if (c === weightCol) { weightRows.add(rowNum); continue; }
+      if (managedCols.indexOf(c) !== -1) {
+        continue;
+      }
+      if (c === dateCol) {
+        continue;
+      }
+      if (c === weightCol) {
+        weightRows.add(rowNum);
+        continue;
+      }
       // Exercise-relevant only if this is a real exercise column. readRows
       // skips blank-header columns when building exerciseCols, so a scratch
       // column parked to the right of Weight contributes no content, so marking
@@ -394,21 +477,38 @@ function onEditMarkDirty(e) {
       // readRows decides it (`String(h).trim()`), so the two can't disagree on
       // a header cell holding a falsy-but-real value like 0; a column past the
       // header row's width has no header at all and counts as blank.
-      const headerName = c - 1 < headers.length ? String(headers[c - 1]).trim() : '';
-      if (headerName) exerciseRows.add(rowNum);
+      const headerName =
+        c - 1 < headers.length ? String(headers[c - 1]).trim() : "";
+      if (headerName) {
+        exerciseRows.add(rowNum);
+      }
     }
   }
-  const desc = describeEditRange_(headers, touched, firstRow, lastRow, firstCol, lastCol);
+  const desc = describeEditRange_(
+    headers,
+    touched,
+    firstRow,
+    lastRow,
+    firstCol,
+    lastCol,
+  );
   if (exerciseRows.size === 0 && weightRows.size === 0) {
-    console.info('syncOnEdit: ' + desc + ' no-op (date-only/empty)');
+    console.info(`syncOnEdit: ${desc} no-op (date-only/empty)`);
     return false;
   }
 
   const phases = [];
-  if (exerciseRows.size > 0) phases.push('exercise');
-  if (weightRows.size > 0) phases.push('weight');
-  console.info('syncOnEdit: ' + desc + (clearedContent ? ' cleared' : '')
-    + ' dirty=[' + phases.join(',') + ']');
+  if (exerciseRows.size > 0) {
+    phases.push("exercise");
+  }
+  if (weightRows.size > 0) {
+    phases.push("weight");
+  }
+  console.info(
+    `syncOnEdit: ${desc}${
+      clearedContent ? " cleared" : ""
+    } dirty=[${phases.join(",")}]`,
+  );
 
   markPendingDirty_();
   // No lock: these are single-cell writes that race safely with an in-flight
@@ -425,13 +525,13 @@ function onEditMarkDirty(e) {
   // drives the weight sample time and the weight phase's concurrent-edit
   // guard, so it should reflect the latest weight cell change.
   writeEditMarkers_(sheet, {
-    exerciseFirstEditedAtCol: exerciseFirstEditedAtCol,
-    exerciseRows: exerciseRows,
-    exerciseSyncedAtCol: exerciseSyncedAtCol,
-    exercisesLastEditedAtCol: exercisesLastEditedAtCol,
-    weightEditedAtCol: weightEditedAtCol,
-    weightRows: weightRows,
-    weightSyncedAtCol: weightSyncedAtCol
+    exerciseFirstEditedAtCol,
+    exerciseRows,
+    exerciseSyncedAtCol,
+    exercisesLastEditedAtCol,
+    weightEditedAtCol,
+    weightRows,
+    weightSyncedAtCol,
   });
   return true;
 }
@@ -443,12 +543,16 @@ function onEditMarkDirty(e) {
 function rowBlock_(sheet, col, rows) {
   let first = Infinity;
   let last = -Infinity;
-  rows.forEach(r => {
-    if (r < first) first = r;
-    if (r > last) last = r;
+  rows.forEach((r) => {
+    if (r < first) {
+      first = r;
+    }
+    if (r > last) {
+      last = r;
+    }
   });
   const range = sheet.getRange(first, col, last - first + 1, 1);
-  return { first: first, range: range, values: range.getValues() };
+  return { first, range, values: range.getValues() };
 }
 
 // Overwrite `col` with `value` for the rows in `rows`, leaving every other row
@@ -457,13 +561,17 @@ function rowBlock_(sheet, col, rows) {
 function stampRows_(sheet, col, rows, value) {
   const block = rowBlock_(sheet, col, rows);
   let changed = false;
-  rows.forEach(r => {
+  rows.forEach((r) => {
     const i = r - block.first;
-    if (block.values[i][0] === value) return;
+    if (block.values[i][0] === value) {
+      return;
+    }
     block.values[i][0] = value;
     changed = true;
   });
-  if (changed) block.range.setValues(block.values);
+  if (changed) {
+    block.range.setValues(block.values);
+  }
 }
 
 // Sticky variant: write `value` into `col` only where the cell is currently
@@ -473,14 +581,18 @@ function stampRows_(sheet, col, rows, value) {
 function seedRows_(sheet, col, rows, value) {
   const block = rowBlock_(sheet, col, rows);
   let changed = false;
-  rows.forEach(r => {
+  rows.forEach((r) => {
     const i = r - block.first;
     const current = block.values[i][0];
-    if (current !== '' && current !== null && current !== undefined) return;
+    if (current !== "" && current !== null && current !== undefined) {
+      return;
+    }
     block.values[i][0] = value;
     changed = true;
   });
-  if (changed) block.range.setValues(block.values);
+  if (changed) {
+    block.range.setValues(block.values);
+  }
 }
 
 // Apply the dirty markers for one edit. `marks.exerciseRows` / `marks.weightRows`
@@ -494,18 +606,38 @@ function writeEditMarkers_(sheet, marks) {
   const nowIso = new Date().toISOString();
 
   if (marks.exerciseRows.size > 0) {
-    if (marks.exerciseSyncedAtCol) stampRows_(sheet, marks.exerciseSyncedAtCol, marks.exerciseRows, '');
+    if (marks.exerciseSyncedAtCol) {
+      stampRows_(sheet, marks.exerciseSyncedAtCol, marks.exerciseRows, "");
+    }
     // Sticky: the first exercise edit anchors the interval's startTime.
-    if (marks.exerciseFirstEditedAtCol) seedRows_(sheet, marks.exerciseFirstEditedAtCol, marks.exerciseRows, nowIso);
+    if (marks.exerciseFirstEditedAtCol) {
+      seedRows_(
+        sheet,
+        marks.exerciseFirstEditedAtCol,
+        marks.exerciseRows,
+        nowIso,
+      );
+    }
     // Advances every time: drives the interval's endTime and the exercise
     // phase's concurrent-edit guard.
-    if (marks.exercisesLastEditedAtCol) stampRows_(sheet, marks.exercisesLastEditedAtCol, marks.exerciseRows, nowIso);
+    if (marks.exercisesLastEditedAtCol) {
+      stampRows_(
+        sheet,
+        marks.exercisesLastEditedAtCol,
+        marks.exerciseRows,
+        nowIso,
+      );
+    }
   }
 
   if (marks.weightRows.size > 0) {
-    if (marks.weightSyncedAtCol) stampRows_(sheet, marks.weightSyncedAtCol, marks.weightRows, '');
+    if (marks.weightSyncedAtCol) {
+      stampRows_(sheet, marks.weightSyncedAtCol, marks.weightRows, "");
+    }
     // Advances every time: drives the weight sample time and the weight phase's
     // concurrent-edit guard, so it must reflect the latest weight cell change.
-    if (marks.weightEditedAtCol) stampRows_(sheet, marks.weightEditedAtCol, marks.weightRows, nowIso);
+    if (marks.weightEditedAtCol) {
+      stampRows_(sheet, marks.weightEditedAtCol, marks.weightRows, nowIso);
+    }
   }
 }

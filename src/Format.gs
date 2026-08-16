@@ -18,15 +18,17 @@ function buildNotes(durationMs, parsedExercises) {
   for (const ex of parsedExercises) {
     for (const entry of ex.entries) {
       // Non-sendable (zero-set "not yet performed") entries produce no note.
-      if (!exerciseEntryIsSendable_(entry)) continue;
-      lines.push(formatEntryNote_(ex.name, entry) + '.');
+      if (!exerciseEntryIsSendable_(entry)) {
+        continue;
+      }
+      lines.push(`${formatEntryNote_(ex.name, entry)}.`);
     }
   }
   const minutes = Math.round(durationMs / 60000);
   if (minutes > 0) {
-    lines.push(minutes + ' minute session.');
+    lines.push(`${minutes} minute session.`);
   }
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 // A parsed entry is "sendable" when it represents a performed set rather than a
@@ -44,19 +46,21 @@ function exerciseEntryIsSendable_(entry) {
 function hasSendableExercises_(parsedExercises) {
   for (const ex of parsedExercises) {
     for (const entry of ex.entries) {
-      if (exerciseEntryIsSendable_(entry)) return true;
+      if (exerciseEntryIsSendable_(entry)) {
+        return true;
+      }
     }
   }
   return false;
 }
 
 function formatEntryNote_(exerciseName, entry) {
-  let line = exerciseName + ', ' + entry.weight + ' lbs';
+  let line = `${exerciseName}, ${entry.weight} lbs`;
   if (entry.sets !== null && entry.reps !== null) {
-    const setLabel = entry.sets === 1 ? '1 set' : entry.sets + ' sets';
-    line += ', ' + setLabel + ' of ' + entry.reps;
+    const setLabel = entry.sets === 1 ? "1 set" : `${entry.sets} sets`;
+    line += `, ${setLabel} of ${entry.reps}`;
   } else if (entry.reps !== null) {
-    line += ', ' + entry.reps + (entry.reps === 1 ? ' rep' : ' reps');
+    line += `, ${entry.reps}${entry.reps === 1 ? " rep" : " reps"}`;
   }
-  return entry.assisted ? line + ' (assisted)' : line;
+  return entry.assisted ? `${line} (assisted)` : line;
 }

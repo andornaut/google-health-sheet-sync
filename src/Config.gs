@@ -1,31 +1,31 @@
-const DATE_COLUMN_HEADER = 'Date';
-const WEIGHT_COLUMN_HEADER = 'Weight';
+const DATE_COLUMN_HEADER = "Date";
+const WEIGHT_COLUMN_HEADER = "Weight";
 // Each content type has its own synced-at stamp so a row with both can record
 // weight progress without losing track that exercise is still pending. Cleared
 // independently per phase by onEditMarkDirty, which also triggers an immediate
 // sync of the edited row(s).
-const EXERCISE_SYNCED_AT_COLUMN_HEADER = 'Exercise Synced At';
-const WEIGHT_SYNCED_AT_COLUMN_HEADER = 'Weight Synced At';
-const HEALTH_IDS_COLUMN_HEADER = 'Created Health IDs';
+const EXERCISE_SYNCED_AT_COLUMN_HEADER = "Exercise Synced At";
+const WEIGHT_SYNCED_AT_COLUMN_HEADER = "Weight Synced At";
+const HEALTH_IDS_COLUMN_HEADER = "Created Health IDs";
 // First exercise-relevant edit (sticky). Drives the exercise interval's
 // startTime. Only set by exercise-column edits: a weight or Date edit must
 // not seed it, otherwise the exercise interval would start before any
 // exercise content was typed.
-const EXERCISE_FIRST_EDITED_AT_COLUMN_HEADER = 'Exercise First Edited At';
+const EXERCISE_FIRST_EDITED_AT_COLUMN_HEADER = "Exercise First Edited At";
 // Last edit time for exercise-relevant columns. Drives the exercise
 // interval's endTime and the exercise phase's concurrent-edit guard.
 // Weight-only edits do NOT advance it: otherwise a bodyweight change
 // would drag the exercise endTime forward.
-const EXERCISES_LAST_EDITED_AT_COLUMN_HEADER = 'Exercises Last Edited At';
+const EXERCISES_LAST_EDITED_AT_COLUMN_HEADER = "Exercises Last Edited At";
 // Last edit time for the Weight column. Drives the weight sample time and
 // the weight phase's concurrent-edit guard. Advances on every weight edit
 // so weight re-edits update the sample time accordingly.
-const WEIGHT_EDITED_AT_COLUMN_HEADER = 'Weight Edited At';
+const WEIGHT_EDITED_AT_COLUMN_HEADER = "Weight Edited At";
 // Resource name of the foreign STRENGTH_TRAINING datapoint a row's timing was
 // aligned to. Recomputed every sync. Also consulted by resolveForeignMatches_
 // so a foreign session already aligned to a non-ready row is excluded and
 // can't be aligned to a different row in a later incremental run.
-const MATCHED_HEALTH_SESSION_COLUMN_HEADER = 'Matched Health Session';
+const MATCHED_HEALTH_SESSION_COLUMN_HEADER = "Matched Health Session";
 const MANAGED_COLUMN_HEADERS = [
   EXERCISE_SYNCED_AT_COLUMN_HEADER,
   WEIGHT_SYNCED_AT_COLUMN_HEADER,
@@ -33,7 +33,7 @@ const MANAGED_COLUMN_HEADERS = [
   EXERCISE_FIRST_EDITED_AT_COLUMN_HEADER,
   EXERCISES_LAST_EDITED_AT_COLUMN_HEADER,
   WEIGHT_EDITED_AT_COLUMN_HEADER,
-  MATCHED_HEALTH_SESSION_COLUMN_HEADER
+  MATCHED_HEALTH_SESSION_COLUMN_HEADER,
 ];
 
 // How often the polling trigger (flushPending) fires. onEdit syncs the edited
@@ -62,7 +62,7 @@ const MAX_ROWS_PER_SYNC = 100;
 // an Apps Script 6-minute timeout (or any uncaught throw) before the finally
 // block runs leaves the flag set, so the next flushPending retries the
 // remaining dirty rows instead of stalling until a new edit.
-const PENDING_DIRTY_KEY = 'pendingDirty';
+const PENDING_DIRTY_KEY = "pendingDirty";
 
 // Synthetic timing is the fallback when a row has no Exercise First Edited
 // At / Exercises Last Edited At / Weight Edited At timestamps (e.g. rows
@@ -147,17 +147,17 @@ const STALE_RECONCILE_MAX_ROWS = 10;
 // they display as one card.
 const FOREIGN_MATCH_BUFFER_MS = 10 * 60 * 1000;
 
-const HEALTH_OAUTH_CLIENT_ID_KEY = 'HEALTH_OAUTH_CLIENT_ID';
-const HEALTH_OAUTH_CLIENT_SECRET_KEY = 'HEALTH_OAUTH_CLIENT_SECRET';
-const HEALTH_SERVICE_NAME = 'googlehealth';
+const HEALTH_OAUTH_CLIENT_ID_KEY = "HEALTH_OAUTH_CLIENT_ID";
+const HEALTH_OAUTH_CLIENT_SECRET_KEY = "HEALTH_OAUTH_CLIENT_SECRET";
+const HEALTH_SERVICE_NAME = "googlehealth";
 const HEALTH_OAUTH_SCOPES = [
-  'https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly',
-  'https://www.googleapis.com/auth/googlehealth.activity_and_fitness.writeonly',
-  'https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly',
-  'https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.writeonly'
-].join(' ');
+  "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
+  "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.writeonly",
+  "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
+  "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.writeonly",
+].join(" ");
 
-const HEALTH_API_BASE = 'https://health.googleapis.com/v4';
+const HEALTH_API_BASE = "https://health.googleapis.com/v4";
 
 const GRAMS_PER_LB = 453.59237;
 
