@@ -6,7 +6,9 @@
     "noEmit": true,
     "lib": ["ES2019"],
     "types": ["google-apps-script", "node"],
-    "moduleResolution": "node",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "strict": false,
     "skipLibCheck": true,
     "maxNodeModuleJsDepth": 0
   },

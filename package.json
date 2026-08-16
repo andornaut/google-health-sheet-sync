@@ -24,6 +24,6 @@
     "eslint-plugin-sort-destructure-keys": "^3.0.0",
     "globals": "^17.6.0",
     "markdownlint-cli": "^0.49.0",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   }
 }
