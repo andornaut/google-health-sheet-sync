@@ -154,7 +154,7 @@ Run **Sync ▸ Run setup** after editing timing constants.
 
 ---
 
-## Development
+## Developing
 
 - **Run tests locally**: `npm test` (Node.js runner simulating Apps Script globals).
 - **Run tests in Apps Script**: **Sync ▸ Run tests**.
