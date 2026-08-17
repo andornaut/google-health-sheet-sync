@@ -1,5 +1,9 @@
 version: 2
 updates:
+  # A standing Dependabot alert on uuid cannot be closed from here: gaxios and
+  # googleapis-common require uuid ^9, and the patched 11.1.1 falls outside
+  # that range, so nothing can propose the bump until googleapis widens its
+  # requirement.
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
