@@ -1,0 +1,5 @@
+{
+  "*.{json,md}": "prettier --write",
+  "*.{js,mjs}": ["prettier --write", "eslint --fix --max-warnings 0"],
+  "*.gs": "eslint --fix --max-warnings 0"
+}
