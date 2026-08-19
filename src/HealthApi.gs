@@ -417,11 +417,16 @@ function createExerciseAt(
   notes,
 ) {
   const url = `${HEALTH_API_BASE}/users/me/dataTypes/exercise/dataPoints`;
-  const durationSec = Math.max(0, Math.round((endUtcMs - startUtcMs) / 1000));
   const payload = {
     dataSource: { recordingMethod: "MANUAL" },
     exercise: {
-      activeDuration: `${durationSec}s`,
+      // No activeDuration: the server computes it from the interval and
+      // ignores the client either way. Measured 2026-08-19 (debugRunAll in
+      // Debug.gs): a create sending 137s for a 600s interval reads back 600s,
+      // a create omitting the field reads back 600s just the same, and a PATCH
+      // that lengthens the interval moves it on its own. The value we used to
+      // send was the interval's length, so this changes nothing on the card.
+      //
       // No displayName: for every exerciseType except OTHER the server ignores
       // whatever the client sends and derives the card's title from
       // exerciseType. Confirmed by the Health API team in 2026-08 and measured

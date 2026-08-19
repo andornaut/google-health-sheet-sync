@@ -110,6 +110,15 @@ const MUTATIONS = [
   },
   {
     file: "HealthApi.gs",
+    name: "createExerciseAt sends its own activeDuration again",
+    find: '      exerciseType: "STRENGTH_TRAINING",\n      interval: buildIntervalFromUtc_(\n        startUtcMs,',
+    replace:
+      '      activeDuration: "1800s",\n' +
+      '      exerciseType: "STRENGTH_TRAINING",\n' +
+      "      interval: buildIntervalFromUtc_(\n        startUtcMs,",
+  },
+  {
+    file: "HealthApi.gs",
     name: "createExerciseAt sends its own displayName again",
     find: '      exerciseType: "STRENGTH_TRAINING",\n      interval: buildIntervalFromUtc_(',
     replace:
