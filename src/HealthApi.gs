@@ -507,8 +507,8 @@ function patchWeight(name, sampleTime, lbs) {
 // nothing (see bug-report.md). The Health API team fixed activeDuration in
 // 2026-08 and told us displayName is server-derived by design for every
 // exerciseType except OTHER. Whether notes/interval now merge is what
-// probeExercisePatch() in Probe.gs measures, so run that before routing any
-// sync path through here.
+// debugRunAll() in Debug.gs measures, so run that before routing any sync path
+// through here.
 function patchExercise(name, exercise) {
   const url = `${HEALTH_API_BASE}/${toMeName_(name)}`;
   return httpJson_("PATCH", url, { exercise });
