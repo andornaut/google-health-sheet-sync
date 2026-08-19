@@ -10,7 +10,6 @@ const srcFiles = [
   "Sheet.gs",
   "HealthApi.gs",
   "Main.gs",
-  "Debug.gs",
 ];
 const testFiles = ["Parser.test.gs", "Sync.test.gs"];
 
