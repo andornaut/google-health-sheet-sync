@@ -1940,7 +1940,14 @@ function runParserTests() {
         "displayName must not be sent",
       );
       eq(sent.payload.exercise.notes, "Bench press, 135 lbs, 3 sets of 5");
-      eq(sent.payload.exercise.activeDuration, "1800s");
+      // Neither activeDuration nor displayName is sent: the server computes
+      // one from the interval and derives the other from exerciseType, so a
+      // client copy of either can only drift from what Health actually stores.
+      eq(
+        Object.keys(sent.payload.exercise).sort(),
+        ["exerciseType", "interval", "notes"],
+        "only the fields the server does not write for itself",
+      );
       eq(sent.payload.exercise.interval, {
         endTime: "2026-01-15T17:30:00Z",
         endUtcOffset: "-18000s",
