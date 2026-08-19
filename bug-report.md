@@ -35,8 +35,9 @@ reps/sets but no HR. The user should see both.
 A third-party app cannot get its `STRENGTH_TRAINING` notes shown for a workout a
 device also logged:
 
-- We cannot write to the device's datapoint: exercise `PATCH` is a silent no-op,
-  and cross-client writes return `403 DATA_POINT_NOT_OWNED_BY_CLIENT`.
+- We cannot write to the device's datapoint: exercise `PATCH` never merges
+  `notes`, and cross-client writes return `403 DATA_POINT_NOT_OWNED_BY_CLIENT`
+  regardless.
 - We cannot make our datapoint win the shared card (source priority).
 - Avoiding the shadow requires placing our session at a non-overlapping time,
   which misrepresents when the workout occurred.
@@ -57,6 +58,9 @@ user-entered data is hidden.
 - Google Health REST API v4, `users.dataTypes.dataPoints`, `exercise` /
   `STRENGTH_TRAINING`.
 - Reps/sets stored in `exercise.notes`.
-- Related findings: exercise `PATCH` no-ops for all content fields;
-  `metricsSummary` HR fields are not derived for app-created datapoints (only
-  `caloriesKcal` is settable on create).
+- Related findings: exercise `PATCH` merges `interval` only (re-measured
+  2026-08-19; `notes` and `displayName` return `200 done:true` and change
+  nothing, `activeDuration` is computed from the interval rather than stored,
+  and a partial body still returns `500 INTERNAL`); `metricsSummary` HR fields
+  are not derived for app-created datapoints (only `caloriesKcal` is settable
+  on create).
