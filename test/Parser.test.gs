@@ -1928,6 +1928,17 @@ function runParserTests() {
       eq(created, "users/1/dataTypes/exercise/dataPoints/E1");
       eq(sent.method, "POST");
       eq(sent.payload.exercise.exerciseType, "STRENGTH_TRAINING");
+      // No displayName: the server derives the card's title from exerciseType
+      // for every type but OTHER, so sending one is at best redundant and at
+      // worst our wording drifting from the server's.
+      eq(
+        Object.prototype.hasOwnProperty.call(
+          sent.payload.exercise,
+          "displayName",
+        ),
+        false,
+        "displayName must not be sent",
+      );
       eq(sent.payload.exercise.notes, "Bench press, 135 lbs, 3 sets of 5");
       eq(sent.payload.exercise.activeDuration, "1800s");
       eq(sent.payload.exercise.interval, {
@@ -2015,6 +2026,162 @@ function runParserTests() {
     eq(sent.payload, {
       weight: { sampleTime, weightGrams: Math.round(186 * GRAMS_PER_LB) },
     });
+  });
+
+  // The exercise counterpart: same me-form URL rule, same "the URL identifies
+  // the resource" rule, and the body is passed through verbatim under
+  // `exercise` because the caller owns the full-body requirement.
+  t(
+    "patchExercise PATCHes the me-form URL and wraps the body in exercise",
+    () => {
+      const exercise = {
+        activeDuration: "600s",
+        exerciseType: "STRENGTH_TRAINING",
+        notes: "updated",
+      };
+      let sent = null;
+      withGlobals(
+        {
+          httpJson_: (method, url, payload) => {
+            sent = { method, payload, url };
+            return { done: true };
+          },
+        },
+        () =>
+          patchExercise("users/123/dataTypes/exercise/dataPoints/E1", exercise),
+      );
+      eq(sent.method, "PATCH");
+      eq(
+        /\/users\/me\/dataTypes\/exercise\/dataPoints\/E1$/.test(sent.url),
+        true,
+        sent.url,
+      );
+      eq(sent.payload, { exercise });
+    },
+  );
+
+  // ---- Probe.gs: the live-API PATCH probe ---------------------------------
+  // The probe writes to real Health data, so its body-building and its
+  // applied/ignored verdict are pinned here rather than discovered mid-run.
+
+  const PROBE_INTERVAL_ = {
+    civilStartTime: { date: { day: 15, month: 1, year: 2026 } },
+    endTime: "2026-01-15T13:00:00Z",
+    endUtcOffset: "-18000s",
+    startTime: "2026-01-15T12:00:00Z",
+    startUtcOffset: "-18000s",
+  };
+
+  // The probe's slot is 03:00 local. Toronto is UTC-5 in January, so 08:00Z is
+  // 03:00 local: a run at 12:00Z (07:00 local) probes today, one at 06:00Z
+  // (01:00 local) probes yesterday rather than placing a session in the future.
+  t("probeStart_ uses yesterday's slot until 03:00 local has passed", () => {
+    const tz = "America/Toronto";
+    eq(
+      probeStart_(tz, new Date(Date.UTC(2026, 0, 15, 12, 0, 0))).utcMs,
+      Date.UTC(2026, 0, 15, 8, 0, 0),
+      "after 03:00 local: today",
+    );
+    eq(
+      probeStart_(tz, new Date(Date.UTC(2026, 0, 15, 6, 0, 0))).utcMs,
+      Date.UTC(2026, 0, 14, 8, 0, 0),
+      "before 03:00 local: yesterday",
+    );
+  });
+
+  t(
+    "shiftedInterval_ moves the physical times and drops the civil members",
+    () => {
+      const out = shiftedInterval_(PROBE_INTERVAL_, 5 * 60 * 1000);
+      eq(out, {
+        endTime: "2026-01-15T13:05:00Z",
+        endUtcOffset: "-18000s",
+        startTime: "2026-01-15T12:05:00Z",
+        startUtcOffset: "-18000s",
+      });
+    },
+  );
+
+  const probeExercise_ = () => ({
+    activeDuration: "3600s",
+    displayName: "Strength Training",
+    exerciseType: "STRENGTH_TRAINING",
+    interval: PROBE_INTERVAL_,
+    notes: "before",
+  });
+
+  // A server that merges: every field of the prior GET is echoed back with the
+  // probe's field swapped in, and the follow-up GET sees the new value.
+  t(
+    "runExercisePatchProbe_ sends a full body and reports an applied field",
+    () => {
+      let stored = probeExercise_();
+      let sent = null;
+      const result = withGlobals(
+        {
+          getDataPoint: () => ({ exercise: stored }),
+          patchExercise: (_name, exercise) => {
+            sent = exercise;
+            stored = exercise;
+            return { done: true };
+          },
+        },
+        () =>
+          runExercisePatchProbe_(
+            "users/1/dataTypes/exercise/dataPoints/E1",
+            EXERCISE_PATCH_PROBES_[0],
+          ),
+      );
+      eq(sent.activeDuration, "600s", "the probed field is swapped in");
+      eq(sent.notes, "before", "the rest of the prior exercise is echoed back");
+      eq(sent.exerciseType, "STRENGTH_TRAINING");
+      eq(result.applied, true);
+      eq(result.error, null);
+      eq([result.want, result.got], ["600s", "600s"]);
+    },
+  );
+
+  // The bug this probe exists to re-test: 200 + done:true, nothing changed.
+  t(
+    "runExercisePatchProbe_ reports ignored when the GET reads back unchanged",
+    () => {
+      const stored = probeExercise_();
+      const result = withGlobals(
+        {
+          getDataPoint: () => ({ exercise: stored }),
+          patchExercise: () => ({ done: true }),
+        },
+        () =>
+          runExercisePatchProbe_(
+            "users/1/dataTypes/exercise/dataPoints/E1",
+            EXERCISE_PATCH_PROBES_[0],
+          ),
+      );
+      eq(result.applied, false, "a silent no-op is not an applied field");
+      eq(result.error, null);
+      eq(result.got, "3600s");
+    },
+  );
+
+  // A 500 (the partial-body case) must be recorded, not thrown: the remaining
+  // probes still have to run and the datapoint still has to be deleted.
+  t("runExercisePatchProbe_ records a failed PATCH instead of throwing", () => {
+    const stored = probeExercise_();
+    const result = withGlobals(
+      {
+        getDataPoint: () => ({ exercise: stored }),
+        patchExercise: () => {
+          throw new Error("Health API PATCH -> 500: INTERNAL");
+        },
+      },
+      () =>
+        runExercisePatchProbe_(
+          "users/1/dataTypes/exercise/dataPoints/E1",
+          EXERCISE_PATCH_PROBES_[1],
+        ),
+    );
+    eq(/500/.test(result.error), true, result.error);
+    eq(result.applied, false);
   });
 
   // The projection foreign matching and orphan attribution both consume: only

@@ -108,6 +108,34 @@ const MUTATIONS = [
       "  const url = `${HEALTH_API_BASE}/${name}`;\n" +
       "  const grams = Math.round(lbs * GRAMS_PER_LB);",
   },
+  {
+    file: "HealthApi.gs",
+    name: "createExerciseAt sends its own displayName again",
+    find: '      exerciseType: "STRENGTH_TRAINING",\n      interval: buildIntervalFromUtc_(',
+    replace:
+      '      displayName: "Strength Training",\n' +
+      '      exerciseType: "STRENGTH_TRAINING",\n' +
+      "      interval: buildIntervalFromUtc_(",
+  },
+  {
+    file: "HealthApi.gs",
+    name: "patchExercise no longer rewrites the user id to the literal me",
+    find: '  const url = `${HEALTH_API_BASE}/${toMeName_(name)}`;\n  return httpJson_("PATCH", url, { exercise });',
+    replace:
+      '  const url = `${HEALTH_API_BASE}/${name}`;\n  return httpJson_("PATCH", url, { exercise });',
+  },
+  {
+    file: "Probe.gs",
+    name: "the patch probe sends only the changed field instead of a full body",
+    find: "  const body = Object.assign({}, before, probe.patch(before));",
+    replace: "  const body = probe.patch(before);",
+  },
+  {
+    file: "Probe.gs",
+    name: "the patch probe calls a field applied without reading it back",
+    find: "  result.applied = JSON.stringify(result.got) === JSON.stringify(result.want);",
+    replace: "  result.applied = true;",
+  },
 
   // ---- Timing resolution --------------------------------------------------
   {
