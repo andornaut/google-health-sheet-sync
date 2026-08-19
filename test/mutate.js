@@ -150,6 +150,19 @@ const MUTATIONS = [
   },
   {
     file: "Debug.gs",
+    name: "the lean-body check echoes the server-owned fields back after all",
+    find: "    patchExercise(name, {\n      exerciseType: before.exerciseType,",
+    replace:
+      "    patchExercise(name, {\n      ...before,\n      exerciseType: before.exerciseType,",
+  },
+  {
+    file: "Debug.gs",
+    name: "the derivation check compares against the interval length it replaced",
+    find: "    want: `${seconds}s`,",
+    replace: "    want: before.activeDuration,",
+  },
+  {
+    file: "Debug.gs",
     name: "debugCleanup deletes every exercise datapoint, not just the marked ones",
     find: "      if (p.name && notes.indexOf(DEBUG_NOTES_PREFIX_) === 0 && !seen[p.name]) {",
     replace: "      if (p.name && !seen[p.name]) {",

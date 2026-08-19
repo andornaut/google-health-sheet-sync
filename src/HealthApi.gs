@@ -424,10 +424,10 @@ function createExerciseAt(
       activeDuration: `${durationSec}s`,
       // No displayName: for every exerciseType except OTHER the server ignores
       // whatever the client sends and derives the card's title from
-      // exerciseType (STRENGTH_TRAINING -> "Strength Training"). Confirmed by
-      // the Health API team, 2026-08. Sending our own copy of the same string
-      // only invited it to drift from the server's wording, so exerciseType is
-      // the single lever on the title.
+      // exerciseType. Confirmed by the Health API team in 2026-08 and measured
+      // on 2026-08-19: a datapoint created without one reads back as
+      // "Strength training", which is not even the "Strength Training" this
+      // client used to send. exerciseType is the single lever on the title.
       exerciseType: "STRENGTH_TRAINING",
       interval: buildIntervalFromUtc_(
         startUtcMs,
@@ -504,11 +504,11 @@ function patchWeight(name, sampleTime, lbs) {
 //     (AIP-134), and it must use the literal `me` form.
 //
 // History: this endpoint accepted full bodies with 200 + done:true but applied
-// nothing (see bug-report.md). The Health API team fixed activeDuration in
-// 2026-08 and told us displayName is server-derived by design for every
-// exerciseType except OTHER. Whether notes/interval now merge is what
-// debugRunAll() in Debug.gs measures, so run that before routing any sync path
-// through here.
+// nothing (see bug-report.md). Measured again 2026-08-19 with debugRunAll() in
+// Debug.gs: `interval` now merges, while `notes`, `activeDuration` and
+// `displayName` are still read back unchanged, and a partial body still 500s.
+// So the sync does not call this yet: `notes` is the field it needs, and
+// delete+recreate remains the only way to change one.
 function patchExercise(name, exercise) {
   const url = `${HEALTH_API_BASE}/${toMeName_(name)}`;
   return httpJson_("PATCH", url, { exercise });
