@@ -2318,6 +2318,81 @@ function runParserTests() {
 
   // Cleanup matches on the notes marker only: a real session that happens to
   // sit in the same slot must survive it.
+  // The lean body exists to rule out one reading of a no-op: that echoing the
+  // server's own fields back is what the server objects to. Sending them again
+  // would make the check prove nothing.
+  t("runDebugLeanNotesCheck_ sends no server-owned fields", () => {
+    const stored = {
+      activeDuration: "600s",
+      createTime: "2026-08-19T11:38:17Z",
+      exerciseMetadata: {},
+      exerciseType: "STRENGTH_TRAINING",
+      interval: DEBUG_INTERVAL_,
+      metricsSummary: {},
+      notes: "before",
+      updateTime: "2026-08-19T11:38:24Z",
+    };
+    let sent = null;
+    withGlobals(
+      {
+        getDataPoint: () => ({ exercise: stored }),
+        patchExercise: (_name, exercise) => {
+          sent = exercise;
+          return { done: true };
+        },
+      },
+      () => runDebugLeanNotesCheck_("users/1/dataTypes/exercise/dataPoints/E1"),
+    );
+    eq(
+      Object.keys(sent).sort(),
+      ["exerciseType", "interval", "notes"],
+      "only the fields a client owns",
+    );
+  });
+
+  // "applied" on this one means the server derived activeDuration from the
+  // interval we sent, so the value compared against has to be the NEW
+  // interval's length rather than the one already stored.
+  t(
+    "runDebugDurationDerivationCheck_ lengthens the interval and expects the new length",
+    () => {
+      const stored = {
+        activeDuration: "600s",
+        exerciseType: "STRENGTH_TRAINING",
+        interval: DEBUG_INTERVAL_,
+        notes: "before",
+      };
+      let sent = null;
+      const result = withGlobals(
+        {
+          getDataPoint: () => ({ exercise: stored }),
+          patchExercise: (_name, exercise) => {
+            sent = exercise;
+            return { done: true };
+          },
+        },
+        () =>
+          runDebugDurationDerivationCheck_(
+            "users/1/dataTypes/exercise/dataPoints/E1",
+          ),
+      );
+      // DEBUG_INTERVAL_ is one hour; the check adds DEBUG_EXTENSION_MIN_.
+      const wantSeconds = 3600 + DEBUG_EXTENSION_MIN_ * 60;
+      eq(result.want, `${wantSeconds}s`);
+      eq(
+        sent.interval.startTime,
+        DEBUG_INTERVAL_.startTime,
+        "start is left alone",
+      );
+      eq(
+        sent.activeDuration,
+        "600s",
+        "the stored activeDuration is echoed back, so a change can only come from the server",
+      );
+      eq(result.expect, null, "a measurement makes no claim about the outcome");
+    },
+  );
+
   t(
     "debugCleanup deletes only the datapoints carrying the debug marker",
     () => {

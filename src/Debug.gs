@@ -112,6 +112,128 @@ function debugShiftedInterval_(interval, deltaMs) {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Follow-up checks. The 2026-08-19 run measured: interval merges (new),
+// activeDuration and notes still no-op, partial body still 500. Each check
+// below separates a reading of that result which the first round cannot.
+// ---------------------------------------------------------------------------
+
+// How much longer the derivation check makes the interval. Any value works as
+// long as the result is not the interval length the datapoint was created with.
+const DEBUG_EXTENSION_MIN_ = 15;
+
+// Does notes merge when the body carries only the fields a client owns? The
+// full-body checks echo back everything the GET returned, server-owned members
+// (createTime, updateTime, metricsSummary, exerciseMetadata) included. Those
+// are the API's to write, so echoing them is the reading worth ruling out
+// before reporting notes as broken a second time.
+function runDebugLeanNotesCheck_(name) {
+  const before = debugExerciseOf_(getDataPoint(name));
+  const result = {
+    applied: false,
+    error: null,
+    expect: null,
+    field: "notes (lean body, no server-owned fields)",
+    got: null,
+    want: `${DEBUG_NOTES_PREFIX_} (lean)`,
+  };
+  try {
+    patchExercise(name, {
+      exerciseType: before.exerciseType,
+      interval: before.interval,
+      notes: result.want,
+    });
+  } catch (err) {
+    result.error = String(err);
+  }
+  result.got = debugExerciseOf_(getDataPoint(name)).notes || null;
+  result.applied = result.got === result.want;
+  return result;
+}
+
+// Is activeDuration server-derived rather than merely unpatchable? The body
+// carries the stored activeDuration unchanged and a LONGER interval, so a
+// read-back matching the new interval's length means the server derives it,
+// and one matching the old value means an interval PATCH leaves activeDuration
+// stale. Which of those is true decides whether the sync can PATCH an interval
+// in place at all.
+function runDebugDurationDerivationCheck_(name) {
+  const before = debugExerciseOf_(getDataPoint(name));
+  const interval = debugShiftedInterval_(before.interval, 0);
+  const endMs =
+    new Date(interval.endTime).getTime() + DEBUG_EXTENSION_MIN_ * 60 * 1000;
+  interval.endTime = debugIsoUtc_(endMs);
+  const seconds = Math.round(
+    (endMs - new Date(interval.startTime).getTime()) / 1000,
+  );
+  const result = {
+    applied: false,
+    error: null,
+    expect: null,
+    field: `activeDuration vs a ${seconds}s interval (derived?)`,
+    got: null,
+    want: `${seconds}s`,
+  };
+  try {
+    patchExercise(name, Object.assign({}, before, { interval }));
+  } catch (err) {
+    result.error = String(err);
+  }
+  result.got = debugExerciseOf_(getDataPoint(name)).activeDuration || null;
+  result.applied = result.got === result.want;
+  return result;
+}
+
+// Is activeDuration settable at all? createExerciseAt always sends the
+// interval's length, so a create is the one place a value nothing derives can
+// be offered without a PATCH in the way. Posts its own body rather than going
+// through createExerciseAt for that reason. Returns the created name so the
+// caller deletes it with the rest.
+function runDebugCreateActiveDurationCheck_(
+  startUtcMs,
+  offsetSeconds,
+  endUtcMs,
+) {
+  const durationSec = Math.round((endUtcMs - startUtcMs) / 1000);
+  const result = {
+    applied: false,
+    error: null,
+    expect: null,
+    field: `create: activeDuration 137s vs ${durationSec}s interval`,
+    got: null,
+    want: "137s",
+  };
+  let name = null;
+  try {
+    const resp = httpJson_(
+      "POST",
+      `${HEALTH_API_BASE}/users/me/dataTypes/exercise/dataPoints`,
+      {
+        dataSource: { recordingMethod: "MANUAL" },
+        exercise: {
+          activeDuration: result.want,
+          exerciseType: "STRENGTH_TRAINING",
+          interval: buildIntervalFromUtc_(
+            startUtcMs,
+            offsetSeconds,
+            endUtcMs,
+            offsetSeconds,
+          ),
+          notes: `${DEBUG_NOTES_PREFIX_} (create check)`,
+        },
+      },
+    );
+    name = extractDataPointName_(resp);
+    result.got = name
+      ? debugExerciseOf_(getDataPoint(name)).activeDuration || null
+      : null;
+  } catch (err) {
+    result.error = String(err);
+  }
+  result.applied = result.got === result.want;
+  return { name, result };
+}
+
 // The debug datapoint's 03:00 slot: today's once that hour has passed, and
 // yesterday's otherwise, so a run at 01:00 doesn't place a session in the
 // future while measuring something else.
@@ -136,8 +258,12 @@ function debugVerdict_(result) {
 // marked: a 500 is a finding whichever field it lands on.
 function debugFormatResult_(result) {
   const verdict = debugVerdict_(result);
+  // A check with no `expect` is a measurement rather than a claim about what
+  // should happen, so there is nothing for it to contradict.
   const flag =
-    verdict === result.expect ? "" : `   <-- expected ${result.expect}`;
+    !result.expect || verdict === result.expect
+      ? ""
+      : `   <-- expected ${result.expect}`;
   const pad = (s, n) => {
     let out = String(s);
     while (out.length < n) {
@@ -146,7 +272,7 @@ function debugFormatResult_(result) {
     return out;
   };
   return (
-    `  ${pad(result.field, 30)}${pad(verdict, 9)}` +
+    `  ${pad(result.field, 52)}${pad(verdict, 9)}` +
     `sent ${JSON.stringify(result.want)}, read back ${JSON.stringify(result.got)}${flag}`
   );
 }
@@ -222,6 +348,7 @@ function debugRunAll() {
   lines.push(`run at:       ${new Date().toISOString()} (script tz ${tz})`);
   lines.push(`api base:     ${HEALTH_API_BASE}`);
 
+  const names = [];
   let name = null;
   try {
     name = createExerciseAt(
@@ -239,7 +366,19 @@ function debugRunAll() {
     return failed;
   }
 
+  names.push(name);
   const results = [];
+  // Each group is run and reported before the next one starts, so a throw
+  // partway through still leaves the report saying how far it got.
+  const group = (heading, runners) => {
+    lines.push("");
+    lines.push(heading);
+    runners.forEach((run) => {
+      const result = run();
+      results.push(result);
+      lines.push(debugFormatResult_(result));
+    });
+  };
   try {
     const created = debugExerciseOf_(getDataPoint(name));
     lines.push("create:       OK (no displayName sent)");
@@ -255,15 +394,31 @@ function debugRunAll() {
     lines.push(
       `  activeDuration read back: ${JSON.stringify(created.activeDuration || null)}`,
     );
-    lines.push("");
-    lines.push("patch checks (full body, one field swapped):");
-    DEBUG_PATCH_CHECKS_.forEach((check) => {
-      results.push(runDebugPatchCheck_(name, check));
-    });
-    results.push(runDebugPartialBodyCheck_(name));
-    results.forEach((r) => {
-      lines.push(debugFormatResult_(r));
-    });
+    group(
+      "patch checks (full body, one field swapped):",
+      DEBUG_PATCH_CHECKS_.map(
+        (check) => () => runDebugPatchCheck_(name, check),
+      ).concat([() => runDebugPartialBodyCheck_(name)]),
+    );
+    group("follow-up checks (measurements, no expected outcome):", [
+      () => runDebugLeanNotesCheck_(name),
+      () => runDebugDurationDerivationCheck_(name),
+      () => {
+        // An hour after the first datapoint, so the two never overlap: same-type
+        // overlapping sessions are their own known oddity and have no business
+        // in a measurement about activeDuration.
+        const hourMs = 60 * 60 * 1000;
+        const check = runDebugCreateActiveDurationCheck_(
+          start.utcMs + hourMs,
+          start.offsetSeconds,
+          endUtcMs + hourMs,
+        );
+        if (check.name) {
+          names.push(check.name);
+        }
+        return check.result;
+      },
+    ]);
     const errors = results.filter((r) => r.error);
     if (errors.length > 0) {
       lines.push("");
@@ -279,12 +434,14 @@ function debugRunAll() {
   } catch (err) {
     lines.push(`ABORTED: ${err}`);
   } finally {
-    try {
-      deleteDataPointsByName([name]);
-      lines.push("cleanup:      deleted the debug datapoint");
-    } catch (err) {
-      lines.push(`cleanup:      FAILED (${err}); run debugCleanup()`);
-    }
+    names.forEach((n) => {
+      try {
+        deleteDataPointsByName([n]);
+        lines.push(`cleanup:      deleted ${n}`);
+      } catch (err) {
+        lines.push(`cleanup:      FAILED (${err}); run debugCleanup()`);
+      }
+    });
   }
   lines.push("----- END HEALTH API DEBUG REPORT -----");
 
