@@ -422,7 +422,12 @@ function createExerciseAt(
     dataSource: { recordingMethod: "MANUAL" },
     exercise: {
       activeDuration: `${durationSec}s`,
-      displayName: "Strength Training",
+      // No displayName: for every exerciseType except OTHER the server ignores
+      // whatever the client sends and derives the card's title from
+      // exerciseType (STRENGTH_TRAINING -> "Strength Training"). Confirmed by
+      // the Health API team, 2026-08. Sending our own copy of the same string
+      // only invited it to drift from the server's wording, so exerciseType is
+      // the single lever on the title.
       exerciseType: "STRENGTH_TRAINING",
       interval: buildIntervalFromUtc_(
         startUtcMs,
@@ -486,6 +491,27 @@ function patchWeight(name, sampleTime, lbs) {
     weight: { sampleTime, weightGrams: grams },
   };
   httpJson_("PATCH", url, payload);
+}
+
+// Update an existing exercise datapoint in place. `exercise` is the exercise
+// sub-resource to send; the caller is responsible for its contents.
+//
+// Two things learned the hard way, both mirroring patchWeight:
+//   - Send a FULL exercise object (every field the prior GET returned, with
+//     the ones being changed swapped in), not just the changed fields. A
+//     partial body returns 500 INTERNAL rather than merging.
+//   - `name` stays out of the body: the URL already identifies the resource
+//     (AIP-134), and it must use the literal `me` form.
+//
+// History: this endpoint accepted full bodies with 200 + done:true but applied
+// nothing (see bug-report.md). The Health API team fixed activeDuration in
+// 2026-08 and told us displayName is server-derived by design for every
+// exerciseType except OTHER. Whether notes/interval now merge is what
+// probeExercisePatch() in Probe.gs measures, so run that before routing any
+// sync path through here.
+function patchExercise(name, exercise) {
+  const url = `${HEALTH_API_BASE}/${toMeName_(name)}`;
+  return httpJson_("PATCH", url, { exercise });
 }
 
 // Delete previously-created datapoints. Groups by data type and calls
