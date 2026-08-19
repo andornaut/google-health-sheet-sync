@@ -2060,11 +2060,11 @@ function runParserTests() {
     },
   );
 
-  // ---- Probe.gs: the live-API PATCH probe ---------------------------------
-  // The probe writes to real Health data, so its body-building and its
+  // ---- Debug.gs: the live-API PATCH checks --------------------------------
+  // The debug run writes to real Health data, so its body-building and its
   // applied/ignored verdict are pinned here rather than discovered mid-run.
 
-  const PROBE_INTERVAL_ = {
+  const DEBUG_INTERVAL_ = {
     civilStartTime: { date: { day: 15, month: 1, year: 2026 } },
     endTime: "2026-01-15T13:00:00Z",
     endUtcOffset: "-18000s",
@@ -2072,27 +2072,30 @@ function runParserTests() {
     startUtcOffset: "-18000s",
   };
 
-  // The probe's slot is 03:00 local. Toronto is UTC-5 in January, so 08:00Z is
+  // The debug slot is 03:00 local. Toronto is UTC-5 in January, so 08:00Z is
   // 03:00 local: a run at 12:00Z (07:00 local) probes today, one at 06:00Z
   // (01:00 local) probes yesterday rather than placing a session in the future.
-  t("probeStart_ uses yesterday's slot until 03:00 local has passed", () => {
-    const tz = "America/Toronto";
-    eq(
-      probeStart_(tz, new Date(Date.UTC(2026, 0, 15, 12, 0, 0))).utcMs,
-      Date.UTC(2026, 0, 15, 8, 0, 0),
-      "after 03:00 local: today",
-    );
-    eq(
-      probeStart_(tz, new Date(Date.UTC(2026, 0, 15, 6, 0, 0))).utcMs,
-      Date.UTC(2026, 0, 14, 8, 0, 0),
-      "before 03:00 local: yesterday",
-    );
-  });
+  t(
+    "debugStartSlot_ uses yesterday's slot until 03:00 local has passed",
+    () => {
+      const tz = "America/Toronto";
+      eq(
+        debugStartSlot_(tz, new Date(Date.UTC(2026, 0, 15, 12, 0, 0))).utcMs,
+        Date.UTC(2026, 0, 15, 8, 0, 0),
+        "after 03:00 local: today",
+      );
+      eq(
+        debugStartSlot_(tz, new Date(Date.UTC(2026, 0, 15, 6, 0, 0))).utcMs,
+        Date.UTC(2026, 0, 14, 8, 0, 0),
+        "before 03:00 local: yesterday",
+      );
+    },
+  );
 
   t(
-    "shiftedInterval_ moves the physical times and drops the civil members",
+    "debugShiftedInterval_ moves the physical times and drops the civil members",
     () => {
-      const out = shiftedInterval_(PROBE_INTERVAL_, 5 * 60 * 1000);
+      const out = debugShiftedInterval_(DEBUG_INTERVAL_, 5 * 60 * 1000);
       eq(out, {
         endTime: "2026-01-15T13:05:00Z",
         endUtcOffset: "-18000s",
@@ -2102,20 +2105,21 @@ function runParserTests() {
     },
   );
 
-  const probeExercise_ = () => ({
+  const debugExercise_ = () => ({
     activeDuration: "3600s",
     displayName: "Strength Training",
     exerciseType: "STRENGTH_TRAINING",
-    interval: PROBE_INTERVAL_,
+    interval: DEBUG_INTERVAL_,
     notes: "before",
   });
 
   // A server that merges: every field of the prior GET is echoed back with the
   // probe's field swapped in, and the follow-up GET sees the new value.
   t(
-    "runExercisePatchProbe_ sends a full body and reports an applied field",
+    "runDebugPatchCheck_ sends a full body and reports an applied field",
     () => {
-      let stored = probeExercise_();
+      let stored = debugExercise_();
+      const before = debugExercise_();
       let sent = null;
       const result = withGlobals(
         {
@@ -2127,34 +2131,41 @@ function runParserTests() {
           },
         },
         () =>
-          runExercisePatchProbe_(
+          runDebugPatchCheck_(
             "users/1/dataTypes/exercise/dataPoints/E1",
-            EXERCISE_PATCH_PROBES_[0],
+            DEBUG_PATCH_CHECKS_[0],
           ),
       );
-      eq(sent.activeDuration, "600s", "the probed field is swapped in");
+      eq(sent.activeDuration, result.want, "the checked field is swapped in");
+      // The decision behind the literal: a check that sent back what is
+      // already stored would read an echo as an applied update.
+      eq(
+        sent.activeDuration !== before.activeDuration,
+        true,
+        `sent ${sent.activeDuration}, which is what was already stored`,
+      );
       eq(sent.notes, "before", "the rest of the prior exercise is echoed back");
       eq(sent.exerciseType, "STRENGTH_TRAINING");
       eq(result.applied, true);
       eq(result.error, null);
-      eq([result.want, result.got], ["600s", "600s"]);
+      eq(result.got, result.want);
     },
   );
 
   // The bug this probe exists to re-test: 200 + done:true, nothing changed.
   t(
-    "runExercisePatchProbe_ reports ignored when the GET reads back unchanged",
+    "runDebugPatchCheck_ reports ignored when the GET reads back unchanged",
     () => {
-      const stored = probeExercise_();
+      const stored = debugExercise_();
       const result = withGlobals(
         {
           getDataPoint: () => ({ exercise: stored }),
           patchExercise: () => ({ done: true }),
         },
         () =>
-          runExercisePatchProbe_(
+          runDebugPatchCheck_(
             "users/1/dataTypes/exercise/dataPoints/E1",
-            EXERCISE_PATCH_PROBES_[0],
+            DEBUG_PATCH_CHECKS_[0],
           ),
       );
       eq(result.applied, false, "a silent no-op is not an applied field");
@@ -2165,8 +2176,8 @@ function runParserTests() {
 
   // A 500 (the partial-body case) must be recorded, not thrown: the remaining
   // probes still have to run and the datapoint still has to be deleted.
-  t("runExercisePatchProbe_ records a failed PATCH instead of throwing", () => {
-    const stored = probeExercise_();
+  t("runDebugPatchCheck_ records a failed PATCH instead of throwing", () => {
+    const stored = debugExercise_();
     const result = withGlobals(
       {
         getDataPoint: () => ({ exercise: stored }),
@@ -2175,9 +2186,9 @@ function runParserTests() {
         },
       },
       () =>
-        runExercisePatchProbe_(
+        runDebugPatchCheck_(
           "users/1/dataTypes/exercise/dataPoints/E1",
-          EXERCISE_PATCH_PROBES_[1],
+          DEBUG_PATCH_CHECKS_[1],
         ),
     );
     eq(/500/.test(result.error), true, result.error);
@@ -2251,6 +2262,90 @@ function runParserTests() {
       );
       eq(out[1].startUtcMs, Date.UTC(2026, 0, 15, 22, 0, 0));
       eq(out[1].startUtcOffsetSeconds, EST);
+    },
+  );
+
+  // The report leaves the spreadsheet, so what it carries out is pinned here.
+  t("debugRedact_ strips resource ids and the OAuth client id", () => {
+    const raw =
+      'final: {"name":"users/1234567/dataTypes/exercise/dataPoints/abc-9",' +
+      '"dataSource":{"application":{"googleWebClientId":"1234.apps.googleusercontent.com"}}}';
+    const out = debugRedact_(raw);
+    eq(/1234567/.test(out), false, out);
+    eq(/abc-9/.test(out), false, out);
+    eq(/googleusercontent/.test(out), false, out);
+    eq(/users\/USER/.test(out), true, out);
+    eq(/dataPoints\/DATAPOINT/.test(out), true, out);
+  });
+
+  // The line the reader is meant to notice: an outcome that contradicts what
+  // the API team said, and any error at all.
+  t(
+    "debugFormatResult_ marks only the results that contradict the expectation",
+    () => {
+      const line = (over) =>
+        debugFormatResult_(
+          Object.assign(
+            {
+              applied: true,
+              error: null,
+              expect: "applied",
+              field: "activeDuration",
+              got: "600s",
+              want: "600s",
+            },
+            over,
+          ),
+        );
+      eq(/expected/.test(line({})), false, "an expected outcome is not marked");
+      eq(
+        /<-- expected applied/.test(line({ applied: false })),
+        true,
+        "a field that no-ops when it should merge is marked",
+      );
+      eq(
+        /<-- expected applied/.test(line({ error: "500 INTERNAL" })),
+        true,
+        "an error is always marked",
+      );
+      eq(
+        /expected/.test(line({ applied: false, expect: "ignored" })),
+        false,
+        "displayName being ignored is the documented outcome",
+      );
+    },
+  );
+
+  // Cleanup matches on the notes marker only: a real session that happens to
+  // sit in the same slot must survive it.
+  t(
+    "debugCleanup deletes only the datapoints carrying the debug marker",
+    () => {
+      const deleted = [];
+      const marked = {
+        exercise: { notes: `${DEBUG_NOTES_PREFIX_} (patched)` },
+        name: "users/1/dataTypes/exercise/dataPoints/DEBUG",
+      };
+      const real = {
+        exercise: { notes: "Bench press, 135 lbs, 3 sets of 5." },
+        name: "users/1/dataTypes/exercise/dataPoints/REAL",
+      };
+      let call = 0;
+      withGlobals(
+        {
+          deleteDataPointsByName: (names) => {
+            deleted.push(names[0]);
+          },
+          // Yesterday first, then today: the marked point comes back on both, to
+          // show it is deleted once rather than twice.
+          listExercisesOnDate: () => {
+            call += 1;
+            return call === 1 ? [marked, real] : [marked];
+          },
+        },
+        () => debugCleanup(),
+      );
+      eq(deleted, ["users/1/dataTypes/exercise/dataPoints/DEBUG"]);
     },
   );
 
