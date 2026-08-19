@@ -1640,6 +1640,13 @@ function syncOneRow_(
       ? buildNotes(ex.endUtcMs - ex.startUtcMs, row.exercises)
       : null;
 
+    // Why delete+recreate rather than PATCH: the Health API's exercise PATCH
+    // does not merge `notes`, which is the field a row edit changes. Measured
+    // against the live API on 2026-08-19: a full body returns 200 done:true
+    // and leaves the notes as they were (only `interval` merges), so a PATCH
+    // here would stamp the row synced while Health kept the old text. See the
+    // Google Cloud caveats in the README.
+    //
     // Idempotency: if the row's single existing exercise datapoint already
     // carries the target interval + notes, skip the delete+recreate entirely
     // and keep its resource name. This is what makes the per-poll / per-day

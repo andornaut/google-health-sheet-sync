@@ -126,57 +126,6 @@ const MUTATIONS = [
       '      exerciseType: "STRENGTH_TRAINING",\n' +
       "      interval: buildIntervalFromUtc_(",
   },
-  {
-    file: "HealthApi.gs",
-    name: "patchExercise no longer rewrites the user id to the literal me",
-    find: '  const url = `${HEALTH_API_BASE}/${toMeName_(name)}`;\n  return httpJson_("PATCH", url, { exercise });',
-    replace:
-      '  const url = `${HEALTH_API_BASE}/${name}`;\n  return httpJson_("PATCH", url, { exercise });',
-  },
-  {
-    file: "Debug.gs",
-    name: "the patch check sends only the changed field instead of a full body",
-    find: "  const body = Object.assign({}, before, check.patch(before));",
-    replace: "  const body = check.patch(before);",
-  },
-  {
-    file: "Debug.gs",
-    name: "the activeDuration check sends back the value already stored",
-    find: '    patch: () => ({ activeDuration: "137s" }),',
-    replace: "    patch: (ex) => ({ activeDuration: ex.activeDuration }),",
-  },
-  {
-    file: "Debug.gs",
-    name: "the patch check calls a field applied without reading it back",
-    find: "  result.applied = JSON.stringify(result.got) === JSON.stringify(result.want);",
-    replace: "  result.applied = true;",
-  },
-  {
-    file: "Debug.gs",
-    name: "the debug report carries the account's resource ids out with it",
-    find: '    .replace(/users\\/[^/\\s"]+/g, "users/USER")',
-    replace: '    .replace(/never-matches-anything/g, "")',
-  },
-  {
-    file: "Debug.gs",
-    name: "the lean-body check echoes the server-owned fields back after all",
-    find: "    patchExercise(name, {\n      exerciseType: before.exerciseType,",
-    replace:
-      "    patchExercise(name, {\n      ...before,\n      exerciseType: before.exerciseType,",
-  },
-  {
-    file: "Debug.gs",
-    name: "the derivation check compares against the interval length it replaced",
-    find: "    want: `${seconds}s`,",
-    replace: "    want: before.activeDuration,",
-  },
-  {
-    file: "Debug.gs",
-    name: "debugCleanup deletes every exercise datapoint, not just the marked ones",
-    find: "      if (p.name && notes.indexOf(DEBUG_NOTES_PREFIX_) === 0 && !seen[p.name]) {",
-    replace: "      if (p.name && !seen[p.name]) {",
-  },
-
   // ---- Timing resolution --------------------------------------------------
   {
     file: "Main.gs",

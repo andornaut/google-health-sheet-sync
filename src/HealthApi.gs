@@ -421,8 +421,8 @@ function createExerciseAt(
     dataSource: { recordingMethod: "MANUAL" },
     exercise: {
       // No activeDuration: the server computes it from the interval and
-      // ignores the client either way. Measured 2026-08-19 (debugRunAll in
-      // Debug.gs): a create sending 137s for a 600s interval reads back 600s,
+      // ignores the client either way. Measured against the live API on
+      // 2026-08-19: a create sending 137s for a 600s interval reads back 600s,
       // a create omitting the field reads back 600s just the same, and a PATCH
       // that lengthens the interval moves it on its own. The value we used to
       // send was the interval's length, so this changes nothing on the card.
@@ -496,30 +496,6 @@ function patchWeight(name, sampleTime, lbs) {
     weight: { sampleTime, weightGrams: grams },
   };
   httpJson_("PATCH", url, payload);
-}
-
-// Update an existing exercise datapoint in place. `exercise` is the exercise
-// sub-resource to send; the caller is responsible for its contents.
-//
-// Two things learned the hard way, both mirroring patchWeight:
-//   - Send a FULL exercise object (every field the prior GET returned, with
-//     the ones being changed swapped in), not just the changed fields. A
-//     partial body returns 500 INTERNAL rather than merging.
-//   - `name` stays out of the body: the URL already identifies the resource
-//     (AIP-134), and it must use the literal `me` form.
-//
-// History: this endpoint accepted full bodies with 200 + done:true but applied
-// nothing (see bug-report.md). Measured again 2026-08-19 with debugRunAll() in
-// Debug.gs: `interval` now merges, `notes` and `displayName` still read back
-// unchanged (notes even from a body carrying nothing but client-owned fields),
-// a partial body still 500s, and `activeDuration` turns out to be computed
-// from the interval rather than stored, so it follows an interval PATCH by
-// itself. The sync does not call this yet: `notes` is the field a row edit
-// changes, and delete+recreate is still the only way to rewrite one. An
-// interval-only change is the case this now covers.
-function patchExercise(name, exercise) {
-  const url = `${HEALTH_API_BASE}/${toMeName_(name)}`;
-  return httpJson_("PATCH", url, { exercise });
 }
 
 // Delete previously-created datapoints. Groups by data type and calls
