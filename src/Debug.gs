@@ -113,9 +113,19 @@ function debugShiftedInterval_(interval, deltaMs) {
 }
 
 // ---------------------------------------------------------------------------
-// Follow-up checks. The 2026-08-19 run measured: interval merges (new),
-// activeDuration and notes still no-op, partial body still 500. Each check
-// below separates a reading of that result which the first round cannot.
+// Follow-up checks, and what they answered on 2026-08-19:
+//   - notes with a lean body:      still ignored, so the no-op is not about
+//                                  echoing the server's own fields back.
+//   - activeDuration vs a longer
+//     interval:                    followed it (600s -> 1500s), so the field
+//                                  is DERIVED from the interval, not ignored.
+//   - create with an activeDuration
+//     the interval does not imply:  ignored, read back as the interval's
+//                                  length. So no client can set it, by any
+//                                  route: it is computed, and the API team's
+//                                  "you can now edit it" is wrong twice over.
+// They stay here because they are the repro: re-running says whether any of
+// it changed.
 // ---------------------------------------------------------------------------
 
 // How much longer the derivation check makes the interval. Any value works as
@@ -184,44 +194,41 @@ function runDebugDurationDerivationCheck_(name) {
   return result;
 }
 
-// Is activeDuration settable at all? createExerciseAt always sends the
-// interval's length, so a create is the one place a value nothing derives can
-// be offered without a PATCH in the way. Posts its own body rather than going
-// through createExerciseAt for that reason. Returns the created name so the
-// caller deletes it with the rest.
-function runDebugCreateActiveDurationCheck_(
-  startUtcMs,
-  offsetSeconds,
-  endUtcMs,
-) {
-  const durationSec = Math.round((endUtcMs - startUtcMs) / 1000);
+// What does a create do with activeDuration? `sent` is the value to offer, or
+// null to leave the field out of the body entirely; `want` is what the
+// read-back is compared against, so the caller says what "applied" means for
+// the question it is asking. Posts its own body rather than going through
+// createExerciseAt, which always sends the interval's length and so cannot ask
+// either question. Returns the created name so the caller deletes it with the
+// rest.
+function runDebugCreateCheck_(slot, sent, want, field) {
   const result = {
     applied: false,
     error: null,
     expect: null,
-    field: `create: activeDuration 137s vs ${durationSec}s interval`,
+    field,
     got: null,
-    want: "137s",
+    want,
   };
+  const exercise = {
+    exerciseType: "STRENGTH_TRAINING",
+    interval: buildIntervalFromUtc_(
+      slot.startUtcMs,
+      slot.offsetSeconds,
+      slot.endUtcMs,
+      slot.offsetSeconds,
+    ),
+    notes: `${DEBUG_NOTES_PREFIX_} (create check)`,
+  };
+  if (sent !== null) {
+    exercise.activeDuration = sent;
+  }
   let name = null;
   try {
     const resp = httpJson_(
       "POST",
       `${HEALTH_API_BASE}/users/me/dataTypes/exercise/dataPoints`,
-      {
-        dataSource: { recordingMethod: "MANUAL" },
-        exercise: {
-          activeDuration: result.want,
-          exerciseType: "STRENGTH_TRAINING",
-          interval: buildIntervalFromUtc_(
-            startUtcMs,
-            offsetSeconds,
-            endUtcMs,
-            offsetSeconds,
-          ),
-          notes: `${DEBUG_NOTES_PREFIX_} (create check)`,
-        },
-      },
+      { dataSource: { recordingMethod: "MANUAL" }, exercise },
     );
     name = extractDataPointName_(resp);
     result.got = name
@@ -400,24 +407,47 @@ function debugRunAll() {
         (check) => () => runDebugPatchCheck_(name, check),
       ).concat([() => runDebugPartialBodyCheck_(name)]),
     );
+    const durationSec = Math.round((endUtcMs - start.utcMs) / 1000);
+    const runCreateCheck = (hoursOn, sent, want, field) => {
+      const offsetMs = hoursOn * 60 * 60 * 1000;
+      const check = runDebugCreateCheck_(
+        {
+          endUtcMs: endUtcMs + offsetMs,
+          offsetSeconds: start.offsetSeconds,
+          startUtcMs: start.utcMs + offsetMs,
+        },
+        sent,
+        want,
+        field,
+      );
+      if (check.name) {
+        names.push(check.name);
+      }
+      return check.result;
+    };
     group("follow-up checks (measurements, no expected outcome):", [
       () => runDebugLeanNotesCheck_(name),
       () => runDebugDurationDerivationCheck_(name),
-      () => {
-        // An hour after the first datapoint, so the two never overlap: same-type
-        // overlapping sessions are their own known oddity and have no business
-        // in a measurement about activeDuration.
-        const hourMs = 60 * 60 * 1000;
-        const check = runDebugCreateActiveDurationCheck_(
-          start.utcMs + hourMs,
-          start.offsetSeconds,
-          endUtcMs + hourMs,
-        );
-        if (check.name) {
-          names.push(check.name);
-        }
-        return check.result;
-      },
+      // Each create sits an hour further on, so no two debug datapoints ever
+      // overlap: same-type overlapping sessions are their own known oddity and
+      // have no business in a measurement about activeDuration.
+      () =>
+        runCreateCheck(
+          1,
+          "137s",
+          "137s",
+          `create: activeDuration 137s vs ${durationSec}s interval`,
+        ),
+      // The last open question: createExerciseAt still sends an activeDuration
+      // the server computes for itself. If a create that omits it reads back
+      // the interval's length anyway, that line can go the way of displayName.
+      () =>
+        runCreateCheck(
+          2,
+          null,
+          `${durationSec}s`,
+          "create: no activeDuration sent (derived?)",
+        ),
     ]);
     const errors = results.filter((r) => r.error);
     if (errors.length > 0) {

@@ -505,10 +505,13 @@ function patchWeight(name, sampleTime, lbs) {
 //
 // History: this endpoint accepted full bodies with 200 + done:true but applied
 // nothing (see bug-report.md). Measured again 2026-08-19 with debugRunAll() in
-// Debug.gs: `interval` now merges, while `notes`, `activeDuration` and
-// `displayName` are still read back unchanged, and a partial body still 500s.
-// So the sync does not call this yet: `notes` is the field it needs, and
-// delete+recreate remains the only way to change one.
+// Debug.gs: `interval` now merges, `notes` and `displayName` still read back
+// unchanged (notes even from a body carrying nothing but client-owned fields),
+// a partial body still 500s, and `activeDuration` turns out to be computed
+// from the interval rather than stored, so it follows an interval PATCH by
+// itself. The sync does not call this yet: `notes` is the field a row edit
+// changes, and delete+recreate is still the only way to rewrite one. An
+// interval-only change is the case this now covers.
 function patchExercise(name, exercise) {
   const url = `${HEALTH_API_BASE}/${toMeName_(name)}`;
   return httpJson_("PATCH", url, { exercise });
