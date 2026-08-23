@@ -19,7 +19,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@google/clasp": "^3.3.0",
+    "@google/clasp": "^3.4.0",
     "@types/google-apps-script": "^2.0.12",
     "@types/node": "^26.2.0",
     "eslint": "^10.1.0",
