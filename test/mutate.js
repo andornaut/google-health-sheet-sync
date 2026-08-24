@@ -26,6 +26,20 @@ const root = path.resolve(__dirname, "..");
 const MUTATIONS = [
   // ---- Parser / notes -----------------------------------------------------
   {
+    // ANY invalid value rejects the line, not just all of them. A single-number
+    // cell cannot tell the two apart, so only a multi-segment entry catches it.
+    file: "Parser.gs",
+    name: "a line is rejected only when EVERY value is invalid",
+    find: "  if (nums.some((n) => !Number.isFinite(n) || n < 0)) {",
+    replace: "  if (nums.every((n) => !Number.isFinite(n) || n < 0)) {",
+  },
+  {
+    file: "Format.gs",
+    name: "a one-minute session loses its duration line",
+    find: "  if (minutes > 0) {",
+    replace: "  if (minutes > 1) {",
+  },
+  {
     file: "Parser.gs",
     name: "zero-rep entries are kept instead of dropped as not-performed",
     find: "    if (entry.reps === 0) {",
@@ -182,6 +196,90 @@ const MUTATIONS = [
     replace: '    Authorization: "",',
   },
   // ---- Health API shaping -------------------------------------------------
+  {
+    // Feeds weight orphan attribution: selectOrphanDataPointNames_ only spares a
+    // candidate whose googleWebClientId is null, so claiming ours for a foreign
+    // datapoint makes the backstop delete data we do not own.
+    file: "HealthApi.gs",
+    name: "listWeightOnDate claims our client id for every datapoint",
+    find:
+      "      googleWebClientId: (app && app.googleWebClientId) || null,\n" +
+      "      name: p.name,\n" +
+      "    });\n" +
+      "  }\n" +
+      "  return out;\n" +
+      "}\n" +
+      "\n" +
+      "function getTzOffsetSeconds_",
+    replace:
+      '      googleWebClientId: "ours",\n' +
+      "      name: p.name,\n" +
+      "    });\n" +
+      "  }\n" +
+      "  return out;\n" +
+      "}\n" +
+      "\n" +
+      "function getTzOffsetSeconds_",
+  },
+  {
+    // Verified against the live API; a wrong member is a 400, not an empty list.
+    file: "HealthApi.gs",
+    name: "the weight list filter member is wrong",
+    find: '    "weight.sample_time.civil_time",',
+    replace: '    "weight.sample_timeZZ.civil_time",',
+  },
+  {
+    // Under-listing is silent: orphan reconciliation misses datapoints and
+    // foreign matching misses sessions, with no error either way.
+    file: "HealthApi.gs",
+    name: "paging stops after the first page",
+    find: "    pageToken = json.nextPageToken || null;",
+    replace: "    pageToken = null;",
+  },
+  {
+    file: "HealthApi.gs",
+    name: "deletes are grouped by the wrong name segment",
+    find: "    const dataType = m[1];",
+    replace: "    const dataType = m[2];",
+  },
+  {
+    file: "HealthApi.gs",
+    name: "an unparseable datapoint name is no longer skipped on delete",
+    find:
+      "    if (!m) {\n" +
+      "      console.warn(\n" +
+      '        `deleteDataPointsByName: unparseable name "${n}"; skipping.`,\n' +
+      "      );\n" +
+      "      return;\n" +
+      "    }",
+    replace: "",
+  },
+  {
+    file: "HealthApi.gs",
+    name: "an empty delete list still issues a request",
+    find: "  if (!names || names.length === 0) {",
+    replace: "  if (false) {",
+  },
+  {
+    // Every tested zone is a whole hour, so the minutes term needs a half-hour
+    // zone (India, Newfoundland) to be exercised at all.
+    file: "HealthApi.gs",
+    name: "the timezone offset drops its minutes term",
+    find: "  return sign * (hours * 3600 + mins * 60);",
+    replace: "  return sign * (hours * 3600);",
+  },
+  {
+    file: "HealthApi.gs",
+    name: "patchWeight truncates the gram conversion instead of rounding",
+    find:
+      "  const grams = Math.round(lbs * GRAMS_PER_LB);\n" +
+      "  const payload = {\n" +
+      "    weight: { sampleTime, weightGrams: grams },",
+    replace:
+      "  const grams = Math.floor(lbs * GRAMS_PER_LB);\n" +
+      "  const payload = {\n" +
+      "    weight: { sampleTime, weightGrams: grams },",
+  },
   {
     file: "HealthApi.gs",
     name: "a create returning no resource name no longer throws (exercise)",
