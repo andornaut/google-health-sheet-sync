@@ -156,6 +156,26 @@ const MUTATIONS = [
     replace: "  if (true) {",
   },
   {
+    // The cache-hit path: without this, every request after the first in an
+    // execution goes out unauthenticated.
+    file: "HealthApi.gs",
+    name: "the cached auth headers come back empty",
+    find: "  if (cachedAuthHeaders_) {\n    return cachedAuthHeaders_;\n  }",
+    replace: "  if (cachedAuthHeaders_) {\n    return null;\n  }",
+  },
+  {
+    file: "HealthApi.gs",
+    name: "requests no longer ask for a JSON response",
+    find: '    Accept: "application/json",',
+    replace: '    Accept: "text/plain",',
+  },
+  {
+    file: "HealthApi.gs",
+    name: "request bodies are no longer sent as JSON",
+    find: '    contentType: "application/json",',
+    replace: '    contentType: "text/plain",',
+  },
+  {
     file: "HealthApi.gs",
     name: "requests go out without the OAuth authorization header",
     find: "    Authorization: `Bearer ${getHealthAccessToken_()}`,",
