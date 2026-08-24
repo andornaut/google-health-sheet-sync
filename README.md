@@ -13,9 +13,9 @@ Google Apps Script that syncs strength-training and bodyweight data from Google 
 - **Edit-derived timing**: Start/end times come from when you first/last edited the row, so a session reflects when you actually worked out. A single edit records a default-length session; a second edit sets the real end time (`endTime` grows as you log sets, clamped to `[MIN, MAX]`, default 10 min – 2 h). Edit timestamps are only trusted when the first one falls on the row's `Date` (in your local time zone), so editing an old row won't shift its datapoint to today. A later correction, more than the 2 h cap from your first edit, leaves the recorded interval alone; a correction inside that window still extends `endTime`, since that is the same mechanism that grows the session while you log sets. On re-sync the prior interval is preserved. Rows without edit timestamps (backfill) fall back to a synthetic noon slot on `Date`.
 - **Foreign-activity matching**: If a Strength Training session from a watch or other app overlaps the row's edit window (timestamps on the row's `Date`, within 10 min slack), the script borrows that session's start/end times for the datapoint it writes and records the match in `Matched Health Session`. The script **always writes its own datapoint** (with reps/sets notes); the foreign datapoint is left untouched (the API forbids modifying it anyway). A backstop runs every 4 hours (`BACKSTOP_INTERVAL_HOURS`) and re-reviews exercise rows from the last 2 days (`BACKSTOP_LOOKBACK_DAYS`), both unmatched (to align a late foreign session) and matched (to re-borrow a foreign interval extended after your last edit). This runs off the 5-minute poll, so foreign re-review doesn't query the Health API every 5 minutes; the tradeoff is that a late foreign session aligns within ~4 hours rather than minutes.
 - **Two-phase sync**: Weight and exercise sync independently, with their own `Synced At` stamps and column-aware dirty tracking. Editing only Weight re-pushes only the weight datapoint, and vice versa. Editing only `Date` on an empty row is a no-op.
-- **Clearing a cell counts as an edit**: Deleting a logged set or a bodyweight re-syncs the row, so the Health datapoint is rewritten or deleted to match. This works for one cell at a time (Sheets only reports the previous value for single-cell edits); to clear a block of cells at once, select those rows and follow it with **Sync ▸ Resync selected rows**.
+- **Clearing a cell counts as an edit**: Deleting a logged set or a bodyweight re-syncs the row, so the Health datapoint is rewritten or deleted to match. A single-cell clear syncs within seconds, because Sheets reports the previous value only for single-cell edits. Every other shape of clear (a multi-cell selection, a paste that blanks one cell while writing another) is caught by the backstop instead, which compares each row's tracked datapoints against its current cells, so it lands within `BACKSTOP_INTERVAL_HOURS` rather than seconds. **Sync ▸ Resync selected rows** makes it immediate. Safety bound: if more than `STALE_RECONCILE_MAX_ROWS` (10) rows look cleared at once, the backstop reconciles nothing and logs an error, since that many is evidence of a column or format change rather than a clear.
 - **Sync on edit**: Editing a row syncs it **immediately** via the `onEdit` trigger (under a non-blocking script lock). During an edit burst the lock batches work; an edit that can't grab the lock is caught by the next poll.
-- **Automated retry net**: A 5-minute poll re-syncs rows left dirty by lock contention or transient failures (it queries the Health API only when there is pending work). A backstop runs every 4 hours, re-reviewing exercise rows from the last 2 days (matched and unmatched) for foreign-session alignment, and deletes orphaned sync-created datapoints (no row references them).
+- **Automated retry net**: A 5-minute poll re-syncs rows left dirty by lock contention or transient failures (it queries the Health API only when there is pending work). A backstop runs every 4 hours, re-reviewing exercise rows from the last 2 days (matched and unmatched) for foreign-session alignment, re-dirtying rows whose tracked datapoints no longer match their cells, and deleting orphaned sync-created datapoints (no row references them).
 - **Per-pass cap**: Up to 100 rows per pass (newest first) to stay under Apps Script's 6-minute limit; the remainder is picked up on the next poll.
 
 > [!NOTE]
@@ -100,7 +100,7 @@ Enable the Apps Script API at [Script Settings](https://script.google.com/home/u
 npm install
 npm run login
 cp .clasp.json.example .clasp.json # Paste your Script ID under "scriptId"
-npm run push
+npm run deploy
 ```
 
 ### 5. Set Timezone
@@ -149,6 +149,7 @@ Edit [Config.gs](src/Config.gs) to customize:
 - `FOREIGN_MATCH_BUFFER_MS` (10 min): slack on either side when checking whether a foreign Strength Training session overlaps a row's edit window. An overlapping session only supplies its interval (the script always writes its own datapoint), and its name is recorded in `Matched Health Session`.
 - `BACKSTOP_LOOKBACK_DAYS` / `BACKSTOP_INTERVAL_HOURS` (2 / 4): how many days back the backstop's foreign-match re-review reaches, and how often it runs. It re-dirties recent exercise rows (matched and unmatched); the next poll re-syncs them. Cheap because the re-sync is idempotent (an unchanged row is a read, not a recreate).
 - `ORPHAN_RECONCILE_LOOKBACK_DAYS` (7): the backstop scans this many days back for sync-created datapoints no row references and deletes them. Ownership is derived from the datapoints themselves, so foreign sessions are never touched.
+- `STALE_RECONCILE_MAX_ROWS` (10): how many rows may look cleared in one backstop run before it reconciles nothing and logs an error. Clearing cells is a human-scale action; a larger set is evidence of a column or format change, where deleting datapoints would destroy history rather than reconcile it.
 - `POLL_INTERVAL_MIN` (5): cadence for `flushPending` (Apps Script minimum is 1).
 - `MAX_ROWS_PER_SYNC` (100): max rows per pass (newest first); overflow defers to the next poll. ~2.83s/row leaves margin under the 6-minute limit.
 - `MAX_BODYWEIGHT_LB` / `MIN_BODYWEIGHT_LB` (499 / 50): values above `MAX` (typos like `1850`) or below `MIN` (a rep count typed into Weight) are treated as no-bodyweight.
@@ -161,9 +162,10 @@ Run **Sync ▸ Run setup** after editing timing constants.
 
 - **Run tests locally**: `npm test` (Node.js runner simulating Apps Script globals).
 - **Run tests in Apps Script**: **Sync ▸ Run tests**.
-- **Lint markdown**: `npm run lint`.
+- **Lint**: `npm run lint` (Prettier, ESLint, and the TypeScript check). `npm run format` applies the Prettier and ESLint fixes.
+- **Lint markdown style**: `npx markdownlint-cli2`, which reads its file list from `.markdownlint-cli2.yaml`. CI runs the same check; `npm run lint` does not.
 - **Mutation-check the suite**: `npm run mutate` (each catalogued mutation must make `npm test` fail).
-- **Push / pull**: `npm run push` / `npm run pull`.
+- **Deploy / pull**: `npm run deploy` (clasp push) / `npm run pull`.
 
 ---
 
