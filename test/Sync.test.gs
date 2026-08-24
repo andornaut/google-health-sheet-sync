@@ -2,11 +2,21 @@
 // Parser.test.gs can't reach: onEditMarkDirty's column-aware dirty marking,
 // syncDirtyRows' dirty-flag lifecycle (drain / error-retained / concurrent-edit),
 // syncOneRow_'s phase dispatch + idempotency skip, and weight orphan
-// reconciliation. Runs against the in-memory Apps Script fakes wired up in
-// run.js (SYNC_TEST_HARNESS_); the Health API functions are stubbed per-test via
-// globalThis, the same pattern resolveForeignMatches_'s tests use for
-// listStrengthOnDate.
+// reconciliation. Runs against the in-memory Apps Script fakes in Harness.gs,
+// which withSyncTestHarness_ swaps in for the real services and hands over as
+// H; the Health API functions are stubbed per-test via globalThis, the same
+// pattern resolveForeignMatches_'s tests use for listStrengthOnDate.
 function runSyncTests() {
+  reportTestResults_(
+    "Orchestration tests",
+    withSyncTestHarness_(runSyncTestsBody_),
+  );
+}
+
+// Returns the PASS/FAIL list, and takes the harness handle rather than reaching
+// for a global. Reporting happens outside withSyncTestHarness_ because the fake
+// SpreadsheetApp's getUi throws by design.
+function runSyncTestsBody_(H) {
   const results = [];
   const t = (name, fn) => {
     try {
@@ -37,10 +47,10 @@ function runSyncTests() {
     }
   };
 
-  const SHEET = SYNC_TEST_HARNESS_.sheet;
-  const PROPS = SYNC_TEST_HARNESS_.scriptProps;
-  const LOCK = SYNC_TEST_HARNESS_.lockState;
-  const ACTIVE = SYNC_TEST_HARNESS_.activeSheetRef;
+  const SHEET = H.sheet;
+  const PROPS = H.scriptProps;
+  const LOCK = H.lockState;
+  const ACTIVE = H.activeSheetRef;
 
   // Shared column layout for the fake sheet. 1-based column numbers in COL so
   // they can be passed straight to getRange.
@@ -61,7 +71,7 @@ function runSyncTests() {
     COL[h] = i + 1;
   });
 
-  const TOASTS = SYNC_TEST_HARNESS_.toasts;
+  const TOASTS = H.toasts;
 
   // A test needing a non-standard header row calls resetGrid directly; every
   // other one goes through reset. Both must clear the same harness state, so
@@ -2528,7 +2538,7 @@ function runSyncTests() {
   t("resyncSelectedRows refuses a selection on another tab", () => {
     reset([["2026-01-15", "", "135x5", "SYNC", "SYNC", "", "", "", "", ""]]);
     SHEET._setSelection([[2, 1]]);
-    ACTIVE.sheet = SYNC_TEST_HARNESS_.otherSheet;
+    ACTIVE.sheet = H.otherSheet;
     try {
       withStubs(NO_FOREIGN, () => resyncSelectedRows());
     } finally {
@@ -2892,8 +2902,5 @@ function runSyncTests() {
     );
   });
 
-  const msg = results.join("\n");
-  const passed = results.filter((r) => r.startsWith("PASS ")).length;
-  const summary = `${results.length} tests: ${passed} passed, ${results.length - passed} failed`;
-  console.log(`${msg}\n\n${summary}`);
+  return results;
 }
