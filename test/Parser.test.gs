@@ -1,4 +1,10 @@
 function runParserTests() {
+  reportTestResults_("Parser / pure-helper tests", runParserTestsBody_());
+}
+
+// Returns the PASS/FAIL list rather than reporting it, so runAllTests can
+// summarize both suites without two dumps and two blocking alerts.
+function runParserTestsBody_() {
   const results = [];
   const t = (name, fn) => {
     try {
@@ -2568,15 +2574,5 @@ function runParserTests() {
     eq(/socket closed/.test(String(r.err)), true, String(r.err));
   });
 
-  const msg = results.join("\n");
-  const passed = results.filter((r) => r.startsWith("PASS ")).length;
-  const summary = `${results.length} tests: ${passed} passed, ${results.length - passed} failed`;
-  console.log(`${msg}\n\n${summary}`);
-  try {
-    SpreadsheetApp.getUi().alert(
-      `Parser / pure-helper tests\n\n${msg}\n\n${summary}`,
-    );
-  } catch {
-    /* no UI outside a spreadsheet */
-  }
+  return results;
 }

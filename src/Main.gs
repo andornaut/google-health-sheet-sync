@@ -15,12 +15,11 @@ function onOpen() {
     .addItem("Authorize Health API", "authorizeHealthApi")
     .addItem("Revoke Health API", "revokeHealthApi")
     .addSeparator()
-    // Only the parser / pure-helper suite is wired here. The orchestration
-    // suite (runSyncTests) depends on the in-memory sheet/properties fakes that
-    // test/run.js injects as SYNC_TEST_HARNESS_, which does not exist in the
-    // Apps Script runtime: running it here throws ReferenceError. Run it
-    // locally with `npm test`.
-    .addItem("Run tests", "runParserTests")
+    // Both suites, via runAllTests in test/Harness.gs. The orchestration one
+    // runs against the fakes there, which withSyncTestHarness_ swaps in for the
+    // real services and takes back out again. Each suite reports in its own
+    // alert.
+    .addItem("Run tests", "runAllTests")
     .addToUi();
 }
 

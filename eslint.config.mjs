@@ -33,9 +33,10 @@ const sharedScope = () => {
   return names;
 };
 
-// The services Apps Script puts in scope, and the two globals the local runner
-// injects into its VM sandbox. Listed rather than taken wholesale from a plugin,
-// so reaching for a service this project has never used says so.
+// The services Apps Script puts in scope. Listed rather than taken wholesale
+// from a plugin, so reaching for a service this project has never used says so.
+// The three the test harness swaps out are still real globals here: it assigns
+// them through globalThis, which is a property write, not a redeclaration.
 const appsScriptGlobals = {
   CacheService: "readonly",
   globalThis: "readonly",
@@ -46,7 +47,6 @@ const appsScriptGlobals = {
   ScriptApp: "readonly",
   Session: "readonly",
   SpreadsheetApp: "readonly",
-  SYNC_TEST_HARNESS_: "readonly",
   UrlFetchApp: "readonly",
   Utilities: "readonly",
 };

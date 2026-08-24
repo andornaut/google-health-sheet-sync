@@ -119,7 +119,7 @@ The **Sync** menu also exposes:
 - **Resync all rows**: clears both `Synced At` columns for every row and reconciles everything. Runs immediately; only changed datapoints are recreated.
 - **Revoke Health API**: clears the stored token.
 - **Run setup**: append missing managed columns and rebuild triggers (after editing timing constants).
-- **Run tests**: run the parser / pure-helper suite inside Apps Script. (The orchestration suite needs the Node test harness, so run it locally with `npm test`.)
+- **Run tests**: run both suites inside Apps Script. The orchestration one runs against in-memory fakes swapped in for `SpreadsheetApp`, `PropertiesService`, `LockService` and `UrlFetchApp`, so it never touches the live spreadsheet, the script properties, or your Health data.
 
 ---
 
@@ -161,7 +161,7 @@ Run **Sync ▸ Run setup** after editing timing constants.
 ## Developing
 
 - **Run tests locally**: `npm test` (Node.js runner simulating Apps Script globals).
-- **Run tests in Apps Script**: **Sync ▸ Run tests**.
+- **Run tests in Apps Script**: **Sync ▸ Run tests**, which runs both suites and reports one summary. Run a suite on its own (`runParserTests` / `runSyncTests` from the editor) for its full PASS list.
 - **Lint**: `npm run lint` (Prettier, ESLint, and the TypeScript check). `npm run format` applies the Prettier and ESLint fixes.
 - **Lint markdown style**: `npx markdownlint-cli2`, which reads its file list from `.markdownlint-cli2.yaml`. CI runs the same check; `npm run lint` does not.
 - **Mutation-check the suite**: `npm run mutate` (each catalogued mutation must make `npm test` fail).

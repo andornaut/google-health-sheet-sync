@@ -11,7 +11,10 @@ const srcFiles = [
   "HealthApi.gs",
   "Main.gs",
 ];
-const testFiles = ["Parser.test.gs", "Sync.test.gs"];
+// Harness.gs first: it declares the fakes the orchestration suite runs against.
+// Unlike this file it is pushed to Apps Script, so the fakes have one
+// definition and `Sync ▸ Run tests` exercises the same ones.
+const testFiles = ["Harness.gs", "Parser.test.gs", "Sync.test.gs"];
 
 // Silence the code's diagnostic chatter (warn/info) so the suite output is just
 // the PASS/FAIL lines, which are emitted via console.log and captured below.
@@ -85,7 +88,10 @@ function formatDateStub(date, tz, format) {
   throw new Error(`formatDateStub: unmocked format "${format}"`);
 }
 
-let scriptTimeZone = "America/Toronto";
+// Matches appsscript.json, so a Date cell's civil date resolves the same way
+// locally and in Apps Script. The suites assert on that resolution, so the two
+// have to agree.
+const scriptTimeZone = "America/Toronto";
 const Utilities = {
   formatDate: formatDateStub,
   sleep: () => {},
@@ -94,207 +100,15 @@ const Session = {
   getScriptTimeZone: () => scriptTimeZone,
 };
 
-// ---------------------------------------------------------------------------
-// Minimal in-memory fakes for the Apps Script services the orchestration code
-// (syncDirtyRows, syncOneRow_, onEditMarkDirty) touches. These let Sync.test.gs
-// exercise the stateful glue (dirty-flag lifecycle, phase dispatch, idempotency)
-// that the pure-helper tests can't reach. The Health API functions themselves
-// are stubbed per-test via globalThis (same pattern as listStrengthOnDate), so
-// the harness needs no UrlFetchApp fake; the httpJson_ transport tests supply
-// their own per-test (withHttp in Parser.test.gs). Exposed to the sandbox as
-// SYNC_TEST_HARNESS_.
-// ---------------------------------------------------------------------------
-function makeFakeSheet(sheetId) {
-  let grid = []; // grid[r0][c0], 0-indexed; auto-grows on write
-  const isEmpty = (v) => v === "" || v === null || v === undefined;
-  const ensure = (r0, c0) => {
-    while (grid.length <= r0) {
-      grid.push([]);
-    }
-    for (const row of grid) {
-      while (row.length <= c0) {
-        row.push("");
-      }
-    }
-  };
-  const getCell = (r0, c0) =>
-    grid[r0] && grid[r0][c0] !== undefined ? grid[r0][c0] : "";
-  const setCell = (r0, c0, v) => {
-    ensure(r0, c0);
-    grid[r0][c0] = v;
-  };
-
-  const sheet = {
-    _setGrid(rows) {
-      grid = rows.map((r) => r.slice());
-    },
-    // Selection fake for resyncSelectedRows: _setSelection([[firstRow, numRows], ...]),
-    // or null to simulate "nothing selected".
-    _setSelection(specs) {
-      sheet._selection =
-        specs === null
-          ? null
-          : {
-              getRanges: () =>
-                specs.map(([row, numRows]) =>
-                  sheet.getRange(row, 1, numRows, 1),
-                ),
-            };
-    },
-    _selection: null,
-    getActiveRangeList: () => sheet._selection,
-    getSheetId: () => sheetId,
-    getName: () => `Sheet${sheetId}`,
-    hideColumns: () => {},
-    getLastRow() {
-      let last = 0;
-      for (let r0 = 0; r0 < grid.length; r0++) {
-        if (grid[r0].some((v) => !isEmpty(v))) {
-          last = r0 + 1;
-        }
-      }
-      return last;
-    },
-    getLastColumn() {
-      let last = 0;
-      for (let r0 = 0; r0 < grid.length; r0++) {
-        for (let c0 = (grid[r0] || []).length - 1; c0 >= 0; c0--) {
-          if (!isEmpty(grid[r0][c0])) {
-            if (c0 + 1 > last) {
-              last = c0 + 1;
-            }
-            break;
-          }
-        }
-      }
-      return last;
-    },
-    getRange(row, col, numRows, numCols) {
-      const rows = numRows || 1;
-      const cols = numCols || 1;
-      return {
-        getRow: () => row,
-        getColumn: () => col,
-        getNumRows: () => rows,
-        getLastRow: () => row + rows - 1,
-        getLastColumn: () => col + cols - 1,
-        getSheet: () => sheet,
-        getValue: () => getCell(row - 1, col - 1),
-        setValue: (v) => {
-          setCell(row - 1, col - 1, v);
-        },
-        getValues: () => {
-          const out = [];
-          for (let i = 0; i < rows; i++) {
-            const r = [];
-            for (let j = 0; j < cols; j++) {
-              r.push(getCell(row - 1 + i, col - 1 + j));
-            }
-            out.push(r);
-          }
-          return out;
-        },
-        setValues: (vals) => {
-          for (let i = 0; i < rows; i++) {
-            for (let j = 0; j < cols; j++) {
-              setCell(row - 1 + i, col - 1 + j, vals[i][j]);
-            }
-          }
-        },
-      };
-    },
-  };
-  return sheet;
-}
-
-function makeFakeStore() {
-  let m = {};
-  return {
-    getProperty: (k) => (k in m ? m[k] : null),
-    setProperty: (k, v) => {
-      m[k] = String(v);
-    },
-    deleteProperty: (k) => {
-      delete m[k];
-    },
-    _clear: () => {
-      m = {};
-    },
-  };
-}
-
-const fakeSheet = makeFakeSheet(1);
-// A second tab the sync never manages, so tests can put the selection on the
-// "wrong" sheet the way a user with multiple tabs would.
-const otherFakeSheet = makeFakeSheet(2);
-const activeSheetRef = { sheet: fakeSheet };
-const toasts = [];
-const fakeSpreadsheet = {
-  getSheets: () => [fakeSheet, otherFakeSheet],
-  getActiveSheet: () => activeSheetRef.sheet,
-  toast: (msg) => {
-    toasts.push(String(msg));
-  },
-  getUi: () => {
-    throw new Error("no UI");
-  },
-};
-const scriptProps = makeFakeStore();
-const lockState = { held: false };
-const makeLock = () => {
-  let owned = false;
-  return {
-    tryLock: () => {
-      if (lockState.held && !owned) {
-        return false;
-      }
-      lockState.held = true;
-      owned = true;
-      return true;
-    },
-    releaseLock: () => {
-      if (owned) {
-        lockState.held = false;
-        owned = false;
-      }
-    },
-  };
-};
-
-const SpreadsheetApp = {
-  getActiveSpreadsheet: () => fakeSpreadsheet,
-  getUi: () => {
-    throw new Error("no UI");
-  },
-  flush: () => {},
-};
-const PropertiesService = {
-  getScriptProperties: () => scriptProps,
-  getUserProperties: () => makeFakeStore(),
-};
-const LockService = {
-  getScriptLock: makeLock,
-  getUserLock: makeLock,
-};
-
+// Apps Script services the suites do not fake for themselves. SpreadsheetApp,
+// PropertiesService and LockService are not here: Harness.gs declares those
+// fakes and withSyncTestHarness_ installs them for the duration of the
+// orchestration suite, so this sandbox starts without them and a source file
+// reaching for one outside that window fails loudly.
 const sandbox = {
   console: quietConsole,
-  SpreadsheetApp,
-  PropertiesService,
-  LockService,
   Utilities,
   Session,
-  setTestTimeZone: (tz) => {
-    scriptTimeZone = tz;
-  },
-  SYNC_TEST_HARNESS_: {
-    sheet: fakeSheet,
-    otherSheet: otherFakeSheet,
-    activeSheetRef,
-    toasts,
-    scriptProps,
-    lockState,
-  },
 };
 vm.createContext(sandbox);
 
