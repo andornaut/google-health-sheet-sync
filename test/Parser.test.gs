@@ -130,6 +130,18 @@ function runParserTests() {
     ]),
   );
   t("negative weight rejected", () => eq(parseExerciseCell("-5"), []));
+  // A multi-segment entry is what separates "any value is invalid" from "every
+  // value is invalid": with a single number the two agree, so these are the only
+  // cases that pin the rejection to ANY negative rather than all of them.
+  t('negative weight rejected in a multi-segment entry "-135x5"', () =>
+    eq(parseExerciseCell("-135x5"), []),
+  );
+  t('negative reps rejected "135x-2"', () =>
+    eq(parseExerciseCell("135x-2"), []),
+  );
+  t('negative sets rejected "135x5x-3"', () =>
+    eq(parseExerciseCell("135x5x-3"), []),
+  );
   t('decimal weight allowed "22.5" (reps/sets unknown)', () =>
     eq(parseExerciseCell("22.5"), [
       { assisted: false, reps: null, sets: null, weight: 22.5 },
@@ -328,6 +340,9 @@ function runParserTests() {
       buildNotes(90 * 1000, oneSet),
       "Bench press, 190 lbs, 5 sets of 5.\n2 minute session.",
     ),
+  );
+  t("buildNotes keeps the session line at one minute", () =>
+    eq(buildNotes(60000, []), "1 minute session."),
   );
   t("buildNotes omits the session line when the duration rounds to zero", () =>
     eq(buildNotes(29 * 1000, oneSet), "Bench press, 190 lbs, 5 sets of 5."),
@@ -608,6 +623,21 @@ function runParserTests() {
     eq(
       getTzOffsetSeconds_(TORONTO, new Date(Date.UTC(2026, 6, 15, 16, 0, 0))),
       EDT,
+    ),
+  );
+  // A half-hour zone is the only thing that exercises the minutes term; EST,
+  // EDT and GMT are all whole hours, so the mins arithmetic could be dropped
+  // entirely and every other offset test would still pass.
+  t("getTzOffsetSeconds_ half-hour zone keeps the minutes", () =>
+    eq(
+      getTzOffsetSeconds_("Asia/Kolkata", new Date(Date.UTC(2026, 0, 15))),
+      5 * 3600 + 30 * 60,
+    ),
+  );
+  t("getTzOffsetSeconds_ negative half-hour zone", () =>
+    eq(
+      getTzOffsetSeconds_("America/St_Johns", new Date(Date.UTC(2026, 0, 15))),
+      -(3 * 3600 + 30 * 60),
     ),
   );
   t("getTzOffsetSeconds_ GMT zero", () =>
@@ -2049,7 +2079,9 @@ function runParserTests() {
         patchWeight(
           "users/123/dataTypes/weight/dataPoints/W1",
           sampleTime,
-          186,
+          // 187 lb converts to 84821.77 g, so rounding and truncation differ.
+          // At 186 lb they agree, which left the conversion unpinned here.
+          187,
         ),
     );
     eq(sent.method, "PATCH");
@@ -2062,7 +2094,7 @@ function runParserTests() {
       "the me-form resource URL under the configured API base",
     );
     eq(sent.payload, {
-      weight: { sampleTime, weightGrams: 84368 },
+      weight: { sampleTime, weightGrams: 84822 },
     });
   });
 
@@ -2141,6 +2173,159 @@ function runParserTests() {
   // UTC noon keeps the civil date stable in the test time zone.
   const vDate = (y, m, d) => new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
   const vRow = (rowNum, date) => ({ date, rowNum });
+
+  // listWeightOnDate had no test at all, though listStrengthOnDate does. It
+  // feeds weight orphan attribution, and selectOrphanDataPointNames_ only spares
+  // a candidate whose googleWebClientId is null. Reporting our client id for a
+  // foreign datapoint (a scale, the Health app, an assistant entry) makes the
+  // backstop delete data we do not own.
+  t("listWeightOnDate maps the client id and spares foreign datapoints", () => {
+    let sentUrl = null;
+    const out = withGlobals(
+      {
+        httpJson_: (method, url) => {
+          sentUrl = url;
+          return {
+            dataPoints: [
+              {
+                dataSource: { application: { googleWebClientId: "ours" } },
+                name: "users/1/dataTypes/weight/dataPoints/W1",
+              },
+              // Device / first-party: application is null.
+              {
+                dataSource: { application: null },
+                name: "users/1/dataTypes/weight/dataPoints/W2",
+              },
+              { name: "users/1/dataTypes/weight/dataPoints/W3" }, // no dataSource at all
+              { dataSource: { application: null } }, // no name: dropped
+            ],
+          };
+        },
+      },
+      () => listWeightOnDate(new Date(Date.UTC(2026, 0, 15, 17, 0, 0))),
+    );
+    eq(out, [
+      {
+        googleWebClientId: "ours",
+        name: "users/1/dataTypes/weight/dataPoints/W1",
+      },
+      {
+        googleWebClientId: null,
+        name: "users/1/dataTypes/weight/dataPoints/W2",
+      },
+      {
+        googleWebClientId: null,
+        name: "users/1/dataTypes/weight/dataPoints/W3",
+      },
+    ]);
+    // The filter member is verified against the live API; a wrong one returns
+    // 400 INVALID_DATA_POINT_FILTER rather than an empty list.
+    eq(
+      sentUrl.indexOf(encodeURIComponent("weight.sample_time.civil_time")) !==
+        -1,
+      true,
+      sentUrl,
+    );
+  });
+
+  // Paging: a day with more datapoints than one page must not silently truncate.
+  // Under-listing makes orphan reconciliation miss datapoints and foreign
+  // matching miss sessions, with no error either way.
+  t("listWeightOnDate follows nextPageToken to the end", () => {
+    const urls = [];
+    const out = withGlobals(
+      {
+        httpJson_: (method, url) => {
+          urls.push(url);
+          return urls.length === 1
+            ? {
+                dataPoints: [
+                  { name: "users/1/dataTypes/weight/dataPoints/W1" },
+                ],
+                nextPageToken: "PAGE2",
+              }
+            : {
+                dataPoints: [
+                  { name: "users/1/dataTypes/weight/dataPoints/W2" },
+                ],
+              };
+        },
+      },
+      () => listWeightOnDate(new Date(Date.UTC(2026, 0, 15, 17, 0, 0))),
+    );
+    eq(urls.length, 2, "the second page was requested");
+    eq(
+      urls[1].indexOf("pageToken=PAGE2") !== -1,
+      true,
+      `the token is passed back: ${urls[1]}`,
+    );
+    eq(
+      out.map((p) => p.name),
+      [
+        "users/1/dataTypes/weight/dataPoints/W1",
+        "users/1/dataTypes/weight/dataPoints/W2",
+      ],
+      "both pages are returned",
+    );
+  });
+
+  // Every delete path goes through this. Names are grouped by the data type
+  // parsed out of the resource name, because batchDelete lives under a
+  // per-type collection URL; a wrong type means the delete silently targets the
+  // wrong collection.
+  t("deleteDataPointsByName batches per data type and skips junk names", () => {
+    const calls = [];
+    withGlobals(
+      {
+        httpJson_: (method, url, payload) => {
+          calls.push({ method, payload, url });
+          return {};
+        },
+      },
+      () =>
+        deleteDataPointsByName([
+          "users/1/dataTypes/exercise/dataPoints/E1",
+          "users/1/dataTypes/weight/dataPoints/W1",
+          "users/1/dataTypes/exercise/dataPoints/E2",
+          "not-a-resource-name",
+        ]),
+    );
+    eq(calls.length, 2, "one batch per data type, junk dropped");
+    eq(
+      calls[0].url,
+      "https://health.googleapis.com/v4/users/me/dataTypes/exercise/dataPoints:batchDelete",
+    );
+    eq(calls[0].payload, {
+      names: [
+        "users/1/dataTypes/exercise/dataPoints/E1",
+        "users/1/dataTypes/exercise/dataPoints/E2",
+      ],
+    });
+    eq(
+      calls[1].url,
+      "https://health.googleapis.com/v4/users/me/dataTypes/weight/dataPoints:batchDelete",
+    );
+    eq(calls[1].payload, {
+      names: ["users/1/dataTypes/weight/dataPoints/W1"],
+    });
+  });
+
+  t("deleteDataPointsByName makes no request for an empty list", () => {
+    let called = 0;
+    withGlobals(
+      {
+        httpJson_: () => {
+          called++;
+          return {};
+        },
+      },
+      () => {
+        deleteDataPointsByName([]);
+        deleteDataPointsByName(null);
+      },
+    );
+    eq(called, 0, "nothing to delete means no API call");
+  });
 
   t("findRowDateViolation_ empty rows -> null", () =>
     eq(findRowDateViolation_([]), null),
