@@ -2253,10 +2253,37 @@ function runParserTests() {
     eq(r.calls.length, 1, "no retry on success");
     eq(r.calls[0].options.method, "GET");
     eq(r.calls[0].options.headers.Authorization, "Bearer test-token");
+    eq(r.calls[0].options.headers.Accept, "application/json");
+    eq(r.calls[0].options.contentType, "application/json");
     eq(
       r.calls[0].options.muteHttpExceptions,
       true,
       "codes are read, not thrown",
+    );
+  });
+
+  // authHeaders_ returns from its cache on every call after the first, which is
+  // a separate return path from the one that builds the headers. Asserting the
+  // header on a single call leaves that path free to come back empty, which in
+  // production means every request but the first goes out unauthenticated.
+  // Whether the token is re-fetched cannot be asserted here: the cache lives in
+  // a module-level binding no test can reset, so it is already warm by now.
+  t("httpJson_ authenticates the calls that come from the header cache", () => {
+    const f = fakeFetch([{ body: "{}", code: 200 }]);
+    withGlobals(
+      {
+        UrlFetchApp: { fetch: f.fetch },
+        getHealthAccessToken_: () => "test-token",
+      },
+      () => {
+        httpJson_("GET", "https://example/a");
+        httpJson_("GET", "https://example/b");
+      },
+    );
+    eq(
+      f.calls.map((c) => c.options.headers.Authorization),
+      ["Bearer test-token", "Bearer test-token"],
+      "the second call is authenticated too",
     );
   });
 
