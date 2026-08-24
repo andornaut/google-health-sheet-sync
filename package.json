@@ -9,7 +9,7 @@
   "scripts": {
     "prepare": "husky",
     "login": "clasp login",
-    "push": "clasp push",
+    "deploy": "clasp push",
     "pull": "clasp pull",
     "open": "clasp open-script",
     "test": "node test/run.js",
