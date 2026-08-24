@@ -2744,6 +2744,62 @@ function runSyncTests() {
     },
   );
 
+  // ---- whitespace tolerance -----------------------------------------------
+  // Both trims below are what make a plausible typo survivable, and neither was
+  // covered: every fixture uses exact header names and exact cell values.
+
+  // A header typed with a trailing space is the common version of this. Without
+  // the trim in getHeaderMap_ the lookup misses, and the sync aborts with
+  // "Weight Synced At column missing. Run setup." on a sheet that looks correct.
+  t("headers with surrounding whitespace are still recognized", () => {
+    reset([["2026-01-15", "185", "135x5", "", "", "", "", "", "", ""]]);
+    HEADERS.forEach((h, i) => {
+      SHEET.getRange(1, i + 1).setValue(` ${h} `);
+    });
+    const wName = "users/me/dataTypes/weight/dataPoints/W1";
+    const eName = "users/me/dataTypes/exercise/dataPoints/E1";
+    const r = withStubs(
+      Object.assign({}, NO_FOREIGN, {
+        createExerciseAt: () => eName,
+        createWeightAt: () => wName,
+      }),
+      () => syncDirtyRows(0),
+    );
+    eq(r.errors, 0, "no structural error from the padded headers");
+    eq(r.ok, 1, "the row synced");
+    eq(cell("Created Health IDs"), JSON.stringify([wName, eName]));
+  });
+
+  // Clearing a cell by typing a space is the other one. hasText decides whether
+  // the backstop treats the row as emptied, so without the trim the row keeps a
+  // datapoint for a workout the cell no longer describes.
+  t("a cell holding only whitespace counts as cleared", () => {
+    const eName = "users/me/dataTypes/exercise/dataPoints/E1";
+    reset([
+      [
+        new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+        "",
+        " ", // "cleared" by typing a space
+        "SYNC",
+        "SYNC",
+        JSON.stringify([eName]),
+        "",
+        "",
+        "",
+        "",
+      ],
+    ]);
+    withStubs(
+      { listStrengthOnDate: () => [], listWeightOnDate: () => [] },
+      () => backstop(),
+    );
+    eq(
+      cell("Exercise Synced At"),
+      "",
+      "re-dirtied, so the next sync deletes the datapoint",
+    );
+  });
+
   // ---- trigger-entry date validation --------------------------------------
 
   t(
