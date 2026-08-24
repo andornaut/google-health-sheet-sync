@@ -17,9 +17,9 @@ function runSyncTests() {
     }
   };
   // JSON.stringify serializes NaN and Infinity as null, so a plain stringify
-  // comparison cannot tell a rejected-input null from a leaked NaN. The
-  // replacer tags non-finite numbers so "-> null" assertions on the numeric
-  // parsers actually pin the guard that produces the null.
+  // comparison cannot tell an expected null from a leaked NaN. The replacer
+  // tags non-finite numbers so an assertion on a timestamp or a datapoint
+  // payload fails on a NaN instead of matching a null the fixture meant.
   const show = (v) =>
     JSON.stringify(v, (_k, val) =>
       typeof val === "number" && !Number.isFinite(val) ? `#${val}` : val,
@@ -63,14 +63,19 @@ function runSyncTests() {
 
   const TOASTS = SYNC_TEST_HARNESS_.toasts;
 
-  const reset = (dataRows) => {
-    SHEET._setGrid([HEADERS.slice()].concat(dataRows || []));
+  // A test needing a non-standard header row calls resetGrid directly; every
+  // other one goes through reset. Both must clear the same harness state, so
+  // there is one body and reset only supplies the grid.
+  const resetGrid = (grid) => {
+    SHEET._setGrid(grid);
     SHEET._setSelection(null);
     ACTIVE.sheet = SHEET;
     PROPS._clear();
     TOASTS.length = 0;
     LOCK.held = false;
   };
+  const reset = (dataRows) =>
+    resetGrid([HEADERS.slice()].concat(dataRows || []));
   const cell = (header) => SHEET.getRange(2, COL[header]).getValue();
 
   // Swap a set of globals (Health API stubs), run fn, restore. Returns fn's value.
@@ -308,7 +313,7 @@ function runSyncTests() {
   // it would stretch the 'edit' interval and recreate the datapoint for nothing.
   t("onEditMarkDirty ignores a blank-header scratch column", () => {
     const scratchCol = HEADERS.length + 1;
-    SHEET._setGrid([
+    resetGrid([
       HEADERS.concat([""]),
       [
         "2026-01-15",
@@ -324,10 +329,6 @@ function runSyncTests() {
         "note to self",
       ],
     ]);
-    SHEET._setSelection(null);
-    ACTIVE.sheet = SHEET;
-    PROPS._clear();
-    LOCK.held = false;
     ok(
       onEditMarkDirty({ range: SHEET.getRange(2, scratchCol) }) === false,
       "typing there is a no-op",
@@ -351,14 +352,10 @@ function runSyncTests() {
     () => {
       const headers = HEADERS.slice();
       headers[2] = 0; // the exercise column's header is the number 0
-      SHEET._setGrid([
+      resetGrid([
         headers,
         ["2026-01-15", "", "135x5", "PREV-EX", "PREV-WT", "", "", "", "", ""],
       ]);
-      SHEET._setSelection(null);
-      ACTIVE.sheet = SHEET;
-      PROPS._clear();
-      LOCK.held = false;
       ok(
         onEditMarkDirty({ range: SHEET.getRange(2, 3) }) === true,
         "marks the row dirty",
@@ -2665,7 +2662,7 @@ function runSyncTests() {
     "unparseable text in one of two exercise columns is not a cleared row",
     () => {
       const eName = "users/me/dataTypes/exercise/dataPoints/E1";
-      SHEET._setGrid([
+      resetGrid([
         [
           "Date",
           "Weight",
@@ -2695,11 +2692,6 @@ function runSyncTests() {
           "",
         ],
       ]);
-      SHEET._setSelection(null);
-      ACTIVE.sheet = SHEET;
-      PROPS._clear();
-      TOASTS.length = 0;
-      LOCK.held = false;
       const deleted = [];
       withStubs(
         {
