@@ -57,10 +57,10 @@ function parseLine_(line) {
   const weight = nums[0];
   const reps = parts.length >= 2 ? nums[1] : null;
   const sets = parts.length === 3 ? nums[2] : null;
-  if (reps !== null && (!Number.isInteger(reps) || reps < 0)) {
+  if (reps !== null && !Number.isInteger(reps)) {
     return null;
   }
-  if (sets !== null && (!Number.isInteger(sets) || sets < 0)) {
+  if (sets !== null && !Number.isInteger(sets)) {
     return null;
   }
 

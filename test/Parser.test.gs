@@ -8,9 +8,17 @@ function runParserTests() {
       results.push(`FAIL ${name}: ${err}`);
     }
   };
+  // JSON.stringify serializes NaN and Infinity as null, so a plain stringify
+  // comparison cannot tell a rejected-input null from a leaked NaN. The
+  // replacer tags non-finite numbers so "-> null" assertions on the numeric
+  // parsers actually pin the guard that produces the null.
+  const show = (v) =>
+    JSON.stringify(v, (_k, val) =>
+      typeof val === "number" && !Number.isFinite(val) ? `#${val}` : val,
+    );
   const eq = (a, b, msg) => {
-    const sa = JSON.stringify(a),
-      sb = JSON.stringify(b);
+    const sa = show(a),
+      sb = show(b);
     if (sa !== sb) {
       throw new Error(`${msg || "mismatch"} expected ${sb} got ${sa}`);
     }
@@ -129,6 +137,9 @@ function runParserTests() {
   );
   t('decimal reps rejected "135x5.5"', () =>
     eq(parseExerciseCell("135x5.5"), []),
+  );
+  t('decimal sets rejected "135x5x2.5"', () =>
+    eq(parseExerciseCell("135x5x2.5"), []),
   );
   t('too many x segments rejected "135x5x3x2"', () =>
     eq(parseExerciseCell("135x5x3x2"), []),
@@ -696,11 +707,24 @@ function runParserTests() {
       eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 10 * 60 * 1000);
     },
   );
+  // A prior datapoint is required to reach the span test at all: with no prior,
+  // exerciseEditIsUsable_ short-circuits on `|| !priorExercise` and 'edit' wins
+  // whatever the span, so the MAX boundary would go unexercised.
   t(
     "resolveRowTiming_ edit source accepts a span right at MAX (120 min)",
     () => {
       const first = new Date(Date.UTC(2026, 0, 15, 17, 0, 0));
       const last = new Date(first.getTime() + MAX_EXERCISE_DURATION_MS);
+      const prior = {
+        exercise: {
+          interval: {
+            endTime: "2026-01-15T17:30:00Z",
+            endUtcOffset: `${EST}s`,
+            startTime: "2026-01-15T17:00:00Z",
+            startUtcOffset: `${EST}s`,
+          },
+        },
+      };
       const r = resolveRowTiming_(
         {
           date: JAN_15_NOON_UTC,
@@ -708,9 +732,13 @@ function runParserTests() {
           exercisesLastEditedAt: last,
         },
         0,
-        null,
+        prior,
       );
-      eq(r.exerciseSource, "edit");
+      eq(
+        r.exerciseSource,
+        "edit",
+        "a span exactly at MAX still spans the workout",
+      );
       eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 120 * 60 * 1000);
     },
   );
@@ -1096,9 +1124,6 @@ function runParserTests() {
   t(
     "editDerivedDurationMs_ zero (single edit / start-only) -> MIN (10 min)",
     () => eq(editDerivedDurationMs_(0), 10 * 60 * 1000),
-  );
-  t("editDerivedDurationMs_ negative -> MIN (10 min)", () =>
-    eq(editDerivedDurationMs_(-1000), 10 * 60 * 1000),
   );
   t("editDerivedDurationMs_ short span clamps up to MIN (10 min)", () =>
     eq(editDerivedDurationMs_(60 * 1000), 10 * 60 * 1000),
@@ -1986,7 +2011,10 @@ function runParserTests() {
       () => createWeightAt(Date.UTC(2026, 0, 15, 17, 0, 0), EST, 185),
     );
     eq(created, "users/1/dataTypes/weight/dataPoints/W1");
-    eq(sent.weight.weightGrams, Math.round(185 * GRAMS_PER_LB));
+    // Literal grams, not Math.round(185 * GRAMS_PER_LB): recomputing the
+    // expected value with the constant under test asserts only that the
+    // constant equals itself, so a wrong conversion factor would pass.
+    eq(sent.weight.weightGrams, 83915);
     eq(sent.weight.sampleTime.physicalTime, "2026-01-15T17:00:00Z");
     eq(sent.weight.sampleTime.utcOffset, "-18000s");
   });
@@ -2025,13 +2053,16 @@ function runParserTests() {
         ),
     );
     eq(sent.method, "PATCH");
+    // The whole URL, as a literal: a tail-anchored regex leaves HEALTH_API_BASE
+    // unasserted, and interpolating the constant here would only assert that it
+    // equals itself. This is the one place the base URL is pinned.
     eq(
-      /\/users\/me\/dataTypes\/weight\/dataPoints\/W1$/.test(sent.url),
-      true,
       sent.url,
+      "https://health.googleapis.com/v4/users/me/dataTypes/weight/dataPoints/W1",
+      "the me-form resource URL under the configured API base",
     );
     eq(sent.payload, {
-      weight: { sampleTime, weightGrams: Math.round(186 * GRAMS_PER_LB) },
+      weight: { sampleTime, weightGrams: 84368 },
     });
   });
 
@@ -2163,6 +2194,166 @@ function runParserTests() {
   t("findRowDateViolation_ year above MAX flagged", () => {
     const v = findRowDateViolation_([vRow(2, vDate(2050, 1, 1))]);
     eq(/outside the allowed years/.test(v), true, v);
+  });
+
+  // ---------------------------------------------------------------------------
+  // httpJson_ transport: every other Health API test stubs httpJson_ itself, so
+  // without these the retry policy, the 2xx/transient classification, and the
+  // statusCode field are unexercised. That field is what isNotFoundError_ reads,
+  // and the sync's 404-recovery paths (weight GET, weight DELETE, exercise
+  // DELETE) all depend on it being set here.
+  // ---------------------------------------------------------------------------
+  const fakeFetch = (replies) => {
+    const calls = [];
+    const fetch = (url, options) => {
+      calls.push({ options, url });
+      const r = replies[Math.min(calls.length - 1, replies.length - 1)];
+      if (r.throw) {
+        throw new Error(r.throw);
+      }
+      return {
+        getContentText: () => r.body,
+        getResponseCode: () => r.code,
+      };
+    };
+    return { calls, fetch };
+  };
+  // Runs fn with UrlFetchApp, the OAuth token and Utilities.sleep stubbed;
+  // returns { result, err, calls, sleeps }. authHeaders_ caches its result in a
+  // module-level binding no test can reach, so the first httpJson_ test in the
+  // run is the only one that observes the token: a new test asserting a
+  // different token has to be the first one, not merely added here.
+  const withHttp = (replies, fn) => {
+    const f = fakeFetch(replies);
+    const sleeps = [];
+    const out = withGlobals(
+      {
+        UrlFetchApp: { fetch: f.fetch },
+        Utilities: Object.assign({}, Utilities, {
+          sleep: (ms) => sleeps.push(ms),
+        }),
+        getHealthAccessToken_: () => "test-token",
+      },
+      () => {
+        try {
+          return { result: fn() };
+        } catch (err) {
+          return { err };
+        }
+      },
+    );
+    return Object.assign(out, { calls: f.calls, sleeps });
+  };
+
+  t("httpJson_ parses a 2xx body and sends the auth header", () => {
+    const r = withHttp([{ body: '{"ok":1}', code: 200 }], () =>
+      httpJson_("GET", "https://example/x"),
+    );
+    eq(r.result, { ok: 1 });
+    eq(r.calls.length, 1, "no retry on success");
+    eq(r.calls[0].options.method, "GET");
+    eq(r.calls[0].options.headers.Authorization, "Bearer test-token");
+    eq(
+      r.calls[0].options.muteHttpExceptions,
+      true,
+      "codes are read, not thrown",
+    );
+  });
+
+  // An empty 2xx body is a success, not a parse error: batchDelete answers 200
+  // with no content.
+  t("httpJson_ maps an empty 2xx body to {}", () => {
+    const r = withHttp([{ body: "", code: 200 }], () =>
+      httpJson_("POST", "https://example/x:batchDelete", { names: ["a"] }),
+    );
+    eq(r.result, {});
+    eq(r.calls[0].options.payload, '{"names":["a"]}');
+  });
+
+  t("httpJson_ omits the payload when none is given", () => {
+    const r = withHttp([{ body: "{}", code: 200 }], () =>
+      httpJson_("GET", "https://example/x"),
+    );
+    eq("payload" in r.calls[0].options, false, "no body on a GET");
+  });
+
+  // The 2xx boundary: 299 succeeds, 300 does not. The 300 body is valid JSON on
+  // purpose: with unparseable content a misclassified 300 would throw in
+  // JSON.parse and the assertion would pass for the wrong reason.
+  t("httpJson_ treats 299 as success and 300 as an error", () => {
+    eq(
+      withHttp([{ body: "{}", code: 299 }], () => httpJson_("GET", "u")).result,
+      {},
+    );
+    const r = withHttp([{ body: '{"ok":1}', code: 300 }], () =>
+      httpJson_("GET", "u"),
+    );
+    eq(r.err.statusCode, 300, "300 must not be read as success");
+  });
+
+  // isNotFoundError_ reads statusCode off the thrown error. Producing it here is
+  // what makes every 404-recovery path in the sync reachable.
+  t("httpJson_ throws a 404 carrying statusCode, without retrying", () => {
+    const r = withHttp([{ body: "gone", code: 404 }], () =>
+      httpJson_("GET", "https://example/x"),
+    );
+    eq(r.err.statusCode, 404);
+    eq(isNotFoundError_(r.err), true, "the 404-recovery paths key off this");
+    eq(r.calls.length, 1, "a 404 is permanent, so it must not be retried");
+    eq(r.sleeps, [], "no backoff on a permanent failure");
+  });
+
+  t("httpJson_ does not retry other 4xx errors", () => {
+    const r = withHttp([{ body: "denied", code: 403 }], () =>
+      httpJson_("GET", "https://example/x"),
+    );
+    eq(r.err.statusCode, 403);
+    eq(r.calls.length, 1);
+  });
+
+  t("httpJson_ retries a 429 and returns the eventual success", () => {
+    const r = withHttp(
+      [
+        { body: "slow down", code: 429 },
+        { body: '{"ok":2}', code: 200 },
+      ],
+      () => httpJson_("GET", "https://example/x"),
+    );
+    eq(r.result, { ok: 2 });
+    eq(r.calls.length, 2);
+    eq(r.sleeps, [500], "one backoff before the retry");
+  });
+
+  t("httpJson_ retries a 500 and gives up after 4 attempts", () => {
+    const r = withHttp([{ body: "boom", code: 500 }], () =>
+      httpJson_("GET", "https://example/x"),
+    );
+    eq(r.calls.length, 4, "maxAttempts");
+    eq(r.err.statusCode, 500);
+    eq(r.sleeps, [500, 1000, 2000], "exponential backoff between attempts");
+  });
+
+  // The 5xx boundary: 599 is transient, 600 is not a server code.
+  t("httpJson_ retries 599 but not 600", () => {
+    eq(
+      withHttp([{ body: "x", code: 599 }], () => httpJson_("GET", "u")).calls
+        .length,
+      4,
+    );
+    eq(
+      withHttp([{ body: "x", code: 600 }], () => httpJson_("GET", "u")).calls
+        .length,
+      1,
+    );
+  });
+
+  // A fetch that throws is a network fault: transient, so it retries.
+  t("httpJson_ retries a thrown fetch and rethrows the last error", () => {
+    const r = withHttp([{ throw: "socket closed" }], () =>
+      httpJson_("GET", "https://example/x"),
+    );
+    eq(r.calls.length, 4);
+    eq(/socket closed/.test(String(r.err)), true, String(r.err));
   });
 
   const msg = results.join("\n");

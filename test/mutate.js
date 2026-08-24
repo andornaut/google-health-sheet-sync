@@ -44,6 +44,32 @@ const MUTATIONS = [
     replace: "  if (false) {",
   },
   {
+    file: "Parser.gs",
+    name: "a fractional set count is accepted",
+    find: "  if (sets !== null && !Number.isInteger(sets)) {",
+    replace: "  if (sets !== null && false) {",
+  },
+  {
+    file: "Parser.gs",
+    name: "a fractional rep count is accepted",
+    find: "  if (reps !== null && !Number.isInteger(reps)) {",
+    replace: "  if (reps !== null && false) {",
+  },
+  {
+    file: "Parser.gs",
+    name: "negative numbers are no longer rejected",
+    find: "  if (nums.some((n) => !Number.isFinite(n) || n < 0)) {",
+    replace: "  if (nums.some((n) => !Number.isFinite(n))) {",
+  },
+  {
+    // Drops NaN, not just non-positive values: Number("heavy") is NaN, and a
+    // leaked NaN reaches the API as weightGrams: null.
+    file: "Parser.gs",
+    name: "an unparseable bodyweight is no longer rejected as non-finite",
+    find: "  if (!Number.isFinite(n) || n <= 0) {",
+    replace: "  if (n <= 0) {",
+  },
+  {
     file: "Format.gs",
     name: "zero-set entries are no longer suppressed from the notes",
     find: "      if (!exerciseEntryIsSendable_(entry)) {\n        continue;\n      }",
@@ -73,6 +99,68 @@ const MUTATIONS = [
     replace: "  const minutes = Math.floor(durationMs / 60000);",
   },
 
+  // ---- HTTP transport (httpJson_) -----------------------------------------
+  {
+    file: "HealthApi.gs",
+    name: "the 2xx success range no longer stops below 300",
+    find: "    if (code >= 200 && code < 300) {",
+    replace: "    if (code >= 200 && code <= 300) {",
+  },
+  {
+    file: "HealthApi.gs",
+    name: "a 429 is treated as permanent instead of retried",
+    find: "      transient = code === 429 || (code >= 500 && code < 600);",
+    replace: "      transient = code >= 500 && code < 600;",
+  },
+  {
+    file: "HealthApi.gs",
+    name: "5xx responses are treated as permanent instead of retried",
+    find: "      transient = code === 429 || (code >= 500 && code < 600);",
+    replace: "      transient = code === 429;",
+  },
+  {
+    file: "HealthApi.gs",
+    name: "a network fault is treated as permanent instead of retried",
+    find: "      lastErr = err;\n      transient = true;",
+    replace: "      lastErr = err;\n      transient = false;",
+  },
+  {
+    file: "HealthApi.gs",
+    name: "the retry budget is cut from 4 attempts",
+    find: "  const maxAttempts = 4;",
+    replace: "  const maxAttempts = 3;",
+  },
+  {
+    file: "HealthApi.gs",
+    name: "retry backoff is no longer exponential",
+    find: "    const backoffMs = 500 * Math.pow(2, attempt);",
+    replace: "    const backoffMs = 500;",
+  },
+  {
+    // isNotFoundError_ reads this, and every 404-recovery path keys off it.
+    file: "HealthApi.gs",
+    name: "the HTTP status is no longer attached to the thrown error",
+    find: "    lastErr.statusCode = code;",
+    replace: "    lastErr.statusCode = null;",
+  },
+  {
+    file: "HealthApi.gs",
+    name: "HTTP error codes throw instead of being read from the response",
+    find: "    muteHttpExceptions: true,",
+    replace: "    muteHttpExceptions: false,",
+  },
+  {
+    file: "HealthApi.gs",
+    name: "a request body is sent even when there is no payload",
+    find: "  if (payload !== undefined) {",
+    replace: "  if (true) {",
+  },
+  {
+    file: "HealthApi.gs",
+    name: "requests go out without the OAuth authorization header",
+    find: "    Authorization: `Bearer ${getHealthAccessToken_()}`,",
+    replace: '    Authorization: "",',
+  },
   // ---- Health API shaping -------------------------------------------------
   {
     file: "HealthApi.gs",
@@ -91,6 +179,18 @@ const MUTATIONS = [
       "      `createWeightAt: create returned no datapoint name: ${JSON.stringify(resp)}`,\n" +
       "    );",
     replace: "    return null;",
+  },
+  {
+    file: "Config.gs",
+    name: "requests are addressed to the wrong Health API base",
+    find: 'const HEALTH_API_BASE = "https://health.googleapis.com/v4";',
+    replace: 'const HEALTH_API_BASE = "https://health.googleapis.com/v3";',
+  },
+  {
+    file: "Config.gs",
+    name: "the pound-to-gram conversion factor is wrong",
+    find: "const GRAMS_PER_LB = 453.59237;",
+    replace: "const GRAMS_PER_LB = 453.6;",
   },
   {
     file: "HealthApi.gs",
@@ -127,6 +227,12 @@ const MUTATIONS = [
       "      interval: buildIntervalFromUtc_(",
   },
   // ---- Timing resolution --------------------------------------------------
+  {
+    file: "Main.gs",
+    name: "an edit span exactly at MAX no longer counts as spanning the workout",
+    find: "  return spanMs <= MAX_EXERCISE_DURATION_MS;",
+    replace: "  return spanMs < MAX_EXERCISE_DURATION_MS;",
+  },
   {
     file: "Main.gs",
     name: "a foreign match no longer wins over edit/prior timing",

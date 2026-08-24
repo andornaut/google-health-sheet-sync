@@ -16,9 +16,17 @@ function runSyncTests() {
       results.push(`FAIL ${name}: ${(err && err.stack) || err}`);
     }
   };
+  // JSON.stringify serializes NaN and Infinity as null, so a plain stringify
+  // comparison cannot tell a rejected-input null from a leaked NaN. The
+  // replacer tags non-finite numbers so "-> null" assertions on the numeric
+  // parsers actually pin the guard that produces the null.
+  const show = (v) =>
+    JSON.stringify(v, (_k, val) =>
+      typeof val === "number" && !Number.isFinite(val) ? `#${val}` : val,
+    );
   const eq = (a, b, msg) => {
-    const sa = JSON.stringify(a),
-      sb = JSON.stringify(b);
+    const sa = show(a),
+      sb = show(b);
     if (sa !== sb) {
       throw new Error(`${msg || "mismatch"} expected ${sb} got ${sa}`);
     }
