@@ -577,6 +577,22 @@ const MUTATIONS = [
 
   // ---- readRows contracts -------------------------------------------------
   {
+    // A header typed with a trailing space would stop resolving, and the sync
+    // aborts with "column missing" on a sheet that looks correct.
+    file: "Sheet.gs",
+    name: "header lookup no longer tolerates surrounding whitespace",
+    find: "    map[String(h).trim()] = i + 1;",
+    replace: "    map[String(h)] = i + 1;",
+  },
+  {
+    // Decides whether the backstop sees a row as emptied. Without the trim a
+    // cell cleared by typing a space keeps its datapoint.
+    file: "Sheet.gs",
+    name: "a whitespace-only cell no longer counts as empty",
+    find: '    v !== null && v !== undefined && String(v).trim() !== "";',
+    replace: '    v !== null && v !== undefined && String(v) !== "";',
+  },
+  {
     // An AND across the exercise columns makes a row with one blank column look
     // emptied, and the backstop then deletes its datapoint.
     file: "Sheet.gs",
