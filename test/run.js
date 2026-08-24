@@ -100,7 +100,9 @@ const Session = {
 // exercise the stateful glue (dirty-flag lifecycle, phase dispatch, idempotency)
 // that the pure-helper tests can't reach. The Health API functions themselves
 // are stubbed per-test via globalThis (same pattern as listStrengthOnDate), so
-// no UrlFetchApp fake is needed. Exposed to the sandbox as SYNC_TEST_HARNESS_.
+// the harness needs no UrlFetchApp fake; the httpJson_ transport tests supply
+// their own per-test (withHttp in Parser.test.gs). Exposed to the sandbox as
+// SYNC_TEST_HARNESS_.
 // ---------------------------------------------------------------------------
 function makeFakeSheet(sheetId) {
   let grid = []; // grid[r0][c0], 0-indexed; auto-grows on write
