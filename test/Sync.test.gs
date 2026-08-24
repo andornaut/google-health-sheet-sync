@@ -832,6 +832,165 @@ function runSyncTests() {
     eq(cell("Weight Synced At"), "", "weight stamp not written on failure");
   });
 
+  // ---- Failure flags gate the Synced At stamp ------------------------------
+  // A failed write must leave the phase unstamped and the row dirty. Stamping
+  // it anyway is silent data loss: the row stops being dirty, nothing retries,
+  // and the sheet claims a datapoint Health does not have. Only the weight POST
+  // path was covered; these are the other four ways a phase can fail.
+
+  t(
+    "syncDirtyRows leaves the weight phase unstamped when the PATCH fails",
+    () => {
+      const wName = "users/me/dataTypes/weight/dataPoints/W1";
+      reset([
+        [
+          "2026-01-15",
+          "186",
+          "",
+          "SYNC",
+          "",
+          JSON.stringify([wName]),
+          "",
+          "",
+          "",
+          "",
+        ],
+      ]);
+      const r = withStubs(
+        Object.assign({}, NO_FOREIGN, {
+          getDataPoint: () => ({
+            weight: {
+              sampleTime: {
+                physicalTime: "2026-01-15T17:00:00Z",
+                utcOffset: "-18000s",
+              },
+            },
+          }),
+          patchWeight: () => {
+            throw new Error("simulated PATCH failure");
+          },
+        }),
+        () => syncDirtyRows(0),
+      );
+      eq(r.ok, 0, "the row did not sync");
+      eq(r.errors, 1, "the failure is counted");
+      eq(cell("Weight Synced At"), "", "no stamp on a failed PATCH");
+      eq(
+        cell("Created Health IDs"),
+        JSON.stringify([wName]),
+        "the prior id is kept so the next pass retries the same datapoint",
+      );
+      ok(
+        PROPS.getProperty("pendingDirty") !== null,
+        "flag retained so the next poll retries",
+      );
+    },
+  );
+
+  t(
+    "syncDirtyRows leaves the weight phase unstamped when a prior delete fails",
+    () => {
+      const wName = "users/me/dataTypes/weight/dataPoints/W1";
+      // Bodyweight cleared, so the phase takes the delete branch.
+      reset([
+        [
+          "2026-01-15",
+          "",
+          "",
+          "SYNC",
+          "",
+          JSON.stringify([wName]),
+          "",
+          "",
+          "",
+          "",
+        ],
+      ]);
+      const r = withStubs(
+        Object.assign({}, NO_FOREIGN, {
+          deleteDataPointsByName: () => {
+            throw new Error("simulated delete failure");
+          },
+        }),
+        () => syncDirtyRows(0),
+      );
+      eq(r.ok, 0, "the row did not sync");
+      eq(r.errors, 1, "the failure is counted");
+      eq(cell("Weight Synced At"), "", "no stamp on a failed delete");
+      eq(
+        cell("Created Health IDs"),
+        JSON.stringify([wName]),
+        "the undeleted id stays tracked so the next pass retries it",
+      );
+    },
+  );
+
+  t(
+    "syncDirtyRows leaves the exercise phase unstamped when a prior delete fails",
+    () => {
+      const eName = "users/me/dataTypes/exercise/dataPoints/E1";
+      reset([
+        [
+          "2026-01-15",
+          "",
+          "135x5x3",
+          "",
+          "SYNC",
+          JSON.stringify([eName]),
+          "",
+          "",
+          "",
+          "",
+        ],
+      ]);
+      let created = 0;
+      const r = withStubs(
+        Object.assign({}, NO_FOREIGN, {
+          createExerciseAt: () => {
+            created++;
+            return "users/me/dataTypes/exercise/dataPoints/E2";
+          },
+          deleteDataPointsByName: () => {
+            throw new Error("simulated delete failure");
+          },
+          getDataPoint: () => null,
+        }),
+        () => syncDirtyRows(0),
+      );
+      eq(r.ok, 0, "the row did not sync");
+      eq(r.errors, 1, "the failure is counted");
+      eq(created, 0, "a failed delete blocks the recreate");
+      eq(cell("Exercise Synced At"), "", "no stamp on a failed delete");
+      eq(
+        cell("Created Health IDs"),
+        JSON.stringify([eName]),
+        "the undeleted id stays tracked so the next pass retries it",
+      );
+    },
+  );
+
+  t(
+    "syncDirtyRows leaves the exercise phase unstamped when the create fails",
+    () => {
+      reset([["2026-01-15", "", "135x5x3", "", "SYNC", "", "", "", "", ""]]);
+      const r = withStubs(
+        Object.assign({}, NO_FOREIGN, {
+          createExerciseAt: () => {
+            throw new Error("simulated create failure");
+          },
+        }),
+        () => syncDirtyRows(0),
+      );
+      eq(r.ok, 0, "the row did not sync");
+      eq(r.errors, 1, "the failure is counted");
+      eq(cell("Exercise Synced At"), "", "no stamp on a failed create");
+      ok(
+        PROPS.getProperty("pendingDirty") !== null,
+        "flag retained so the next poll retries",
+      );
+    },
+  );
+
   t(
     "syncDirtyRows preserves a concurrent-edit generation rather than clearing it",
     () => {
@@ -2455,6 +2614,133 @@ function runSyncTests() {
         "exercise datapoint recreated",
       );
       ok(cell("Exercise Synced At") !== "SYNC", "exercise stamp refreshed");
+    },
+  );
+
+  // resyncAllRows' happy path: clearing BOTH stamp columns across EVERY data
+  // row, then marking the sheet dirty. Only its date-validation abort was
+  // covered, so it could have cleared nothing, or only the first row, and the
+  // suite would not have noticed. It is the documented manual recovery path.
+  t("resyncAllRows clears both stamps on every data row and re-syncs", () => {
+    reset([
+      ["2026-01-15", "", "135x5", "SYNC-E1", "SYNC-W1", "[]", "", "", "", ""],
+      ["2026-01-16", "", "145x5", "SYNC-E2", "SYNC-W2", "[]", "", "", "", ""],
+      ["2026-01-17", "", "155x5", "SYNC-E3", "SYNC-W3", "[]", "", "", "", ""],
+    ]);
+    let created = 0;
+    withStubs(
+      Object.assign({}, NO_FOREIGN, {
+        createExerciseAt: () => {
+          created++;
+          return `users/me/dataTypes/exercise/dataPoints/E${created}`;
+        },
+      }),
+      () => resyncAllRows(),
+    );
+    eq(created, 3, "every data row was re-pushed, not just the first");
+    for (let r = 2; r <= 4; r++) {
+      ok(
+        String(SHEET.getRange(r, COL["Exercise Synced At"]).getValue()).indexOf(
+          "SYNC-E",
+        ) === -1,
+        `row ${r} exercise stamp was cleared and rewritten`,
+      );
+      ok(
+        String(SHEET.getRange(r, COL["Weight Synced At"]).getValue()).indexOf(
+          "SYNC-W",
+        ) === -1,
+        `row ${r} weight stamp was cleared and rewritten`,
+      );
+    }
+  });
+
+  // hasExerciseText is an OR across every exercise column: one column still
+  // holding text means the row was not emptied. Every other fixture has exactly
+  // one exercise column, where "some" and "every" agree, so this is the only
+  // test that can tell them apart. It only bites where the parse yields nothing
+  // sendable but a cell still holds text, which is the case the raw-text check
+  // exists for: unparseable content in one column and a blank in another must
+  // not read as a cleared row, or the backstop deletes the row's datapoint.
+  t(
+    "unparseable text in one of two exercise columns is not a cleared row",
+    () => {
+      const eName = "users/me/dataTypes/exercise/dataPoints/E1";
+      SHEET._setGrid([
+        [
+          "Date",
+          "Weight",
+          "Bench",
+          "Squat",
+          "Exercise Synced At",
+          "Weight Synced At",
+          "Created Health IDs",
+          "Exercise First Edited At",
+          "Exercises Last Edited At",
+          "Weight Edited At",
+          "Matched Health Session",
+        ],
+        [
+          // Outside BACKSTOP_LOOKBACK_DAYS, so the foreign re-review leaves the
+          // row alone and only the cleared-content reconciliation can act on it.
+          new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+          "",
+          "bench press day", // holds text, parses to nothing sendable
+          "", // Squat never filled in
+          "SYNC",
+          "SYNC",
+          JSON.stringify([eName]),
+          "",
+          "",
+          "",
+          "",
+        ],
+      ]);
+      SHEET._setSelection(null);
+      ACTIVE.sheet = SHEET;
+      PROPS._clear();
+      TOASTS.length = 0;
+      LOCK.held = false;
+      const deleted = [];
+      withStubs(
+        {
+          deleteDataPointsByName: (names) => deleted.push(names.slice()),
+          listStrengthOnDate: () => [],
+          listWeightOnDate: () => [],
+        },
+        () => backstop(),
+      );
+      eq(
+        deleted,
+        [],
+        "the backstop only re-dirties; it never deletes directly",
+      );
+      eq(
+        SHEET.getRange(2, 5).getValue(),
+        "SYNC",
+        "not re-dirtied: the Bench cell still holds text, so nothing was cleared",
+      );
+    },
+  );
+
+  // A multi-cell range must never take the single-cell clear path. Apps Script
+  // only supplies e.oldValue for single-cell edits, so the oldValue test alone
+  // happens to be enough today; the singleCell conjunction is what keeps that
+  // true if the platform ever starts reporting an oldValue for a range. The
+  // consequence of losing it is a paste being read as a clear, which deletes
+  // datapoints.
+  t(
+    "a multi-cell range carrying an oldValue is not read as a cleared cell",
+    () => {
+      // Weight and Bench both blank, as they would be right after a two-cell
+      // clear, with an oldValue the platform does not actually supply for a range.
+      reset([["2026-01-15", "", "", "SYNC", "SYNC", "[]", "", "", "", ""]]);
+      const marked = onEditMarkDirty({
+        oldValue: "135x5",
+        range: SHEET.getRange(2, COL.Weight, 1, 2),
+      });
+      ok(marked === false, "a blank multi-cell range marks nothing");
+      eq(cell("Exercise Synced At"), "SYNC", "exercise stamp untouched");
+      eq(cell("Weight Synced At"), "SYNC", "weight stamp untouched");
     },
   );
 

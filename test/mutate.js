@@ -374,6 +374,46 @@ const MUTATIONS = [
 
   // ---- Per-row sync -------------------------------------------------------
   {
+    // These four gate both the Synced At stamp and the retry. Not setting one
+    // stamps the row synced and reports success, so nothing ever retries while
+    // Health is missing the datapoint.
+    file: "Main.gs",
+    name: "a failed weight PATCH still stamps the phase synced",
+    find:
+      "          console.error(`${tag}: patchWeight failed: ${err}`);\n" +
+      "          weightFailed = true;",
+    replace: "          console.error(`${tag}: patchWeight failed: ${err}`);",
+  },
+  {
+    file: "Main.gs",
+    name: "a partially-failed weight delete still stamps the phase synced",
+    find:
+      '      newWeightIds = deletePriorDataPoints_(tag, "weight", split.weight);\n' +
+      "      if (newWeightIds.length > 0) {\n" +
+      "        weightFailed = true;\n" +
+      "      }",
+    replace:
+      '      newWeightIds = deletePriorDataPoints_(tag, "weight", split.weight);',
+  },
+  {
+    file: "Main.gs",
+    name: "a partially-failed exercise delete still stamps the phase synced",
+    find:
+      "        if (newExerciseIds.length > 0) {\n" +
+      "          exerciseFailed = true;\n" +
+      "        }",
+    replace: "        void newExerciseIds;",
+  },
+  {
+    file: "Main.gs",
+    name: "a failed exercise create still stamps the phase synced",
+    find:
+      "          console.error(`${tag}: createExerciseAt failed: ${err}`);\n" +
+      "          exerciseFailed = true;",
+    replace:
+      "          console.error(`${tag}: createExerciseAt failed: ${err}`);",
+  },
+  {
     file: "Main.gs",
     name: "the exercise concurrent-edit guard is gone",
     find: "  if (exerciseReady && cols.exercisesLastEditedAtCol) {",
@@ -537,6 +577,15 @@ const MUTATIONS = [
 
   // ---- readRows contracts -------------------------------------------------
   {
+    // An AND across the exercise columns makes a row with one blank column look
+    // emptied, and the backstop then deletes its datapoint.
+    file: "Sheet.gs",
+    name: "hasExerciseText requires EVERY exercise column to hold text",
+    find: "      hasExerciseText: textCols.some((c) => hasText(row[c - 1])),",
+    replace:
+      "      hasExerciseText: textCols.every((c) => hasText(row[c - 1])),",
+  },
+  {
     file: "Sheet.gs",
     name: "allHealthIds covers only rows with a parseable Date",
     find: "    healthIds.forEach((n) => allHealthIds.push(n));",
@@ -559,6 +608,15 @@ const MUTATIONS = [
   },
 
   // ---- onEdit dirty marking -----------------------------------------------
+  {
+    // Losing the conjunction lets a single-row range be read as one cell, so a
+    // paste that blanks a cell would reach the delete path as a clear.
+    file: "Sheet.gs",
+    name: "a multi-cell range can be read as a single-cell clear",
+    find: "  const singleCell = firstRow === rangeLastRow && firstCol === lastCol;",
+    replace:
+      "  const singleCell = firstRow === rangeLastRow || firstCol === lastCol;",
+  },
   {
     file: "Sheet.gs",
     name: "a single-cell clear of real content is no longer an edit",
@@ -718,6 +776,26 @@ const MUTATIONS = [
   },
 
   // ---- Manual entry points ------------------------------------------------
+  {
+    // Only its date-validation abort was covered before, so the clear could
+    // have been a no-op, or bounded to the first row, unnoticed.
+    file: "Main.gs",
+    name: "resyncAllRows no longer clears the exercise stamps",
+    find: "  sheet.getRange(2, exerciseCol, dataRowCount, 1).setValues(blanks);",
+    replace: "",
+  },
+  {
+    file: "Main.gs",
+    name: "resyncAllRows no longer clears the weight stamps",
+    find: "  sheet.getRange(2, weightSyncedAtCol, dataRowCount, 1).setValues(blanks);",
+    replace: "",
+  },
+  {
+    file: "Main.gs",
+    name: "resyncAllRows clears only the first data row",
+    find: "  const dataRowCount = lastRow - 1;",
+    replace: "  const dataRowCount = 1;",
+  },
   {
     file: "Main.gs",
     name: "a selection on another tab is accepted by resyncSelectedRows",

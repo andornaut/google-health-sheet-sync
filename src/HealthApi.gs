@@ -67,6 +67,10 @@ function httpJson_(method, url, payload) {
     );
     Utilities.sleep(backoffMs);
   }
+  // Unreachable: the last attempt always returns or throws inside the loop,
+  // since isLastAttempt short-circuits the transient check. Kept because
+  // eslint's consistent-return requires the function to end in a value or a
+  // throw. Do not delete it as dead code without also satisfying that rule.
   throw lastErr;
 }
 
