@@ -291,10 +291,7 @@ function writeMatchedHealthSession(rowNum, matchedHealthSessionCol, name) {
 }
 
 function parseHealthIds_(raw) {
-  if (!raw) {
-    return [];
-  }
-  const text = String(raw).trim();
+  const text = String(raw || "").trim();
   if (!text) {
     return [];
   }

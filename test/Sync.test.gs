@@ -200,23 +200,11 @@ function runSyncTestsBody_(H) {
   // clear from a range that was already blank and deliberately does not guess.
   // Reconciling a cleared row is selectStaleDataPointRows_'s job in the
   // backstop, which reads state instead of inferring intent; see its tests.
-  t(
-    "onEditMarkDirty multi-cell clear stays a no-op (the backstop reconciles it)",
-    () => {
-      reset([["2026-01-15", "", "", "PREV-EX", "PREV-WT", "", "", "", "", ""]]);
-      const range = SHEET.getRange(2, COL.Weight, 1, 2); // Weight + Bench
-      ok(onEditMarkDirty({ range }) === false, "returns false");
-      eq(cell("Exercise Synced At"), "PREV-EX", "stamps untouched");
-      eq(cell("Weight Synced At"), "PREV-WT", "stamps untouched");
-      ok(PROPS.getProperty("pendingDirty") === null, "no pending flag");
-    },
-  );
-
-  // Clearing a whole row leaves it genuinely empty. Writing markers back into
-  // it would leave a permanently non-blank row still counting toward
+  // Clearing a whole row also leaves it genuinely empty: writing markers back
+  // into it would leave a permanently non-blank row still counting toward
   // getLastRow(), the phantom row the clamp exists to prevent.
   t(
-    "onEditMarkDirty writes nothing back into a row cleared of everything",
+    "onEditMarkDirty multi-cell clear is a no-op that writes nothing back",
     () => {
       reset([
         [
@@ -252,6 +240,7 @@ function runSyncTestsBody_(H) {
           false,
         "no-op",
       );
+      ok(PROPS.getProperty("pendingDirty") === null, "no pending flag");
       eq(
         SHEET.getRange(2, 1, 1, HEADERS.length).getValues()[0].join("|"),
         new Array(HEADERS.length).fill("").join("|"),
@@ -377,6 +366,31 @@ function runSyncTestsBody_(H) {
       );
     },
   );
+
+  // The sync writes the managed columns itself and a header edit changes no
+  // row's content. Marking either would clear a stamp and advance Exercises
+  // Last Edited At, stretching the recorded interval for an edit that changed
+  // nothing the sync sends.
+  t("onEditMarkDirty header-row edit is a no-op", () => {
+    reset([
+      ["2026-01-15", "", "135x5", "PREV-EX", "PREV-WT", "", "", "", "", ""],
+    ]);
+    ok(onEditMarkDirty({ range: SHEET.getRange(1, COL.Bench) }) === false);
+    eq(cell("Exercise Synced At"), "PREV-EX", "stamp untouched");
+    ok(PROPS.getProperty("pendingDirty") === null, "no pending flag");
+  });
+
+  t("onEditMarkDirty managed-column edit is a no-op", () => {
+    reset([
+      ["2026-01-15", "", "135x5", "PREV-EX", "PREV-WT", "", "", "LAST", "", ""],
+    ]);
+    const range = SHEET.getRange(2, COL["Created Health IDs"]);
+    range.setValue("[]");
+    ok(onEditMarkDirty({ range }) === false);
+    eq(cell("Exercise Synced At"), "PREV-EX", "stamp untouched");
+    eq(cell("Exercises Last Edited At"), "LAST", "edit timestamp not advanced");
+    ok(PROPS.getProperty("pendingDirty") === null, "no pending flag");
+  });
 
   t("onEditMarkDirty date-only edit is a no-op", () => {
     reset([["2026-01-15", "", "", "", "", "", "", "", "", ""]]);
@@ -774,6 +788,44 @@ function runSyncTestsBody_(H) {
       "dirty flag kept for after the fix",
     );
   });
+
+  // A missing managed column is the other unrecoverable misconfiguration: the
+  // pass cannot stamp or track anything, so it throws for the owner email and
+  // keeps the dirty flag so the backlog syncs once setup has run.
+  t(
+    "syncDirtyRows throws and keeps the flag when a managed column is missing",
+    () => {
+      reset([["2026-01-15", "185", "135x5", "", "", "", "", "", "", ""]]);
+      SHEET.getRange(1, COL["Created Health IDs"]).setValue("");
+      PROPS.setProperty("pendingDirty", "GEN1");
+      let thrown = null;
+      let created = 0;
+      try {
+        withStubs(
+          Object.assign({}, NO_FOREIGN, {
+            createExerciseAt: () => {
+              created++;
+              return "users/me/dataTypes/exercise/dataPoints/E1";
+            },
+            createWeightAt: () => {
+              created++;
+              return "users/me/dataTypes/weight/dataPoints/W1";
+            },
+          }),
+          () => syncDirtyRows(0),
+        );
+      } catch (err) {
+        thrown = err;
+      }
+      ok(thrown !== null, "throws");
+      ok(
+        String(thrown).indexOf("Managed columns missing") !== -1,
+        `names the misconfiguration: ${thrown}`,
+      );
+      eq(created, 0, "no datapoint created that could not be tracked");
+      eq(PROPS.getProperty("pendingDirty"), "GEN1", "dirty flag kept");
+    },
+  );
 
   // ---- syncDirtyRows: lifecycle ------------------------------------------
 
@@ -1659,6 +1711,43 @@ function runSyncTestsBody_(H) {
       ok(cell("Weight Synced At") !== "", "weight stamped");
     },
   );
+
+  // The phases are independent in reads as well as writes: a weight edit on a
+  // row that also has a synced exercise must not GET the exercise datapoint,
+  // which is a Health API call per poll for nothing.
+  t("a weight-only edit does not read or touch the exercise datapoint", () => {
+    const eName = "users/me/dataTypes/exercise/dataPoints/E1";
+    reset([
+      [
+        "2026-01-15",
+        "185",
+        "135x5x3",
+        "SYNC",
+        "",
+        JSON.stringify([eName]),
+        "",
+        "",
+        "",
+        "",
+      ],
+    ]);
+    const calls = [];
+    const r = withStubs(
+      Object.assign({}, NO_FOREIGN, {
+        createExerciseAt: () => {
+          calls.push("createExercise");
+          return "users/me/dataTypes/exercise/dataPoints/E2";
+        },
+        createWeightAt: () => "users/me/dataTypes/weight/dataPoints/W1",
+        deleteDataPointsByName: (names) => calls.push(["delete", names]),
+        getDataPoint: (name) => calls.push(["get", name]),
+      }),
+      () => syncDirtyRows(0),
+    );
+    eq(r.ok, 1, "row synced");
+    eq(calls, [], "no exercise GET, delete or create");
+    eq(cell("Exercise Synced At"), "SYNC", "exercise stamp untouched");
+  });
 
   // ---- foreign-match alignment, end to end --------------------------------
 
@@ -2721,6 +2810,37 @@ function runSyncTestsBody_(H) {
         "SYNC",
         "not re-dirtied: the Bench cell still holds text, so nothing was cleared",
       );
+    },
+  );
+
+  // An exercise column added after setup sits to the right of the managed
+  // columns, so it is the last column of the sheet. The raw-text scan has to
+  // reach it, or a row whose only text is there reads as emptied.
+  t(
+    "text in an exercise column right of the managed columns is not a cleared row",
+    () => {
+      const eName = "users/me/dataTypes/exercise/dataPoints/E1";
+      resetGrid([
+        HEADERS.concat(["Squat"]),
+        [
+          new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+          "",
+          "",
+          "SYNC",
+          "SYNC",
+          JSON.stringify([eName]),
+          "",
+          "",
+          "",
+          "",
+          "squat day", // holds text, parses to nothing sendable
+        ],
+      ]);
+      withStubs(
+        { listStrengthOnDate: () => [], listWeightOnDate: () => [] },
+        () => backstop(),
+      );
+      eq(cell("Exercise Synced At"), "SYNC", "not re-dirtied");
     },
   );
 

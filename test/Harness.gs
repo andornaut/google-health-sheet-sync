@@ -100,6 +100,13 @@ function makeFakeSheet_(sheetId) {
           setCell(row - 1, col - 1, v);
         },
         setValues: (vals) => {
+          // The real service rejects a mismatch; without this check an
+          // off-by-one in a bulk write passes locally and throws in Apps Script.
+          if (vals.length !== rows || vals.some((r) => r.length !== cols)) {
+            throw new Error(
+              `setValues: data is ${vals.length}x${(vals[0] || []).length}, range is ${rows}x${cols}`,
+            );
+          }
           for (let i = 0; i < rows; i++) {
             for (let j = 0; j < cols; j++) {
               setCell(row - 1 + i, col - 1 + j, vals[i][j]);
