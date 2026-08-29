@@ -80,8 +80,16 @@ const MUTATIONS = [
     // leaked NaN reaches the API as weightGrams: null.
     file: "Parser.gs",
     name: "an unparseable bodyweight is no longer rejected as non-finite",
-    find: "  if (!Number.isFinite(n) || n <= 0) {",
-    replace: "  if (n <= 0) {",
+    find: "  if (!Number.isFinite(n)) {",
+    replace: "  if (false) {",
+  },
+  {
+    // Number("") is 0, so the empty part after a trailing separator would
+    // parse as a zero-weight entry and reach the notes.
+    file: "Parser.gs",
+    name: "the empty part left by a trailing separator is parsed",
+    find: '    if (trimmed === "") {\n      continue;\n    }',
+    replace: "    void 0;",
   },
   {
     file: "Format.gs",
@@ -409,6 +417,21 @@ const MUTATIONS = [
     replace: "    void m;",
   },
   {
+    // The backstop's matched-row re-review depends on a ready row being able
+    // to borrow its own recorded session again.
+    file: "Main.gs",
+    name: "a ready row can no longer re-borrow the session recorded against it",
+    find: "    readyRowNums[r.rowNum] = true;",
+    replace: "    readyRowNums[r.rowNum] = false;",
+  },
+  {
+    // A window straddling midnight has to probe both civil dates.
+    file: "Main.gs",
+    name: "only the window's start date is probed for foreign sessions",
+    find: "    probeDates[ymd(start)] = start;\n    probeDates[ymd(end)] = end;",
+    replace: "    probeDates[ymd(start)] = start;",
+  },
+  {
     file: "Main.gs",
     name: "a zero-set-only row may anchor a foreign-match window",
     find: "      (r) => hasSendableExercises_(r.exercises) && exerciseEditIsOnRowDate_(r),",
@@ -534,6 +557,12 @@ const MUTATIONS = [
     name: "a 404 on the prior weight GET no longer drops the stale id",
     find: "        split.weight = [];",
     replace: "        void 0;",
+  },
+  {
+    file: "Main.gs",
+    name: "a weight-only edit GETs the exercise datapoint too",
+    find: "    exerciseReady && hasSendableExercises_(row.exercises);",
+    replace: "    exerciseReady || hasSendableExercises_(row.exercises);",
   },
   {
     file: "Main.gs",
@@ -720,6 +749,27 @@ const MUTATIONS = [
     find: "  if (duplicates.length > 0) {",
     replace: "  if (false) {",
   },
+  {
+    file: "Main.gs",
+    name: "a missing managed column no longer aborts the pass",
+    find:
+      "    if (!exerciseSyncedAtCol || !weightSyncedAtCol || !healthIdsCol) {\n" +
+      "      throw new Error(",
+    replace: "    if (false) {\n      throw new Error(",
+  },
+  {
+    // An exercise column added after setup is the last column of the sheet.
+    file: "Sheet.gs",
+    name: "hasExerciseText skips the last column",
+    find: "  for (let c = 1; c <= width; c++) {",
+    replace: "  for (let c = 1; c < width; c++) {",
+  },
+  {
+    file: "Sheet.gs",
+    name: "an Invalid Date is returned instead of null",
+    find: "  return isNaN(d.getTime()) ? null : d;",
+    replace: "  return d;",
+  },
 
   // ---- onEdit dirty marking -----------------------------------------------
   {
@@ -826,6 +876,18 @@ const MUTATIONS = [
   },
   {
     file: "Sheet.gs",
+    name: "a header-row edit marks the row dirty",
+    find: "  if (firstRow < 2) {\n    return false;\n  }",
+    replace: "  if (firstRow < 1) {\n    return false;\n  }",
+  },
+  {
+    file: "Sheet.gs",
+    name: "a managed-column edit counts as an exercise edit",
+    find: "      if (managedCols.indexOf(c) !== -1) {\n        continue;\n      }",
+    replace: "      void managedCols;",
+  },
+  {
+    file: "Sheet.gs",
     name: "edits on another sheet are no longer ignored",
     find: "  if (sheet.getSheetId() !== getSheet_().getSheetId()) {\n    return false;\n  }",
     replace: "  void sheet;",
@@ -909,6 +971,14 @@ const MUTATIONS = [
     name: "resyncAllRows clears only the first data row",
     find: "  const dataRowCount = lastRow - 1;",
     replace: "  const dataRowCount = 1;",
+  },
+  {
+    // Caught only because the fake setValues checks dimensions; the real
+    // service throws on the mismatch.
+    file: "Main.gs",
+    name: "resyncAllRows writes one blank row more than the range holds",
+    find: "  for (let i = 0; i < dataRowCount; i++) {",
+    replace: "  for (let i = 0; i <= dataRowCount; i++) {",
   },
   {
     file: "Main.gs",

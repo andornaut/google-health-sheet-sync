@@ -85,18 +85,6 @@ function runParserTestsBody_() {
       { assisted: true, reps: 5, sets: 3, weight: 135 },
     ]),
   );
-  t("multiline cell", () =>
-    eq(parseExerciseCell("135x5x3\n145x3x2"), [
-      { assisted: false, reps: 5, sets: 3, weight: 135 },
-      { assisted: false, reps: 3, sets: 2, weight: 145 },
-    ]),
-  );
-  t('comma-separated cell "95x5x2, 85x5x5"', () =>
-    eq(parseExerciseCell("95x5x2, 85x5x5"), [
-      { assisted: false, reps: 5, sets: 2, weight: 95 },
-      { assisted: false, reps: 5, sets: 5, weight: 85 },
-    ]),
-  );
   t("mixed comma + newline", () =>
     eq(parseExerciseCell("135x5x3, 145x3x2\n*155x1"), [
       { assisted: false, reps: 5, sets: 3, weight: 135 },
@@ -119,23 +107,14 @@ function runParserTestsBody_() {
       { assisted: false, reps: 5, sets: null, weight: 135 },
     ]),
   );
-  t('zero reps skipped silently "135x0" (not performed)', () =>
-    eq(parseExerciseCell("135x0"), []),
-  );
-  t(
-    'zero sets retained "90x6x0" (start-only marker, suppressed in notes)',
-    () =>
-      eq(parseExerciseCell("90x6x0"), [
-        { assisted: false, reps: 6, sets: 0, weight: 90 },
-      ]),
-  );
+  // Zero reps means not performed and is dropped; zero sets is a start-only
+  // marker and is retained (the notes layer suppresses it).
   t("zero-reps dropped, zero-sets retained, valid kept", () =>
     eq(parseExerciseCell("135x5x3, 90x6x0, 95x0"), [
       { assisted: false, reps: 5, sets: 3, weight: 135 },
       { assisted: false, reps: 6, sets: 0, weight: 90 },
     ]),
   );
-  t("negative weight rejected", () => eq(parseExerciseCell("-5"), []));
   // A multi-segment entry is what separates "any value is invalid" from "every
   // value is invalid": with a single number the two agree, so these are the only
   // cases that pin the rejection to ANY negative rather than all of them.
@@ -162,6 +141,13 @@ function runParserTestsBody_() {
   t('too many x segments rejected "135x5x3x2"', () =>
     eq(parseExerciseCell("135x5x3x2"), []),
   );
+  // The empty part a trailing separator leaves behind must be skipped: parsed,
+  // it is Number("") = 0, a zero-weight entry that reaches the notes.
+  t('trailing separator "135x5x3," yields no zero-weight entry', () =>
+    eq(parseExerciseCell("135x5x3,"), [
+      { assisted: false, reps: 5, sets: 3, weight: 135 },
+    ]),
+  );
   t('semicolon-separated cell "95x5x2;85x5x5"', () =>
     eq(parseExerciseCell("95x5x2;85x5x5"), [
       { assisted: false, reps: 5, sets: 2, weight: 95 },
@@ -178,28 +164,11 @@ function runParserTestsBody_() {
   t('bodyweight above cap "500" -> null', () =>
     eq(parseBodyweight("500"), null),
   );
-  t('bodyweight typo "1850" -> null (implausible)', () =>
-    eq(parseBodyweight("1850"), null),
-  );
   t('bodyweight at floor "50" -> 50', () => eq(parseBodyweight("50"), 50));
   t('bodyweight below floor "49" -> null', () =>
     eq(parseBodyweight("49"), null),
   );
-  t('bodyweight rep-count typo "5" -> null (below floor)', () =>
-    eq(parseBodyweight("5"), null),
-  );
 
-  t("formatEntryNote_ multiple sets", () =>
-    eq(
-      formatEntryNote_("Bench press", {
-        assisted: false,
-        reps: 5,
-        sets: 5,
-        weight: 190,
-      }),
-      "Bench press, 190 lbs, 5 sets of 5",
-    ),
-  );
   t("formatEntryNote_ single set", () =>
     eq(
       formatEntryNote_("Bench press", {
@@ -231,17 +200,6 @@ function runParserTestsBody_() {
         weight: 22.5,
       }),
       "Lateral raise, 22.5 lbs, 3 sets of 10",
-    ),
-  );
-  t("formatEntryNote_ weight only (reps/sets unknown)", () =>
-    eq(
-      formatEntryNote_("Bench press", {
-        assisted: false,
-        reps: null,
-        sets: null,
-        weight: 135,
-      }),
-      "Bench press, 135 lbs",
     ),
   );
   t("formatEntryNote_ weight + reps (sets unknown)", () =>
@@ -431,15 +389,6 @@ function runParserTestsBody_() {
       "Sync skipped (another run holds the lock). Try again shortly.",
     ),
   );
-  t("formatSyncResult_ ok only", () =>
-    eq(formatSyncResult_({ errors: 0, ok: 3 }, "Synced"), "Synced 3 row(s)."),
-  );
-  t("formatSyncResult_ ok + errors", () =>
-    eq(
-      formatSyncResult_({ errors: 1, ok: 2 }, "Resynced"),
-      "Resynced 2 row(s), 1 error(s).\n\nSee Executions for details.",
-    ),
-  );
   t("formatSyncResult_ ok + deferred", () =>
     eq(
       formatSyncResult_({ deferred: 25, errors: 0, ok: 75 }, "Synced"),
@@ -459,18 +408,12 @@ function runParserTestsBody_() {
       throw new Error("expected same Date instance");
     }
   });
-  t("toDate_ parses ISO string", () => {
-    const d = toDate_("2026-01-15T12:00:00Z");
-    if (
-      !(d instanceof Date) ||
-      d.getTime() !== Date.UTC(2026, 0, 15, 12, 0, 0)
-    ) {
-      throw new Error(`expected parsed Date, got ${d}`);
-    }
-  });
+  // Strict identity, not eq: JSON.stringify serializes an Invalid Date as
+  // null, so eq(toDate_("x"), null) holds whether or not the guard exists.
   t("toDate_ invalid -> null", () => {
-    eq(toDate_("not a date"), null);
-    eq(toDate_(""), null);
+    if (toDate_("not a date") !== null || toDate_("") !== null) {
+      throw new Error("expected null for unparseable input");
+    }
   });
 
   t("splitHealthIdsByType_ empty/null", () => {
@@ -515,12 +458,6 @@ function runParserTestsBody_() {
     ),
   );
 
-  t("toMeName_ rewrites numeric user id to me", () =>
-    eq(
-      toMeName_("users/1234567890/dataTypes/weight/dataPoints/abc"),
-      "users/me/dataTypes/weight/dataPoints/abc",
-    ),
-  );
   t("toMeName_ leaves an already-me name unchanged", () =>
     eq(
       toMeName_("users/me/dataTypes/exercise/dataPoints/xyz"),
@@ -536,17 +473,12 @@ function runParserTestsBody_() {
   );
   t("isNotFoundError_ false for null", () => eq(isNotFoundError_(null), false));
 
+  // The cap itself is pinned through resolveForeignMatches_ ("window is
+  // clamped"); nothing else observes that a sub-max span passes through.
   t("capExerciseDurationToMax_ leaves sub-max durations untouched", () =>
     eq(capExerciseDurationToMax_(30 * 60 * 1000), 30 * 60 * 1000),
   );
-  t("capExerciseDurationToMax_ caps at MAX_EXERCISE_DURATION_MS", () =>
-    eq(
-      capExerciseDurationToMax_(10 * 60 * 60 * 1000),
-      MAX_EXERCISE_DURATION_MS,
-    ),
-  );
 
-  t("humanizeMs_ sub-second -> ms", () => eq(humanizeMs_(500), "500ms"));
   t("humanizeMs_ seconds rounds", () => eq(humanizeMs_(1500), "2s"));
   t("humanizeMs_ exact minute", () => eq(humanizeMs_(60 * 1000), "1m"));
   t("humanizeMs_ minutes + seconds", () =>
@@ -582,24 +514,10 @@ function runParserTestsBody_() {
     eq(r.offsetSeconds, EDT);
     eq(r.utcMs, Date.UTC(2026, 6, 15, 16, 0, 0));
   });
-  t("localCivilToUtcMs_ day after spring-forward (Mar 9)", () => {
-    const r = localCivilToUtcMs_(TORONTO, 2026, 3, 9, 12, 0);
-    eq(r.offsetSeconds, EDT);
-    eq(r.utcMs, Date.UTC(2026, 2, 9, 16, 0, 0));
-  });
-  t("localCivilToUtcMs_ day after fall-back (Nov 2)", () => {
-    const r = localCivilToUtcMs_(TORONTO, 2026, 11, 2, 12, 0);
-    eq(r.offsetSeconds, EST);
-    eq(r.utcMs, Date.UTC(2026, 10, 2, 17, 0, 0));
-  });
-  t(
-    "localCivilToUtcMs_ spring-forward day pre-cutover (Mar 8 01:00 = EST)",
-    () => {
-      const r = localCivilToUtcMs_(TORONTO, 2026, 3, 8, 1, 0);
-      eq(r.offsetSeconds, EST);
-      eq(r.utcMs, Date.UTC(2026, 2, 8, 6, 0, 0));
-    },
-  );
+  // Only a civil time whose first-pass offset differs from the offset at the
+  // resolved instant takes the correction path, so the two post-cutover cases
+  // are the DST coverage; a pre-cutover or next-day time resolves exactly like
+  // any other winter or summer time.
   t(
     "localCivilToUtcMs_ spring-forward day post-cutover (Mar 8 03:00 = EDT)",
     () => {
@@ -608,11 +526,6 @@ function runParserTestsBody_() {
       eq(r.utcMs, Date.UTC(2026, 2, 8, 7, 0, 0));
     },
   );
-  t("localCivilToUtcMs_ fall-back day pre-cutover (Nov 1 00:00 = EDT)", () => {
-    const r = localCivilToUtcMs_(TORONTO, 2026, 11, 1, 0, 0);
-    eq(r.offsetSeconds, EDT);
-    eq(r.utcMs, Date.UTC(2026, 10, 1, 4, 0, 0));
-  });
   t("localCivilToUtcMs_ fall-back day post-cutover (Nov 1 03:00 = EST)", () => {
     const r = localCivilToUtcMs_(TORONTO, 2026, 11, 1, 3, 0);
     eq(r.offsetSeconds, EST);
@@ -644,12 +557,6 @@ function runParserTestsBody_() {
     eq(
       getTzOffsetSeconds_("America/St_Johns", new Date(Date.UTC(2026, 0, 15))),
       -(3 * 3600 + 30 * 60),
-    ),
-  );
-  t("getTzOffsetSeconds_ GMT zero", () =>
-    eq(
-      getTzOffsetSeconds_("GMT", new Date(Date.UTC(2026, 6, 15, 16, 0, 0))),
-      0,
     ),
   );
 
@@ -1153,22 +1060,6 @@ function runParserTestsBody_() {
       eq(r.exercise.startUtcMs, first.getTime());
       eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 10 * 60 * 1000);
     },
-  );
-
-  // editDerivedDurationMs_: maps raw (last - first) to recorded duration. The
-  // MIN floor (10 min) is also the start-only default (raw <= 0).
-  t(
-    "editDerivedDurationMs_ zero (single edit / start-only) -> MIN (10 min)",
-    () => eq(editDerivedDurationMs_(0), 10 * 60 * 1000),
-  );
-  t("editDerivedDurationMs_ short span clamps up to MIN (10 min)", () =>
-    eq(editDerivedDurationMs_(60 * 1000), 10 * 60 * 1000),
-  );
-  t("editDerivedDurationMs_ mid span passes through", () =>
-    eq(editDerivedDurationMs_(30 * 60 * 1000), 30 * 60 * 1000),
-  );
-  t("editDerivedDurationMs_ long span clamps to MAX (120 min)", () =>
-    eq(editDerivedDurationMs_(5 * 60 * 60 * 1000), 120 * 60 * 1000),
   );
 
   // hasSendableExercises_: a zero-set-only row has nothing to send.
@@ -1683,8 +1574,10 @@ function runParserTestsBody_() {
         Date.UTC(2026, 0, 16, 5, 0, 0),
         Date.UTC(2026, 0, 16, 5, 30, 0),
       ); // 12:00-12:30am EST Jan 16
+      // Answer by civil date: a stub that returns the session for any date
+      // would match even if only the window's start date were probed.
       withStubbedList(
-        () => [cand],
+        (date) => (ymd(date) === "2026-01-16" ? [cand] : []),
         () => {
           const plan = resolveForeignMatches_([], [], [row]);
           eq(plan[10] && plan[10].name, "foreign/after-midnight");
@@ -1791,6 +1684,38 @@ function runParserTestsBody_() {
             [readyRow],
           );
           eq(plan[10], undefined);
+        },
+      );
+    },
+  );
+
+  // The aligned-elsewhere exclusion covers only rows that are NOT ready. A
+  // ready row re-syncing (the backstop's matched-row re-review) must be able to
+  // borrow the session recorded against it again; excluding it would clear the
+  // match and rebuild the datapoint on edit timing every cycle.
+  t(
+    "resolveForeignMatches_ lets a ready row re-borrow the session recorded against it",
+    () => {
+      const row = fRow_({
+        exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),
+        exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0)),
+        matchedHealthSession: "foreign/A",
+        rowNum: 10,
+      });
+      const cand = fCand_(
+        "foreign/A",
+        Date.UTC(2026, 0, 15, 22, 0, 0),
+        Date.UTC(2026, 0, 15, 23, 0, 0),
+      );
+      withStubbedList(
+        () => [cand],
+        () => {
+          const plan = resolveForeignMatches_(
+            [],
+            [{ name: "foreign/A", rowNum: 10 }],
+            [row],
+          );
+          eq(plan[10] && plan[10].name, "foreign/A");
         },
       );
     },

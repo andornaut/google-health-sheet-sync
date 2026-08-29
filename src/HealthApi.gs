@@ -400,9 +400,6 @@ function splitHealthIdsByType_(names) {
 }
 
 function parseOffsetSeconds_(raw) {
-  if (!raw) {
-    return 0;
-  }
   const m = /^(-?\d+)s$/.exec(String(raw));
   if (m) {
     return Number(m[1]);

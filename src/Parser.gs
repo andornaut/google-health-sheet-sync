@@ -76,7 +76,7 @@ function parseBodyweight(raw) {
     return null;
   }
   const n = Number(text);
-  if (!Number.isFinite(n) || n <= 0) {
+  if (!Number.isFinite(n)) {
     return null;
   }
   // Reject implausible values (likely typos, e.g. 1850 for 185.0). Returning
