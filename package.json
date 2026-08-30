@@ -22,7 +22,7 @@
     "@google/clasp": "^3.4.0",
     "@types/google-apps-script": "^2.0.12",
     "@types/node": "^26.2.0",
-    "eslint": "^10.1.0",
+    "eslint": "^10.9.0",
     "eslint-plugin-simple-import-sort": "^14.0.0",
     "eslint-plugin-sort-destructure-keys": "^3.0.0",
     "globals": "^17.6.0",
