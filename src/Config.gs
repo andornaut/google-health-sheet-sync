@@ -144,15 +144,18 @@ const STALE_RECONCILE_MAX_ROWS = 10;
 // the foreign one, which would unshadow the card at the cost of a start time
 // that no longer matches the real workout.
 //
-// When a row's edit window overlaps a pre-existing foreign STRENGTH_TRAINING
-// session (e.g. one started/stopped manually on a watch/Fitbit), we copy that
-// foreign session's start/end onto our created datapoint: the manual
-// start/stop is more accurate than our edit-derived window. A foreign session
-// is a candidate when its interval overlaps [firstEdit - buffer, lastEdit +
-// buffer]; the largest-overlap candidate wins. Overlap is computed in absolute
-// UTC, so a workout that crosses local midnight still matches a candidate
-// logged on the adjacent civil date. Rows without same-date exercise edit
-// timestamps get no alignment and fall through to synthetic/prior timing.
+// When a row's edit window overlaps pre-existing foreign STRENGTH_TRAINING
+// sessions (e.g. ones started/stopped manually on a watch/Fitbit), we copy
+// their start/end times onto the datapoints we create: the manual start/stop
+// is more accurate than our edit-derived window. A foreign session is a
+// candidate when its interval overlaps [firstEdit - buffer, lastEdit +
+// buffer]; the row claims EVERY overlapping candidate, and
+// partitionExercisesBySession_ splits the row's exercises across them (one
+// datapoint per claimed session) using the same buffer as the slack when
+// deciding which session an exercise's first edit fell in. Overlap is computed
+// in absolute UTC, so a workout that crosses local midnight still matches a
+// candidate logged on the adjacent civil date. Rows without same-date exercise
+// edit timestamps get no alignment and fall through to synthetic/prior timing.
 //
 // Caveat: two overlapping STRENGTH_TRAINING datapoints (ours + the device's)
 // may both feed daily aggregates (:dailyRollUp, active minutes) even though

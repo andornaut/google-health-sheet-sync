@@ -49,6 +49,12 @@ function parseLine_(line) {
   if (parts.length > 3) {
     return null;
   }
+  // An empty segment ("135x", "x5", "135x5x") is a typo, not grammar:
+  // Number("") coerces to 0, which would silently reinterpret a trailing x as
+  // the explicit not-performed ("135x0") or start-marker ("135x5x0") forms.
+  if (parts.some((p) => p === "")) {
+    return null;
+  }
   const nums = parts.map((p) => Number(p));
   if (nums.some((n) => !Number.isFinite(n) || n < 0)) {
     return null;

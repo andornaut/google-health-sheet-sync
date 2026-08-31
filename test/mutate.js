@@ -34,6 +34,13 @@ const MUTATIONS = [
     replace: "  if (nums.every((n) => !Number.isFinite(n) || n < 0)) {",
   },
   {
+    // Without the rejection, "135x5x" parses as the zero-set start marker.
+    file: "Parser.gs",
+    name: "an empty x-segment is coerced to 0 instead of rejected",
+    find: '  if (parts.some((p) => p === "")) {',
+    replace: "  if (false) {",
+  },
+  {
     file: "Format.gs",
     name: "a one-minute session loses its duration line",
     find: "  if (minutes > 0) {",
@@ -82,14 +89,6 @@ const MUTATIONS = [
     name: "an unparseable bodyweight is no longer rejected as non-finite",
     find: "  if (!Number.isFinite(n)) {",
     replace: "  if (false) {",
-  },
-  {
-    // Number("") is 0, so the empty part after a trailing separator would
-    // parse as a zero-weight entry and reach the notes.
-    file: "Parser.gs",
-    name: "the empty part left by a trailing separator is parsed",
-    find: '    if (trimmed === "") {\n      continue;\n    }',
-    replace: "    void 0;",
   },
   {
     file: "Format.gs",
