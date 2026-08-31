@@ -2098,6 +2098,57 @@ function runParserTestsBody_() {
     eq(parseMatchedHealthSessions_('["a", 1, null, "b"]'), ["a", "b"]);
   });
 
+  // An orphan leaked by the accepted create windows is untracked (so the id
+  // exclusion misses it) and was created FROM the row's edit window, so it
+  // overlaps that window at least as well as the real device session. Without
+  // the client-id exclusion the row borrows its own leak's interval and the
+  // genuine foreign session goes unclaimed.
+  t(
+    "resolveForeignMatches_ never claims an untracked datapoint from our own client",
+    () => {
+      const row = fRow_({
+        exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),
+        exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0)),
+        healthIds: ["users/me/dataTypes/exercise/dataPoints/MINE"],
+      });
+      // The tracked datapoint, listed back with our client id.
+      const trackedCand = Object.assign(
+        fCand_(
+          "users/me/dataTypes/exercise/dataPoints/MINE",
+          Date.UTC(2026, 0, 15, 22, 0, 0),
+          Date.UTC(2026, 0, 15, 23, 0, 0),
+        ),
+        { googleWebClientId: "web-client-1" },
+      );
+      // The leak: same client, untracked, overlapping the window perfectly.
+      const orphanCand = Object.assign(
+        fCand_(
+          "users/me/dataTypes/exercise/dataPoints/LEAK",
+          Date.UTC(2026, 0, 15, 22, 0, 0),
+          Date.UTC(2026, 0, 15, 23, 0, 0),
+        ),
+        { googleWebClientId: "web-client-1" },
+      );
+      // The genuine device session, smaller overlap.
+      const foreignCand = fCand_(
+        "foreign/device",
+        Date.UTC(2026, 0, 15, 22, 20, 0),
+        Date.UTC(2026, 0, 15, 22, 50, 0),
+      );
+      withStubbedList(
+        () => [trackedCand, orphanCand, foreignCand],
+        () => {
+          const plan = resolveForeignMatches_(
+            ["users/me/dataTypes/exercise/dataPoints/MINE"],
+            [],
+            [row],
+          );
+          eq(plan[10] && plan[10].map((c) => c.name), ["foreign/device"]);
+        },
+      );
+    },
+  );
+
   // Two workouts on one day are one sheet row (findRowDateViolation_ forbids
   // two rows sharing a date), so the row must claim BOTH sessions and split its
   // exercises across them. Claiming only the larger-overlap one is what left
