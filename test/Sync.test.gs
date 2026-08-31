@@ -842,10 +842,12 @@ function runSyncTestsBody_(H) {
     },
   );
 
-  // Two columns sharing a header would silently merge two exercises into one,
-  // so readRows refuses. It is unrecoverable: re-thrown for the owner email,
-  // with the dirty flag left set so the backlog syncs once the sheet is fixed.
-  t("readRows refuses duplicate exercise column headers", () => {
+  // Two columns sharing a header would silently merge two exercises into one
+  // (and a duplicated Date/Weight/managed header would misclassify the first
+  // occurrence's edits), so readRows refuses. It is unrecoverable: re-thrown
+  // for the owner email, with the dirty flag left set so the backlog syncs
+  // once the sheet is fixed.
+  t("readRows refuses duplicate column headers", () => {
     const headers = HEADERS.slice();
     headers[3] = "Bench"; // was Exercise Synced At; now a duplicate of col 3
     headers[4] = "Exercise Synced At";
@@ -867,6 +869,25 @@ function runSyncTestsBody_(H) {
     ok(
       PROPS.getProperty("pendingDirty") !== null,
       "dirty flag kept for after the fix",
+    );
+  });
+
+  // The map resolves a duplicated name to its LAST column, so a stray second
+  // "Weight" header would silently turn the real Weight column into an
+  // exercise column. Same refusal as duplicate exercise headers.
+  t("readRows refuses a duplicated Weight header", () => {
+    reset([["2026-01-15", "185", "135x5", "", "SYNC", "", "", "", "", "", ""]]);
+    SHEET.getRange(1, 3).setValue("Weight"); // was Bench; now duplicates col 2
+    let thrown = null;
+    try {
+      withStubs(NO_FOREIGN, () => syncDirtyRows(0));
+    } catch (err) {
+      thrown = err;
+    }
+    ok(thrown !== null, "throws");
+    ok(
+      String(thrown).indexOf("Weight") !== -1,
+      `names the duplicated header: ${thrown}`,
     );
   });
 

@@ -745,7 +745,7 @@ const MUTATIONS = [
   },
   {
     file: "Sheet.gs",
-    name: "duplicate exercise column headers are accepted silently",
+    name: "duplicate column headers are accepted silently",
     find: "  if (duplicates.length > 0) {",
     replace: "  if (false) {",
   },
