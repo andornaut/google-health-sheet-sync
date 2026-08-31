@@ -293,24 +293,13 @@ function buildSampleTimeFromUtc_(utcMs, offsetSeconds) {
   };
 }
 
-// Compute synthetic [startUtcMs, endUtcMs] for a row given its date and
-// ordinal among rows on that date. Used as the fallback when a row has no
-// edit-derived timing (legacy rows, or rows imported in bulk).
-function syntheticExerciseInterval_(date, ordinal) {
-  let startHour = SYNTHETIC_START_HOUR + ordinal;
-  let endHour = startHour + SYNTHETIC_DURATION_HOURS;
-  if (endHour > 24) {
-    // More same-date rows than there are distinct hours left in the day. Rather
-    // than error the row (which would re-fail every pass), clamp it into the
-    // final slot. Synthetic timing is the bulk-import fallback, so overlapping
-    // a few rows at end-of-day is acceptable: the goal is a valid interval.
-    console.warn(
-      `syntheticExerciseInterval_: ordinal ${ordinal} would spill past ` +
-        `midnight; clamping to the final ${SYNTHETIC_DURATION_HOURS}h slot of the day.`,
-    );
-    endHour = 24;
-    startHour = endHour - SYNTHETIC_DURATION_HOURS;
-  }
+// Compute synthetic [startUtcMs, endUtcMs] for a row: the noon slot on its
+// date. Used as the fallback when a row has no edit-derived timing (legacy
+// rows, or rows imported in bulk). Date validation guarantees one row per
+// date, so there is never a second row to stagger.
+function syntheticExerciseInterval_(date) {
+  const startHour = SYNTHETIC_START_HOUR;
+  const endHour = startHour + SYNTHETIC_DURATION_HOURS;
   const tz = getTz_();
   const p = civilDateParts_(tz, date);
   const start = localCivilToUtcMs_(tz, p.year, p.month, p.day, startHour, 0);

@@ -827,8 +827,6 @@ function syncDirtyRows(lockWaitMs) {
       return { errors: 0, ok: 0 };
     }
 
-    const ordinalByRowNum = buildOrdinalMap_(rows);
-
     // Per-row phase readiness (no debounce: onEdit syncs immediately and the
     // poll/backstop retry): a row's weight phase is ready when weight-dirty, its
     // exercise phase when exercise-dirty. There is no "still typing" wait; a
@@ -918,13 +916,11 @@ function syncDirtyRows(lockWaitMs) {
     const unexpected = [];
     for (let i = 0; i < ready.length; i++) {
       const entry = ready[i];
-      const ordinal = ordinalByRowNum[entry.row.rowNum];
       const foreignMatches = alignmentPlan[entry.row.rowNum] || [];
       try {
         if (
           syncOneRow_(
             entry.row,
-            ordinal,
             foreignMatches,
             entry.weightReady,
             entry.exerciseReady,
@@ -1042,8 +1038,8 @@ function syncDirtyRows(lockWaitMs) {
 // sync never skips its own create; this only supplies a more accurate
 // start/end when a manually-logged foreign session overlaps the row's edit
 // window. Time-overlap only: rows without same-date exercise edit timestamps
-// get no match and fall through to synthetic/prior timing (there is no ordinal
-// fallback).
+// get no match and fall through to synthetic/prior timing (there is no
+// positional fallback).
 //
 // Candidate exclusions (global, keyed by resource name: names are globally
 // unique, so no date keying is needed, and global keying is what lets a
@@ -1245,30 +1241,6 @@ function partitionExercisesBySession_(
   return groups.filter((g) => hasSendableExercises_(g.exercises));
 }
 
-function groupRowsByDate_(rows) {
-  const byDate = {};
-  rows.forEach((r) => {
-    const key = ymd(r.date);
-    (byDate[key] = byDate[key] || []).push(r);
-  });
-  return byDate;
-}
-
-// Each row's rank (by rowNum) within its civil date. Used by the synthetic-
-// timing fallback to give same-date rows distinct startHour offsets.
-function buildOrdinalMap_(rows) {
-  const byDate = groupRowsByDate_(rows);
-  const ordinalByRowNum = {};
-  Object.keys(byDate).forEach((dateKey) => {
-    const dateRows = byDate[dateKey];
-    dateRows.sort((a, b) => a.rowNum - b.rowNum);
-    dateRows.forEach((r, i) => {
-      ordinalByRowNum[r.rowNum] = i;
-    });
-  });
-  return ordinalByRowNum;
-}
-
 // Cap an edit-derived exercise duration at MAX_EXERCISE_DURATION_MS (MAX only,
 // no MIN floor). Used by the foreign-match window in resolveForeignMatches_ to
 // keep its upper bound consistent with editDerivedDurationMs_, which the
@@ -1370,7 +1342,7 @@ function editDerivedDurationMs_(rawDurationMs) {
 //                   reused verbatim, so neither an off-date edit (correcting
 //                   an old row today) nor a late same-day one (fixing a typo
 //                   in the evening) shifts the recorded times.
-//     - 'synthetic' otherwise: noon+ordinal on row.date.
+//     - 'synthetic' otherwise: noon on row.date.
 //
 //   Weight (only consumed on the POST path; PATCH preserves sampleTime
 //   server-side by echoing back the prior GET, so the weight resolver
@@ -1383,7 +1355,7 @@ function editDerivedDurationMs_(rawDurationMs) {
 // case we fall through to the edit/synthetic path rather than erroring).
 // foreignInterval is an overlapping foreign session (from
 // resolveForeignMatches_) whose start/end should be borrowed, or null.
-function resolveRowTiming_(row, ordinal, priorExercise, foreignInterval) {
+function resolveRowTiming_(row, priorExercise, foreignInterval) {
   const tz = getTz_();
   const rowDateKey = ymd(row.date);
 
@@ -1425,7 +1397,7 @@ function resolveRowTiming_(row, ordinal, priorExercise, foreignInterval) {
     }
   }
   if (!exercise) {
-    exercise = syntheticExerciseInterval_(row.date, ordinal);
+    exercise = syntheticExerciseInterval_(row.date);
     exerciseSource = "synthetic";
   }
 
@@ -1526,7 +1498,6 @@ function deletePriorDataPoints_(tag, label, names) {
 // still pending). Returns false if any attempted phase failed.
 function syncOneRow_(
   row,
-  ordinal,
   foreignMatches,
   weightReady,
   exerciseReady,
@@ -1626,7 +1597,7 @@ function syncOneRow_(
   // resolves separately below, passing that session so 'foreign' wins.
   let timing;
   try {
-    timing = resolveRowTiming_(row, ordinal, priorExercise, null);
+    timing = resolveRowTiming_(row, priorExercise, null);
   } catch (err) {
     console.error(`${tag}: resolveRowTiming_ failed: ${err}`);
     return false;
@@ -1731,7 +1702,7 @@ function syncOneRow_(
     const seenIntervals = {};
     groups.forEach((g) => {
       const groupTiming = g.session
-        ? resolveRowTiming_(row, ordinal, priorExercise, g.session)
+        ? resolveRowTiming_(row, priorExercise, g.session)
         : timing;
       const gex = groupTiming.exercise;
       const key = `${gex.startUtcMs}-${gex.endUtcMs}`;

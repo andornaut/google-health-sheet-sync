@@ -676,35 +676,17 @@ function runParserTestsBody_() {
   // the intended calendar day in EST (UTC-5).
   const JAN_15_NOON_UTC = new Date(Date.UTC(2026, 0, 15, 12, 0, 0));
 
-  t("syntheticExerciseInterval_ ordinal 0 -> noon-1pm EST", () => {
-    const r = syntheticExerciseInterval_(JAN_15_NOON_UTC, 0);
+  t("syntheticExerciseInterval_ -> noon-1pm EST", () => {
+    const r = syntheticExerciseInterval_(JAN_15_NOON_UTC);
     eq(r.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));
     eq(r.endUtcMs, Date.UTC(2026, 0, 15, 18, 0, 0));
     eq(r.startOffsetSeconds, EST);
     eq(r.endOffsetSeconds, EST);
   });
-  t("syntheticExerciseInterval_ ordinal 1 -> 1pm-2pm EST", () => {
-    const r = syntheticExerciseInterval_(JAN_15_NOON_UTC, 1);
-    eq(r.startUtcMs, Date.UTC(2026, 0, 15, 18, 0, 0));
-    eq(r.endUtcMs, Date.UTC(2026, 0, 15, 19, 0, 0));
-  });
-  t(
-    "syntheticExerciseInterval_ clamps to final slot when end would spill past midnight",
-    () => {
-      // ordinal 12 would yield startHour=24/endHour=25; instead of throwing, it
-      // clamps into the last 1h slot of the day (23:00-24:00 local = 4-5am UTC
-      // next day in EST).
-      const r = syntheticExerciseInterval_(JAN_15_NOON_UTC, 12);
-      eq(r.startUtcMs, Date.UTC(2026, 0, 16, 4, 0, 0));
-      eq(r.endUtcMs, Date.UTC(2026, 0, 16, 5, 0, 0));
-      eq(r.startOffsetSeconds, EST);
-      eq(r.endOffsetSeconds, EST);
-    },
-  );
 
-  // Fixture times are 9-10am EST, deliberately NOT noon: synthetic timing for
-  // ordinal 0 is noon-1pm, so a fixture there would assert values the synthetic
-  // fallback also produces and the interval checks would hold either way.
+  // Fixture times are 9-10am EST, deliberately NOT noon: synthetic timing is
+  // noon-1pm, so a fixture there would assert values the synthetic fallback
+  // also produces and the interval checks would hold either way.
   t("resolveRowTiming_ edit source preserves interval within bounds", () => {
     const first = new Date(Date.UTC(2026, 0, 15, 14, 0, 0));
     const last = new Date(Date.UTC(2026, 0, 15, 15, 0, 0));
@@ -715,7 +697,6 @@ function runParserTestsBody_() {
         exercisesLastEditedAt: last,
         weightEditedAt: first,
       },
-      0,
       null,
     );
     eq(r.exerciseSource, "edit");
@@ -737,7 +718,6 @@ function runParserTestsBody_() {
           exerciseFirstEditedAt: first,
           exercisesLastEditedAt: last,
         },
-        0,
         null,
       );
       eq(r.exercise.endUtcMs - r.exercise.startUtcMs, 10 * 60 * 1000);
@@ -767,7 +747,6 @@ function runParserTestsBody_() {
           exerciseFirstEditedAt: first,
           exercisesLastEditedAt: last,
         },
-        0,
         prior,
       );
       eq(
@@ -802,7 +781,6 @@ function runParserTestsBody_() {
           exerciseFirstEditedAt: first,
           exercisesLastEditedAt: last,
         },
-        0,
         prior,
       );
       eq(r.exerciseSource, "prior");
@@ -829,7 +807,6 @@ function runParserTestsBody_() {
           exerciseFirstEditedAt: first,
           exercisesLastEditedAt: last,
         },
-        0,
         null,
       );
       eq(r.exerciseSource, "edit");
@@ -869,7 +846,6 @@ function runParserTestsBody_() {
           exerciseFirstEditedAt: first,
           exercisesLastEditedAt: last,
         },
-        0,
         startOnly,
       );
       eq(r.exerciseSource, "prior");
@@ -889,7 +865,6 @@ function runParserTestsBody_() {
           exerciseFirstEditedAt: first,
           exercisesLastEditedAt: last,
         },
-        0,
         null,
       );
       eq(r.exerciseSource, "edit");
@@ -903,7 +878,6 @@ function runParserTestsBody_() {
         exerciseFirstEditedAt: null,
         exercisesLastEditedAt: null,
       },
-      0,
       null,
     );
     eq(r.exerciseSource, "synthetic");
@@ -925,7 +899,6 @@ function runParserTestsBody_() {
           exercisesLastEditedAt: null,
           weightEditedAt: null,
         },
-        0,
         null,
       );
       eq(r.weightSource, "synthetic");
@@ -943,7 +916,6 @@ function runParserTestsBody_() {
           exercisesLastEditedAt: null,
           weightEditedAt: wEdit,
         },
-        0,
         null,
       );
       eq(r.exerciseSource, "synthetic");
@@ -967,7 +939,6 @@ function runParserTestsBody_() {
         exercisesLastEditedAt: JAN_20_4PM_EST,
         weightEditedAt: JAN_20_3PM_EST,
       },
-      0,
       null,
     );
     eq(r.exerciseSource, "synthetic");
@@ -997,7 +968,6 @@ function runParserTestsBody_() {
           exerciseFirstEditedAt: JAN_20_3PM_EST,
           exercisesLastEditedAt: JAN_20_4PM_EST,
         },
-        0,
         priorExercise,
       );
       eq(r.exerciseSource, "prior");
@@ -1029,7 +999,6 @@ function runParserTestsBody_() {
           exerciseFirstEditedAt: first,
           exercisesLastEditedAt: last,
         },
-        0,
         priorExercise,
       );
       eq(r.exerciseSource, "edit");
@@ -1059,7 +1028,6 @@ function runParserTestsBody_() {
           exerciseFirstEditedAt: first,
           exercisesLastEditedAt: last,
         },
-        0,
         null,
         FOREIGN_INTERVAL,
       );
@@ -1087,7 +1055,6 @@ function runParserTestsBody_() {
         exerciseFirstEditedAt: null,
         exercisesLastEditedAt: null,
       },
-      0,
       prior,
       FOREIGN_INTERVAL,
     );
@@ -1108,7 +1075,6 @@ function runParserTestsBody_() {
           exercisesLastEditedAt: null,
           weightEditedAt: wEdit,
         },
-        0,
         null,
         FOREIGN_INTERVAL,
       );
@@ -1126,7 +1092,6 @@ function runParserTestsBody_() {
           exerciseFirstEditedAt: JAN_20_3PM_EST,
           exercisesLastEditedAt: JAN_20_4PM_EST,
         },
-        0,
         { exercise: {} },
       );
       eq(r.exerciseSource, "synthetic");
@@ -1146,7 +1111,6 @@ function runParserTestsBody_() {
           exerciseFirstEditedAt: first,
           exercisesLastEditedAt: first,
         },
-        0,
         null,
       );
       eq(r.exerciseSource, "edit");
