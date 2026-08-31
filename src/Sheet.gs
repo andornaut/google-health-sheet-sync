@@ -630,6 +630,12 @@ function onEditMarkDirty(e) {
     } dirty=[${phases.join(",")}]`,
   );
 
+  // Advanced BEFORE the marker writes so a throw mid-write still leaves the
+  // flag set (the stamps already cleared by then make the row dirty, and the
+  // next poll picks it up), and again AFTER them (below) so a sync pass that
+  // read its start-of-pass generation before this edit but snapshotted the
+  // sheet before these markers landed still sees a generation change and
+  // keeps the flag, instead of draining and deleting it with this edit unseen.
   markPendingDirty_();
   // No lock: these are single-cell writes that race safely with an in-flight
   // sync. syncOneRow_'s per-phase concurrent-edit guards re-check at stamp
@@ -655,6 +661,7 @@ function onEditMarkDirty(e) {
     weightRows,
     weightSyncedAtCol,
   });
+  markPendingDirty_();
   return true;
 }
 

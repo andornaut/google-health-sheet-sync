@@ -149,6 +149,30 @@ function runSyncTestsBody_(H) {
     },
   );
 
+  // The generation must advance on BOTH sides of the marker writes: the
+  // leading advance covers a throw mid-write (flag already set), the trailing
+  // one covers a sync pass that read its start-of-pass generation before this
+  // edit but snapshotted the sheet before the markers landed; without it that
+  // pass sees neither signal, drains, and deletes the flag with the edit
+  // unseen. Ordering is pinned by stubbing the two calls and recording the
+  // sequence (the stubs skip the real writes, which this test does not need).
+  t(
+    "onEditMarkDirty advances the generation before AND after the markers",
+    () => {
+      reset([["2026-01-15", "", "135x5", "", "", "", "", "", "", "", ""]]);
+      const seq = [];
+      const marked = withStubs(
+        {
+          markPendingDirty_: () => seq.push("gen"),
+          writeEditMarkers_: () => seq.push("markers"),
+        },
+        () => onEditMarkDirty({ range: SHEET.getRange(2, COL.Bench) }),
+      );
+      ok(marked === true, "returns true");
+      eq(seq, ["gen", "markers", "gen"]);
+    },
+  );
+
   // Exercise Edit Times records WHICH exercise was typed and when, which the
   // row-level Exercise First/Last Edited At columns cannot say. It is what lets
   // a row's exercises be attributed to the separate app-recorded workout
