@@ -1014,6 +1014,21 @@ const MUTATIONS = [
       "  }",
     replace: "  lock.tryLock(LOCK_WAIT_MS);",
   },
+  {
+    file: "Sheet.gs",
+    name: "the trailing generation advance after the marker writes is dropped",
+    find:
+      "    weightRows,\n" +
+      "    weightSyncedAtCol,\n" +
+      "  });\n" +
+      "  markPendingDirty_();\n" +
+      "  return true;",
+    replace:
+      "    weightRows,\n" +
+      "    weightSyncedAtCol,\n" +
+      "  });\n" +
+      "  return true;",
+  },
   // ---- Per-exercise edit times --------------------------------------------
   {
     file: "Sheet.gs",
