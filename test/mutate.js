@@ -820,7 +820,13 @@ const MUTATIONS = [
   {
     file: "Sheet.gs",
     name: "an exercise edit marks every row in the range, not just the ones with content",
-    find: "      if (headerName) {\n        exerciseRows.add(rowNum);\n      }",
+    find:
+      "      if (headerName) {\n" +
+      "        exerciseRows.add(rowNum);\n" +
+      "        const names = exerciseNamesByRow.get(rowNum) || new Set();\n" +
+      "        names.add(headerName);\n" +
+      "        exerciseNamesByRow.set(rowNum, names);\n" +
+      "      }",
     replace:
       "      if (headerName) {\n" +
       "        for (let k = 0; k < numRows; k++) {\n" +
@@ -871,7 +877,13 @@ const MUTATIONS = [
   {
     file: "Sheet.gs",
     name: "a blank-header scratch column counts as an exercise column",
-    find: "      if (headerName) {\n        exerciseRows.add(rowNum);\n      }",
+    find:
+      "      if (headerName) {\n" +
+      "        exerciseRows.add(rowNum);\n" +
+      "        const names = exerciseNamesByRow.get(rowNum) || new Set();\n" +
+      "        names.add(headerName);\n" +
+      "        exerciseNamesByRow.set(rowNum, names);\n" +
+      "      }",
     replace: "      void headerName;\n      exerciseRows.add(rowNum);",
   },
   {
@@ -1001,6 +1013,28 @@ const MUTATIONS = [
       "    return;\n" +
       "  }",
     replace: "  lock.tryLock(LOCK_WAIT_MS);",
+  },
+  // ---- Per-exercise edit times --------------------------------------------
+  {
+    file: "Sheet.gs",
+    name: "a per-exercise first edit is overwritten instead of sticky",
+    find: "    out[name] = { first: entry.first || nowIso, last: nowIso };",
+    replace: "    out[name] = { first: nowIso, last: nowIso };",
+  },
+  {
+    file: "Sheet.gs",
+    name: "exercises the edit did not touch are dropped from the edit-time map",
+    find:
+      "  Object.keys(prior || {}).forEach((name) => {\n" +
+      "    out[name] = { first: prior[name].first, last: prior[name].last };\n" +
+      "  });",
+    replace: "",
+  },
+  {
+    file: "Sheet.gs",
+    name: "a non-object Exercise Edit Times cell is carried forward instead of dropped",
+    find: '  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {',
+    replace: "  if (false) {",
   },
 ];
 

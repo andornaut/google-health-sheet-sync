@@ -65,6 +65,7 @@ function runSyncTestsBody_(H) {
     "Exercises Last Edited At",
     "Weight Edited At",
     "Matched Health Session",
+    "Exercise Edit Times",
   ];
   const COL = {};
   HEADERS.forEach((h, i) => {
@@ -147,6 +148,86 @@ function runSyncTestsBody_(H) {
       );
     },
   );
+
+  // Exercise Edit Times records WHICH exercise was typed and when, which the
+  // row-level Exercise First/Last Edited At columns cannot say. It is what lets
+  // a row's exercises be attributed to the separate app-recorded workout
+  // sessions they were logged during, rather than all landing on one.
+  t("onEditMarkDirty records a per-exercise edit timestamp", () => {
+    reset([
+      ["2026-01-15", "", "135x5", "PREV-EX", "PREV-WT", "", "", "", "", "", ""],
+    ]);
+    onEditMarkDirty({ range: SHEET.getRange(2, COL.Bench) });
+    const times = parseExerciseEditTimes_(cell("Exercise Edit Times"));
+    eq(Object.keys(times), ["Bench"], "keyed by exercise column header");
+    eq(
+      times.Bench.first,
+      cell("Exercise First Edited At"),
+      "first matches the row-level first edit",
+    );
+    eq(times.Bench.last, times.Bench.first, "single edit: first == last");
+  });
+
+  // Sticky `first` is the whole point: an exercise corrected during a later
+  // workout must stay attributed to the one it was originally logged in.
+  t("onEditMarkDirty keeps a per-exercise first across a second edit", () => {
+    reset([
+      [
+        "2026-01-15",
+        "",
+        "135x5",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        '{"Bench":{"first":"2026-01-15T10:00:00.000Z","last":"2026-01-15T10:00:00.000Z"}}',
+      ],
+    ]);
+    onEditMarkDirty({ range: SHEET.getRange(2, COL.Bench) });
+    const times = parseExerciseEditTimes_(cell("Exercise Edit Times"));
+    eq(times.Bench.first, "2026-01-15T10:00:00.000Z", "first is sticky");
+    ok(times.Bench.last !== times.Bench.first, "last advanced");
+  });
+
+  // A weight edit must not appear in the per-exercise map, for the same reason
+  // it must not advance Exercises Last Edited At.
+  t("onEditMarkDirty weight edit writes no per-exercise edit time", () => {
+    reset([["2026-01-15", "185", "", "", "", "", "", "", "", "", ""]]);
+    onEditMarkDirty({ range: SHEET.getRange(2, COL.Weight) });
+    eq(cell("Exercise Edit Times"), "", "left blank by a weight-only edit");
+  });
+
+  // readRows is where the split logic will read these from, so the parse has to
+  // survive the round trip through the cell as Date objects.
+  t("readRows exposes per-exercise edit times as Dates", () => {
+    reset([
+      [
+        new Date(2026, 0, 15),
+        "",
+        "135x5",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        '{"Bench":{"first":"2026-01-15T15:00:00.000Z","last":"2026-01-15T15:30:00.000Z"}}',
+      ],
+    ]);
+    const row = readRows().rows[0];
+    eq(
+      row.exerciseEditTimes.Bench.first.toISOString(),
+      "2026-01-15T15:00:00.000Z",
+    );
+    eq(
+      row.exerciseEditTimes.Bench.last.toISOString(),
+      "2026-01-15T15:30:00.000Z",
+    );
+  });
 
   // Clearing real content is an edit: it must reach the delete paths in
   // syncOneRow_ (bodyweight cleared -> DELETE, exercises cleared ->
@@ -2829,6 +2910,7 @@ function runSyncTestsBody_(H) {
           "SYNC",
           "SYNC",
           JSON.stringify([eName]),
+          "",
           "",
           "",
           "",

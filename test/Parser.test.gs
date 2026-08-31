@@ -339,6 +339,90 @@ function runParserTestsBody_() {
     eq(parseHealthIds_("not json"), []),
   );
 
+  t("parseExerciseEditTimes_ empty/blank -> {}", () => {
+    eq(parseExerciseEditTimes_(""), {});
+    eq(parseExerciseEditTimes_(null), {});
+    eq(parseExerciseEditTimes_(undefined), {});
+    eq(parseExerciseEditTimes_("   "), {});
+  });
+  t("parseExerciseEditTimes_ valid map round-trips", () =>
+    eq(
+      parseExerciseEditTimes_(
+        '{"Bench press":{"first":"2026-08-30T17:09:18.000Z","last":"2026-08-30T17:20:00.000Z"}}',
+      ),
+      {
+        "Bench press": {
+          first: "2026-08-30T17:09:18.000Z",
+          last: "2026-08-30T17:20:00.000Z",
+        },
+      },
+    ),
+  );
+  t("parseExerciseEditTimes_ drops entries with no usable timestamp", () =>
+    eq(
+      parseExerciseEditTimes_(
+        '{"A":{"first":"x"},"B":{},"C":null,"D":5,"E":{"first":1,"last":2}}',
+      ),
+      { A: { first: "x" } },
+    ),
+  );
+  // A cell holding an array or a scalar is not the shape the merge writes, and
+  // treating it as one would let mergeExerciseEditTimes_ carry junk keys
+  // forward into every later edit of the row.
+  t("parseExerciseEditTimes_ non-object JSON -> {}", () => {
+    eq(parseExerciseEditTimes_("[1,2]"), {});
+    eq(parseExerciseEditTimes_('"str"'), {});
+    eq(parseExerciseEditTimes_("7"), {});
+    eq(parseExerciseEditTimes_('[{"first":"T1"}]'), {});
+  });
+  t("parseExerciseEditTimes_ malformed JSON -> {}", () =>
+    eq(parseExerciseEditTimes_("not json"), {}),
+  );
+
+  t("mergeExerciseEditTimes_ seeds first and last on a new exercise", () =>
+    eq(mergeExerciseEditTimes_({}, ["Bench press"], "T1"), {
+      "Bench press": { first: "T1", last: "T1" },
+    }),
+  );
+  // first is sticky: this is what keeps an exercise attributed to the workout
+  // it was originally logged in when it is corrected during a later one.
+  t("mergeExerciseEditTimes_ keeps first, advances last", () =>
+    eq(
+      mergeExerciseEditTimes_(
+        { "Bench press": { first: "T1", last: "T1" } },
+        ["Bench press"],
+        "T2",
+      ),
+      { "Bench press": { first: "T1", last: "T2" } },
+    ),
+  );
+  t("mergeExerciseEditTimes_ leaves untouched exercises alone", () =>
+    eq(
+      mergeExerciseEditTimes_(
+        {
+          "Bench press": { first: "T1", last: "T1" },
+          Squat: { first: "T1", last: "T1" },
+        },
+        ["Squat"],
+        "T2",
+      ),
+      {
+        "Bench press": { first: "T1", last: "T1" },
+        Squat: { first: "T1", last: "T2" },
+      },
+    ),
+  );
+  t("mergeExerciseEditTimes_ does not mutate its input", () => {
+    const prior = { "Bench press": { first: "T1", last: "T1" } };
+    mergeExerciseEditTimes_(prior, ["Bench press", "Squat"], "T2");
+    eq(prior, { "Bench press": { first: "T1", last: "T1" } });
+  });
+  t("mergeExerciseEditTimes_ tolerates a null prior", () =>
+    eq(mergeExerciseEditTimes_(null, ["Squat"], "T1"), {
+      Squat: { first: "T1", last: "T1" },
+    }),
+  );
+
   t("extractDataPointName_ null/undefined -> null", () => {
     eq(extractDataPointName_(null), null);
     eq(extractDataPointName_(undefined), null);
