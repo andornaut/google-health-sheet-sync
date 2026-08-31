@@ -205,10 +205,9 @@ function readRows() {
       : [];
     healthIds.forEach((n) => allHealthIds.push(n));
     if (matchedHealthSessionCol) {
-      const matched = String(row[matchedHealthSessionCol - 1] || "").trim();
-      if (matched) {
-        allMatchedSessions.push({ name: matched, rowNum });
-      }
+      parseMatchedHealthSessions_(row[matchedHealthSessionCol - 1]).forEach(
+        (name) => allMatchedSessions.push({ name, rowNum }),
+      );
     }
     const dateVal = row[dateCol - 1];
     if (!dateVal) {
@@ -239,9 +238,9 @@ function readRows() {
     const weightEditedAt = weightEditedAtCol
       ? toDate_(row[weightEditedAtCol - 1])
       : null;
-    const matchedHealthSession = matchedHealthSessionCol
-      ? String(row[matchedHealthSessionCol - 1] || "").trim()
-      : "";
+    const matchedHealthSessions = matchedHealthSessionCol
+      ? parseMatchedHealthSessions_(row[matchedHealthSessionCol - 1])
+      : [];
     const exerciseEditTimes = exerciseEditTimesCol
       ? exerciseEditTimesToDates_(
           parseExerciseEditTimes_(row[exerciseEditTimesCol - 1]),
@@ -267,7 +266,7 @@ function readRows() {
 
       healthIds,
 
-      matchedHealthSession,
+      matchedHealthSessions,
 
       rowNum,
 
@@ -291,12 +290,41 @@ function readRows() {
   };
 }
 
-function writeMatchedHealthSession(rowNum, matchedHealthSessionCol, name) {
+// Parse the Matched Health Session cell into a list of foreign session resource
+// names. A row can borrow more than one when the day held more than one
+// app-recorded workout, so the cell holds a JSON array. A bare resource name
+// (the single-session format written before the cell became a list) parses as a
+// one-element list, so an existing sheet keeps shielding the session it
+// borrowed instead of offering it to another row.
+function parseMatchedHealthSessions_(raw) {
+  const text = String(raw || "").trim();
+  if (!text) {
+    return [];
+  }
+  if (text.charAt(0) !== "[") {
+    return [text];
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed)
+      ? parsed.filter((n) => typeof n === "string" && n)
+      : [];
+  } catch (err) {
+    console.warn(
+      `parseMatchedHealthSessions_: could not parse "${text}": ${err}`,
+    );
+    return [];
+  }
+}
+
+function writeMatchedHealthSessions(rowNum, matchedHealthSessionCol, names) {
   if (!matchedHealthSessionCol) {
     return;
   }
   const sheet = getSheet_();
-  sheet.getRange(rowNum, matchedHealthSessionCol).setValue(name || "");
+  sheet
+    .getRange(rowNum, matchedHealthSessionCol)
+    .setValue(names && names.length > 0 ? JSON.stringify(names) : "");
 }
 
 function parseHealthIds_(raw) {
