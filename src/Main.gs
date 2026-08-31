@@ -254,8 +254,8 @@ function selectBackstopRows_(rows, nowMs, lookbackDays, wantMatched) {
   return rows.filter(
     (r) =>
       (wantMatched
-        ? Boolean(r.matchedHealthSession)
-        : !r.matchedHealthSession) &&
+        ? r.matchedHealthSessions.length > 0
+        : r.matchedHealthSessions.length === 0) &&
       recentKeys.has(ymd(r.date)) &&
       hasSendableExercises_(r.exercises),
   );
@@ -919,13 +919,13 @@ function syncDirtyRows(lockWaitMs) {
     for (let i = 0; i < ready.length; i++) {
       const entry = ready[i];
       const ordinal = ordinalByRowNum[entry.row.rowNum];
-      const foreignMatch = alignmentPlan[entry.row.rowNum] || null;
+      const foreignMatches = alignmentPlan[entry.row.rowNum] || [];
       try {
         if (
           syncOneRow_(
             entry.row,
             ordinal,
-            foreignMatch,
+            foreignMatches,
             entry.weightReady,
             entry.exerciseReady,
             cols,
@@ -1143,32 +1143,106 @@ function resolveForeignMatches_(allHealthIds, allMatchedSessions, readyRows) {
     return plan;
   }
 
-  // Assign in rowNum order; each row claims its best-overlap remaining
-  // candidate so two rows can't align to the same foreign session.
+  // Assign in rowNum order; a row claims EVERY remaining candidate its window
+  // overlaps, and claimed candidates are removed so two rows can't align to the
+  // same foreign session. All of them rather than the best one because a single
+  // day can hold several app-recorded workouts and the sheet has one row per
+  // date (findRowDateViolation_ forbids two rows sharing one), so the row's
+  // exercises are split across the sessions they were logged during rather than
+  // all landing on whichever overlapped most. Sorted by start time so the split
+  // and the resulting datapoints run in workout order.
   windows.sort((a, b) => a.rowNum - b.rowNum);
   windows.forEach((w) => {
-    let bestIdx = -1;
-    let bestOverlap = 0;
-    candidates.forEach((c, i) => {
+    const claimed = [];
+    for (let i = candidates.length - 1; i >= 0; i--) {
+      const c = candidates[i];
       const overlap =
         Math.min(c.endUtcMs, w.windowEnd) -
         Math.max(c.startUtcMs, w.windowStart);
-      if (overlap > bestOverlap) {
-        bestIdx = i;
-        bestOverlap = overlap;
+      if (overlap > 0) {
+        claimed.push(c);
+        candidates.splice(i, 1);
       }
-    });
-    if (bestIdx >= 0) {
-      plan[w.rowNum] = candidates[bestIdx];
+    }
+    if (claimed.length > 0) {
+      claimed.sort((a, b) => a.startUtcMs - b.startUtcMs);
+      plan[w.rowNum] = claimed;
       console.info(
         `resolveForeignMatches_: row ${w.rowNum} aligns to ${
-          candidates[bestIdx].name
-        } (overlap=${humanizeMs_(bestOverlap)})`,
+          claimed.length
+        } session(s): ${claimed.map((c) => c.name).join(", ")}`,
       );
-      candidates.splice(bestIdx, 1);
     }
   });
   return plan;
+}
+
+// Split a row's exercises across the app-recorded sessions its window claimed,
+// by each exercise's OWN first-edit timestamp (Exercise Edit Times), so a day
+// holding two workouts writes two datapoints with the right exercises on each
+// rather than one carrying both.
+//
+// An exercise is attributed to the session whose interval contains its first
+// edit, or, when none does, to the nearest session within
+// FOREIGN_MATCH_BUFFER_MS of it: the same slack the window itself uses, since
+// the first set of a workout is often typed a moment before the session is
+// started in the app. `first` rather than `last` because it is sticky: a typo
+// corrected during the next workout must not move the exercise into it.
+//
+// An exercise with no recorded first-edit time falls back to
+// `fallbackFirstEdit`, the row-level Exercise First Edited At. That is what
+// keeps a row written before Exercise Edit Times existed behaving exactly as it
+// did: one session over the row's window still catches every exercise and the
+// interval is still borrowed. Where the day held two workouts such a row puts
+// everything in the first, which is the pre-split result and the most the
+// row-level timestamp can support.
+//
+// Exercises outside every session's slack, with no fallback either, go into one
+// trailing group with a null session, which the caller times from the row's own
+// edit timestamps exactly as it times a whole row today. Groups with nothing
+// sendable are dropped: an app session that overlapped the window but caught no
+// exercises produces no datapoint.
+//
+// With no sessions, or with one that catches everything, the result is a single
+// group and the behavior is identical to the pre-split sync. Pure.
+function partitionExercisesBySession_(
+  sessions,
+  exerciseEditTimes,
+  fallbackFirstEdit,
+  exercises,
+) {
+  const bySession = sessions.map((session) => ({ exercises: [], session }));
+  const unattributed = [];
+  exercises.forEach((ex) => {
+    const times = exerciseEditTimes && exerciseEditTimes[ex.name];
+    const first = (times && times.first) || fallbackFirstEdit;
+    let bestIdx = -1;
+    if (first) {
+      const ms = first.getTime();
+      let bestDistance = Infinity;
+      sessions.forEach((sn, i) => {
+        let distance = 0;
+        if (ms < sn.startUtcMs) {
+          distance = sn.startUtcMs - ms;
+        } else if (ms > sn.endUtcMs) {
+          distance = ms - sn.endUtcMs;
+        }
+        if (distance <= FOREIGN_MATCH_BUFFER_MS && distance < bestDistance) {
+          bestDistance = distance;
+          bestIdx = i;
+        }
+      });
+    }
+    if (bestIdx >= 0) {
+      bySession[bestIdx].exercises.push(ex);
+    } else {
+      unattributed.push(ex);
+    }
+  });
+  const groups = bySession.concat(
+    unattributed.length > 0 ? [{ exercises: unattributed, session: null }] : [],
+  );
+  return groups.filter((g) => hasSendableExercises_(g.exercises));
 }
 
 function groupRowsByDate_(rows) {
@@ -1453,7 +1527,7 @@ function deletePriorDataPoints_(tag, label, names) {
 function syncOneRow_(
   row,
   ordinal,
-  foreignMatch,
+  foreignMatches,
   weightReady,
   exerciseReady,
   cols,
@@ -1474,9 +1548,9 @@ function syncOneRow_(
       row.exercises.length
     }, bodyweight=${
       row.bodyweight === null ? "none" : row.bodyweight
-    }, oldIds=${
-      row.healthIds.length
-    }${foreignMatch ? `, align=${foreignMatch.name}` : ""})`,
+    }, oldIds=${row.healthIds.length}${
+      foreignMatches.length > 0 ? `, align=${foreignMatches.length}` : ""
+    })`,
   );
 
   const split = splitHealthIdsByType_(row.healthIds);
@@ -1499,18 +1573,25 @@ function syncOneRow_(
   // requires sampleTime, read from this GET. Exercise GET failure is non-fatal
   // (timing falls through to edit/synthetic and the recreate proceeds); weight
   // GET failure forces the PATCH to fail and the row to retry next pass.
-  let priorExercise = null;
+  // Every prior, not just the first: a row can now hold one datapoint per
+  // app-recorded workout, and the idempotency check below matches each target
+  // against the priors so an unchanged workout keeps its resource name even
+  // when a sibling on the same row changed.
+  const priorExercises = [];
   let priorWeight = null;
   let priorWeightFetchFailed = false;
-  if (exerciseWillCreate && split.exercise.length > 0) {
-    try {
-      priorExercise = getDataPoint(split.exercise[0]);
-    } catch (err) {
-      console.warn(
-        `${tag}: GET prior exercise failed; will recompute timing and recreate: ${err}`,
-      );
-    }
+  if (exerciseWillCreate) {
+    split.exercise.forEach((name) => {
+      try {
+        priorExercises.push({ dp: getDataPoint(name), name });
+      } catch (err) {
+        console.warn(
+          `${tag}: GET prior exercise ${name} failed; will recreate: ${err}`,
+        );
+      }
+    });
   }
+  const priorExercise = priorExercises.length > 0 ? priorExercises[0].dp : null;
   const weightWillPatch =
     weightReady && row.bodyweight !== null && split.weight.length > 0;
   if (weightWillPatch) {
@@ -1540,25 +1621,18 @@ function syncOneRow_(
   const weightWillCreate =
     weightReady && row.bodyweight !== null && split.weight.length === 0;
 
+  // Weight timing, and the exercise timing for any group with no app session to
+  // borrow from (edit/prior/synthetic). A group that DID claim a session
+  // resolves separately below, passing that session so 'foreign' wins.
   let timing;
   try {
-    // `foreignMatch`, when set, is an overlapping foreign session whose
-    // interval the resolver borrows verbatim ('foreign' wins over
-    // edit/prior/synthetic).
-    timing = resolveRowTiming_(row, ordinal, priorExercise, foreignMatch);
+    timing = resolveRowTiming_(row, ordinal, priorExercise, null);
   } catch (err) {
     console.error(`${tag}: resolveRowTiming_ failed: ${err}`);
     return false;
   }
-  const labelParts = [];
-  if (exerciseWillCreate) {
-    labelParts.push(`exercise=${timing.exerciseSource}`);
-  }
   if (weightWillCreate) {
-    labelParts.push(`weight=${timing.weightSource}`);
-  }
-  if (labelParts.length > 0) {
-    console.info(`${tag}: timing ${labelParts.join(" ")}`);
+    console.info(`${tag}: timing weight=${timing.weightSource}`);
   }
   let newWeightIds = split.weight;
   let newExerciseIds = split.exercise;
@@ -1632,12 +1706,63 @@ function syncOneRow_(
     }
   }
 
+  const usedSessionNames = [];
   if (exerciseReady) {
-    const ex = timing.exercise;
-    const wantCreate = hasSendableExercises_(row.exercises);
-    const notes = wantCreate
-      ? buildNotes(ex.endUtcMs - ex.startUtcMs, row.exercises)
-      : null;
+    // One datapoint per app-recorded workout the row's exercises were logged
+    // during, plus one for whatever was not attributable to any of them. With
+    // no sessions (or one that caught everything) this is a single group and
+    // behaves exactly as the pre-split sync did.
+    const groups = exerciseWillCreate
+      ? partitionExercisesBySession_(
+          foreignMatches,
+          row.exerciseEditTimes,
+          row.exerciseFirstEditedAt,
+          row.exercises,
+        )
+      : [];
+
+    // Resolve each group's interval and notes. Two groups landing on the SAME
+    // interval are collapsed to the first: POSTing a second datapoint with an
+    // identical (client, recordingMethod, exerciseType, interval) returns the
+    // existing one and silently discards the new body, so the second group's
+    // notes would be lost rather than written. See the write-time upsert note
+    // in the README.
+    const targets = [];
+    const seenIntervals = {};
+    groups.forEach((g) => {
+      const groupTiming = g.session
+        ? resolveRowTiming_(row, ordinal, priorExercise, g.session)
+        : timing;
+      const gex = groupTiming.exercise;
+      const key = `${gex.startUtcMs}-${gex.endUtcMs}`;
+      if (seenIntervals[key]) {
+        console.warn(
+          `${tag}: two exercise groups resolved to the same interval; ` +
+            `merging is not possible, dropping the later one.`,
+        );
+        return;
+      }
+      seenIntervals[key] = true;
+      targets.push({
+        endOffsetSeconds: gex.endOffsetSeconds,
+        endUtcMs: gex.endUtcMs,
+        notes: buildNotes(gex.endUtcMs - gex.startUtcMs, g.exercises),
+        sessionName: g.session ? g.session.name : null,
+        source: groupTiming.exerciseSource,
+        startOffsetSeconds: gex.startOffsetSeconds,
+        startUtcMs: gex.startUtcMs,
+      });
+    });
+    if (targets.length > 0) {
+      console.info(
+        `${tag}: timing exercise=[${targets.map((t) => t.source).join(",")}]`,
+      );
+    }
+    targets.forEach((t) => {
+      if (t.sessionName) {
+        usedSessionNames.push(t.sessionName);
+      }
+    });
 
     // Why delete+recreate rather than PATCH: the Health API's exercise PATCH
     // does not merge `notes`, which is the field a row edit changes. Measured
@@ -1646,51 +1771,61 @@ function syncOneRow_(
     // here would stamp the row synced while Health kept the old text. See the
     // Google Cloud caveats in the README.
     //
-    // Idempotency: if the row's single existing exercise datapoint already
-    // carries the target interval + notes, skip the delete+recreate entirely
-    // and keep its resource name. This is what makes the per-poll / per-day
-    // re-dirty cheap: an unchanged row costs just the prior GET, no write and
-    // no resource-name churn. Only applies when there's exactly one prior id
-    // (multiple priors are consolidated by recreating).
-    const unchanged =
-      wantCreate &&
-      split.exercise.length === 1 &&
-      priorExercise &&
-      exerciseUnchanged_(priorExercise, ex.startUtcMs, ex.endUtcMs, notes);
-
-    if (unchanged) {
-      console.info(
-        `${tag}: exercise unchanged; skip recreate -> ${split.exercise[0]}`,
-      );
-      newExerciseIds = split.exercise;
-    } else {
-      if (split.exercise.length > 0) {
-        console.info(
-          `${tag}: deleting ${split.exercise.length} previous exercise datapoint(s)`,
-        );
-        // Same contract as the weight delete above: survivors are the failures,
-        // and any survivor blocks the recreate so the next sync retries them.
-        newExerciseIds = deletePriorDataPoints_(
-          tag,
-          "exercise",
-          split.exercise,
-        );
-        if (newExerciseIds.length > 0) {
-          exerciseFailed = true;
-        }
+    // Idempotency: a target whose interval + notes already match one of the
+    // row's existing datapoints keeps that datapoint untouched, so an unchanged
+    // re-sync costs only the prior GETs, with no write and no resource-name
+    // churn. Priors are matched by CONTENT, not by position: a row can hold
+    // several, and a recreate gives a new resource name, so there is no stable
+    // ordering to match on. Each prior is claimed at most once.
+    const claimedPriors = {};
+    const keptNames = [];
+    const toCreate = [];
+    targets.forEach((t) => {
+      const match = priorExercises.filter(
+        (p) =>
+          !claimedPriors[p.name] &&
+          exerciseUnchanged_(p.dp, t.startUtcMs, t.endUtcMs, t.notes),
+      )[0];
+      if (match) {
+        claimedPriors[match.name] = true;
+        keptNames.push(match.name);
       } else {
-        newExerciseIds = [];
+        toCreate.push(t);
       }
-      if (!exerciseFailed && wantCreate) {
+    });
+    const staleNames = split.exercise.filter((n) => !claimedPriors[n]);
+    newExerciseIds = keptNames.slice();
+
+    if (keptNames.length > 0) {
+      console.info(
+        `${tag}: ${keptNames.length} exercise datapoint(s) unchanged; skip recreate`,
+      );
+    }
+    if (staleNames.length > 0) {
+      console.info(
+        `${tag}: deleting ${staleNames.length} previous exercise datapoint(s)`,
+      );
+      // Survivors are the failures: they stay in Created Health IDs so the next
+      // sync retries them, and any survivor blocks the creates below so the row
+      // does not end up holding both the stale datapoint and its replacement.
+      const failedDeletes = deletePriorDataPoints_(tag, "exercise", staleNames);
+      if (failedDeletes.length > 0) {
+        exerciseFailed = true;
+        newExerciseIds = newExerciseIds.concat(failedDeletes);
+      }
+    }
+    if (!exerciseFailed) {
+      for (let i = 0; i < toCreate.length; i++) {
+        const t = toCreate[i];
         try {
           // createExerciseAt throws if the create returns no resource name, so a
           // returned name is always usable here.
           const name = createExerciseAt(
-            ex.startUtcMs,
-            ex.startOffsetSeconds,
-            ex.endUtcMs,
-            ex.endOffsetSeconds,
-            notes,
+            t.startUtcMs,
+            t.startOffsetSeconds,
+            t.endUtcMs,
+            t.endOffsetSeconds,
+            t.notes,
           );
           newExerciseIds.push(name);
           // Same rationale as the weight write above: persist before any
@@ -1702,12 +1837,13 @@ function syncOneRow_(
           );
           console.info(
             `${tag}: createExerciseAt${
-              foreignMatch ? " (foreign-aligned)" : ""
+              t.sessionName ? " (foreign-aligned)" : ""
             } -> ${name}`,
           );
         } catch (err) {
           console.error(`${tag}: createExerciseAt failed: ${err}`);
           exerciseFailed = true;
+          break;
         }
       }
     }
@@ -1719,10 +1855,10 @@ function syncOneRow_(
     newWeightIds.concat(newExerciseIds).concat(split.other),
   );
   if (exerciseReady) {
-    writeMatchedHealthSession(
+    writeMatchedHealthSessions(
       row.rowNum,
       cols.matchedHealthSessionCol,
-      foreignMatch ? foreignMatch.name : "",
+      usedSessionNames,
     );
   }
 

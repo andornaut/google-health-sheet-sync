@@ -398,8 +398,8 @@ const MUTATIONS = [
   {
     file: "Main.gs",
     name: "two rows may borrow the same foreign session",
-    find: "      candidates.splice(bestIdx, 1);",
-    replace: "      void 0;",
+    find: "        candidates.splice(i, 1);",
+    replace: "        void i;",
   },
   {
     file: "Main.gs",
@@ -520,10 +520,11 @@ const MUTATIONS = [
     file: "Main.gs",
     name: "a partially-failed exercise delete still stamps the phase synced",
     find:
-      "        if (newExerciseIds.length > 0) {\n" +
-      "          exerciseFailed = true;\n" +
-      "        }",
-    replace: "        void newExerciseIds;",
+      "      if (failedDeletes.length > 0) {\n" +
+      "        exerciseFailed = true;\n" +
+      "        newExerciseIds = newExerciseIds.concat(failedDeletes);\n" +
+      "      }",
+    replace: "      void failedDeletes;",
   },
   {
     file: "Main.gs",
@@ -566,9 +567,9 @@ const MUTATIONS = [
   },
   {
     file: "Main.gs",
-    name: "the idempotency skip no longer requires exactly one prior id",
-    find: "      split.exercise.length === 1 &&",
-    replace: "      split.exercise.length >= 1 &&",
+    name: "two groups resolving to the same interval both POST (the second is silently discarded)",
+    find: "      if (seenIntervals[key]) {",
+    replace: "      if (false) {",
   },
   {
     file: "Main.gs",
@@ -593,14 +594,14 @@ const MUTATIONS = [
   },
   {
     file: "Main.gs",
-    name: "the matched foreign session is no longer recorded on the row",
+    name: "the matched foreign sessions are no longer recorded on the row",
     find:
-      "    writeMatchedHealthSession(\n" +
+      "    writeMatchedHealthSessions(\n" +
       "      row.rowNum,\n" +
       "      cols.matchedHealthSessionCol,\n" +
-      '      foreignMatch ? foreignMatch.name : "",\n' +
+      "      usedSessionNames,\n" +
       "    );",
-    replace: "    void foreignMatch;",
+    replace: "    void usedSessionNames;",
   },
 
   // ---- Cleared-content reconciliation (the backstop path) -----------------
@@ -738,10 +739,10 @@ const MUTATIONS = [
     file: "Sheet.gs",
     name: "allMatchedSessions covers only rows with a parseable Date",
     find:
-      "      if (matched) {\n" +
-      "        allMatchedSessions.push({ name: matched, rowNum });\n" +
-      "      }",
-    replace: "      void matched;",
+      "      parseMatchedHealthSessions_(row[matchedHealthSessionCol - 1]).forEach(\n" +
+      "        (name) => allMatchedSessions.push({ name, rowNum }),\n" +
+      "      );",
+    replace: "      void matchedHealthSessionCol;",
   },
   {
     file: "Sheet.gs",
@@ -1035,6 +1036,44 @@ const MUTATIONS = [
     name: "a non-object Exercise Edit Times cell is carried forward instead of dropped",
     find: '  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {',
     replace: "  if (false) {",
+  },
+  // ---- Splitting a row across the day's app workouts ----------------------
+  {
+    file: "Main.gs",
+    name: "an exercise is attributed by its last edit instead of its first",
+    find: "    const first = (times && times.first) || fallbackFirstEdit;",
+    replace: "    const first = (times && times.last) || fallbackFirstEdit;",
+  },
+  {
+    file: "Main.gs",
+    name: "the row-level first-edit fallback is dropped (rows without per-exercise times stop aligning)",
+    find: "    const first = (times && times.first) || fallbackFirstEdit;",
+    replace: "    const first = times && times.first;",
+  },
+  {
+    file: "Main.gs",
+    name: "a session that caught no sendable exercise still produces a datapoint",
+    find: "  return groups.filter((g) => hasSendableExercises_(g.exercises));",
+    replace: "  return groups;",
+  },
+  {
+    file: "Main.gs",
+    name: "a row claims only its best-overlap session instead of every overlapping one",
+    find: "      if (overlap > 0) {\n        claimed.push(c);\n        candidates.splice(i, 1);\n      }",
+    replace:
+      "      if (overlap > 0 && claimed.length === 0) {\n" +
+      "        claimed.push(c);\n" +
+      "        candidates.splice(i, 1);\n" +
+      "      }",
+  },
+  {
+    file: "Main.gs",
+    name: "priors are matched to targets positionally instead of by content",
+    find:
+      "        (p) =>\n" +
+      "          !claimedPriors[p.name] &&\n" +
+      "          exerciseUnchanged_(p.dp, t.startUtcMs, t.endUtcMs, t.notes),",
+    replace: "        (p) => !claimedPriors[p.name],",
   },
 ];
 

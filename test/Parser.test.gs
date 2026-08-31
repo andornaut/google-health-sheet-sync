@@ -1220,34 +1220,34 @@ function runParserTestsBody_() {
         {
           date: bsDate(15),
           exercises: sendable,
-          matchedHealthSession: "",
+          matchedHealthSessions: [],
           rowNum: 2,
         }, // today, unmatched -> pick
         // yesterday, unmatched -> pick
         {
           date: bsDate(14),
           exercises: sendable,
-          matchedHealthSession: "",
+          matchedHealthSessions: [],
           rowNum: 3,
         },
         {
           date: bsDate(15),
           exercises: sendable,
-          matchedHealthSession: "foreign/x",
+          matchedHealthSessions: ["foreign/x"],
           rowNum: 4,
         }, // matched -> skip
         // 2 days back (outside lookback=2) -> skip
         {
           date: bsDate(13),
           exercises: sendable,
-          matchedHealthSession: "",
+          matchedHealthSessions: [],
           rowNum: 5,
         },
         // no sendable content -> skip
         {
           date: bsDate(15),
           exercises: zeroOnly,
-          matchedHealthSession: "",
+          matchedHealthSessions: [],
           rowNum: 6,
         },
       ];
@@ -1266,34 +1266,34 @@ function runParserTestsBody_() {
         {
           date: bsDate(15),
           exercises: sendable,
-          matchedHealthSession: "foreign/a",
+          matchedHealthSessions: ["foreign/a"],
           rowNum: 2,
         },
         // yesterday, matched -> pick
         {
           date: bsDate(14),
           exercises: sendable,
-          matchedHealthSession: "foreign/b",
+          matchedHealthSessions: ["foreign/b"],
           rowNum: 3,
         },
         {
           date: bsDate(15),
           exercises: sendable,
-          matchedHealthSession: "",
+          matchedHealthSessions: [],
           rowNum: 4,
         }, // unmatched -> skip
         // outside lookback -> skip
         {
           date: bsDate(13),
           exercises: sendable,
-          matchedHealthSession: "foreign/c",
+          matchedHealthSessions: ["foreign/c"],
           rowNum: 5,
         },
         // no sendable content -> skip
         {
           date: bsDate(15),
           exercises: zeroOnly,
-          matchedHealthSession: "foreign/d",
+          matchedHealthSessions: ["foreign/d"],
           rowNum: 6,
         },
       ];
@@ -1441,11 +1441,11 @@ function runParserTestsBody_() {
       const rows = [
         Object.assign(sRow({ healthIds: [EX_ID], rowNum: 2 }), {
           date: bsDate(15),
-          matchedHealthSession: "",
+          matchedHealthSessions: [],
         }),
         Object.assign(cleared({ healthIds: [EX_ID], rowNum: 3 }), {
           date: bsDate(15),
-          matchedHealthSession: "",
+          matchedHealthSessions: [],
         }),
       ];
       eq(
@@ -1604,7 +1604,7 @@ function runParserTestsBody_() {
         ],
         exercisesLastEditedAt: null,
         healthIds: [],
-        matchedHealthSession: "",
+        matchedHealthSessions: [],
         rowNum: 10,
       },
       overrides,
@@ -1633,7 +1633,7 @@ function runParserTestsBody_() {
         () => [cand],
         () => {
           const plan = resolveForeignMatches_([], [], [row]);
-          eq(plan[10] && plan[10].name, "foreign/A");
+          eq(plan[10] && plan[10].map((c) => c.name), ["foreign/A"]);
         },
       );
     },
@@ -1664,7 +1664,9 @@ function runParserTestsBody_() {
         (date) => (ymd(date) === "2026-01-16" ? [cand] : []),
         () => {
           const plan = resolveForeignMatches_([], [], [row]);
-          eq(plan[10] && plan[10].name, "foreign/after-midnight");
+          eq(plan[10] && plan[10].map((c) => c.name), [
+            "foreign/after-midnight",
+          ]);
         },
       );
     },
@@ -1783,7 +1785,7 @@ function runParserTestsBody_() {
       const row = fRow_({
         exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),
         exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0)),
-        matchedHealthSession: "foreign/A",
+        matchedHealthSessions: ["foreign/A"],
         rowNum: 10,
       });
       const cand = fCand_(
@@ -1799,7 +1801,7 @@ function runParserTestsBody_() {
             [{ name: "foreign/A", rowNum: 10 }],
             [row],
           );
-          eq(plan[10] && plan[10].name, "foreign/A");
+          eq(plan[10] && plan[10].map((c) => c.name), ["foreign/A"]);
         },
       );
     },
@@ -1835,10 +1837,11 @@ function runParserTestsBody_() {
   );
 
   t(
-    "resolveForeignMatches_ time-range picks the best-overlap candidate when several exist",
+    "resolveForeignMatches_ claims only the candidates its window overlaps",
     () => {
       // Row window 4:50pm-6:10pm EST (5pm-6pm edit + the 10min buffer each
-      // side). candA: 7am-8am EST, no overlap. candB: 5pm-6pm EST, full overlap.
+      // side). candA: 7am-8am EST, no overlap, so it is left in the pool.
+      // candB: 5pm-6pm EST, full overlap.
       const row = fRow_({
         exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 22, 0, 0)),
         exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 23, 0, 0)),
@@ -1857,7 +1860,7 @@ function runParserTestsBody_() {
         () => [candA, candB],
         () => {
           const plan = resolveForeignMatches_([], [], [row]);
-          eq(plan[10] && plan[10].name, "foreign/match");
+          eq(plan[10] && plan[10].map((c) => c.name), ["foreign/match"]);
         },
       );
     },
@@ -1891,8 +1894,8 @@ function runParserTestsBody_() {
         () => {
           const plan = resolveForeignMatches_([], [], [rowA, rowB]);
           eq(
-            plan[10] && plan[10].name,
-            "foreign/only",
+            plan[10] && plan[10].map((c) => c.name),
+            ["foreign/only"],
             "assignment runs in rowNum order",
           );
           eq(
@@ -1934,8 +1937,225 @@ function runParserTestsBody_() {
         () => [morningCand, eveningCand],
         () => {
           const plan = resolveForeignMatches_([], [], [morningRow, eveningRow]);
-          eq(plan[10] && plan[10].name, "foreign/morning");
-          eq(plan[11] && plan[11].name, "foreign/evening");
+          eq(plan[10] && plan[10].map((c) => c.name), ["foreign/morning"]);
+          eq(plan[11] && plan[11].map((c) => c.name), ["foreign/evening"]);
+        },
+      );
+    },
+  );
+
+  // ---- partitionExercisesBySession_ ---------------------------------------
+  //
+  // The split that puts each exercise on the workout it was actually logged
+  // during. W1 12:02-12:54, W2 12:58-13:23 (UTC here; the helper is pure and
+  // compares absolute ms, so no time zone is involved).
+  const W1 = fCand_(
+    "foreign/W1",
+    Date.UTC(2026, 0, 15, 12, 2, 0),
+    Date.UTC(2026, 0, 15, 12, 54, 0),
+  );
+  const W2 = fCand_(
+    "foreign/W2",
+    Date.UTC(2026, 0, 15, 12, 58, 0),
+    Date.UTC(2026, 0, 15, 13, 23, 0),
+  );
+  const pEx_ = (name) => ({
+    entries: [{ assisted: false, reps: 5, sets: 3, weight: 135 }],
+    name,
+  });
+  const BENCH = pEx_("Bench");
+  const PRESS = pEx_("Press");
+  const pShape_ = (groups) =>
+    groups.map((g) => [
+      g.session ? g.session.name : null,
+      g.exercises.map((e) => e.name),
+    ]);
+
+  t(
+    "partitionExercisesBySession_ splits two exercises across two sessions",
+    () =>
+      eq(
+        pShape_(
+          partitionExercisesBySession_(
+            [W1, W2],
+            {
+              Bench: { first: new Date(Date.UTC(2026, 0, 15, 12, 9, 0)) },
+              Press: { first: new Date(Date.UTC(2026, 0, 15, 13, 9, 0)) },
+            },
+            null,
+            [BENCH, PRESS],
+          ),
+        ),
+        [
+          ["foreign/W1", ["Bench"]],
+          ["foreign/W2", ["Press"]],
+        ],
+      ),
+  );
+
+  // `first`, not `last`: a typo fixed during the next workout must not drag the
+  // exercise into it. Bench is first edited inside W1 and last edited inside W2.
+  t("partitionExercisesBySession_ attributes by first edit, not last", () =>
+    eq(
+      pShape_(
+        partitionExercisesBySession_(
+          [W1, W2],
+          {
+            Bench: {
+              first: new Date(Date.UTC(2026, 0, 15, 12, 9, 0)),
+              last: new Date(Date.UTC(2026, 0, 15, 13, 10, 0)),
+            },
+          },
+          null,
+          [BENCH],
+        ),
+      ),
+      [["foreign/W1", ["Bench"]]],
+    ),
+  );
+
+  // The pre-split behavior, which every row synced before Exercise Edit Times
+  // existed still depends on: with no per-exercise time, the row-level first
+  // edit decides, so one session over the row's window still catches
+  // everything and its interval is still borrowed.
+  t("partitionExercisesBySession_ falls back to the row-level first edit", () =>
+    eq(
+      pShape_(
+        partitionExercisesBySession_(
+          [W1],
+          {},
+          new Date(Date.UTC(2026, 0, 15, 12, 9, 0)),
+          [BENCH, PRESS],
+        ),
+      ),
+      [["foreign/W1", ["Bench", "Press"]]],
+    ),
+  );
+
+  t(
+    "partitionExercisesBySession_ with no sessions is one unattributed group",
+    () =>
+      eq(pShape_(partitionExercisesBySession_([], {}, null, [BENCH, PRESS])), [
+        [null, ["Bench", "Press"]],
+      ]),
+  );
+
+  // Slack matches the window's own: the first set of a workout is often typed
+  // a moment before the session is started in the app.
+  t(
+    "partitionExercisesBySession_ attributes within the buffer, not beyond",
+    () => {
+      const justInside = new Date(
+        Date.UTC(2026, 0, 15, 12, 2, 0) - FOREIGN_MATCH_BUFFER_MS + 1000,
+      );
+      const wellOutside = new Date(Date.UTC(2026, 0, 15, 9, 0, 0));
+      eq(
+        pShape_(
+          partitionExercisesBySession_(
+            [W1],
+            { Bench: { first: justInside } },
+            null,
+            [BENCH],
+          ),
+        ),
+        [["foreign/W1", ["Bench"]]],
+        "just inside the buffer",
+      );
+      eq(
+        pShape_(
+          partitionExercisesBySession_(
+            [W1],
+            { Bench: { first: wellOutside } },
+            null,
+            [BENCH],
+          ),
+        ),
+        [[null, ["Bench"]]],
+        "well outside falls through unattributed",
+      );
+    },
+  );
+
+  // An app session that overlapped the row's window but caught no exercises
+  // must not produce an empty datapoint.
+  t("partitionExercisesBySession_ drops a session that caught nothing", () =>
+    eq(
+      pShape_(
+        partitionExercisesBySession_(
+          [W1, W2],
+          { Bench: { first: new Date(Date.UTC(2026, 0, 15, 12, 9, 0)) } },
+          null,
+          [BENCH],
+        ),
+      ),
+      [["foreign/W1", ["Bench"]]],
+    ),
+  );
+
+  // Zero-set entries produce no notes, so a group holding only those is not a
+  // datapoint. Same rule hasSendableExercises_ applies to a whole row.
+  t("partitionExercisesBySession_ drops a group with nothing sendable", () => {
+    const zeroSet = {
+      entries: [{ assisted: false, reps: 5, sets: 0, weight: 200 }],
+      name: "Squat",
+    };
+    eq(
+      pShape_(
+        partitionExercisesBySession_(
+          [W1, W2],
+          {
+            Bench: { first: new Date(Date.UTC(2026, 0, 15, 12, 9, 0)) },
+            Squat: { first: new Date(Date.UTC(2026, 0, 15, 13, 9, 0)) },
+          },
+          null,
+          [BENCH, zeroSet],
+        ),
+      ),
+      [["foreign/W1", ["Bench"]]],
+    );
+  });
+
+  t("parseMatchedHealthSessions_ blank/JSON/legacy/malformed", () => {
+    eq(parseMatchedHealthSessions_(""), []);
+    eq(parseMatchedHealthSessions_(null), []);
+    eq(parseMatchedHealthSessions_('["a","b"]'), ["a", "b"]);
+    // Written before the cell became a list: still shields the session.
+    eq(parseMatchedHealthSessions_("foreign/A"), ["foreign/A"]);
+    eq(parseMatchedHealthSessions_("[not json"), []);
+    eq(parseMatchedHealthSessions_('["a", 1, null, "b"]'), ["a", "b"]);
+  });
+
+  // Two workouts on one day are one sheet row (findRowDateViolation_ forbids
+  // two rows sharing a date), so the row must claim BOTH sessions and split its
+  // exercises across them. Claiming only the larger-overlap one is what left
+  // the second workout with no notes.
+  t(
+    "resolveForeignMatches_ claims every session its window overlaps, in start order",
+    () => {
+      // Window 12:59-14:20 EST covers both workouts.
+      const row = fRow_({
+        exerciseFirstEditedAt: new Date(Date.UTC(2026, 0, 15, 18, 9, 0)),
+        exercisesLastEditedAt: new Date(Date.UTC(2026, 0, 15, 19, 9, 0)),
+      });
+      const second = fCand_(
+        "foreign/W2",
+        Date.UTC(2026, 0, 15, 18, 58, 0),
+        Date.UTC(2026, 0, 15, 19, 23, 0),
+      );
+      const first = fCand_(
+        "foreign/W1",
+        Date.UTC(2026, 0, 15, 18, 2, 0),
+        Date.UTC(2026, 0, 15, 18, 54, 0),
+      );
+      withStubbedList(
+        // Listed out of order to pin the sort.
+        () => [second, first],
+        () => {
+          const plan = resolveForeignMatches_([], [], [row]);
+          eq(plan[10] && plan[10].map((c) => c.name), [
+            "foreign/W1",
+            "foreign/W2",
+          ]);
         },
       );
     },

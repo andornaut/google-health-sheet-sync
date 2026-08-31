@@ -1536,11 +1536,13 @@ function runSyncTestsBody_(H) {
   });
 
   t(
-    "syncDirtyRows recreates rather than skipping when a row has two prior exercise ids",
+    "syncDirtyRows keeps one matching prior and deletes the redundant duplicate",
     () => {
-      // The idempotency skip is deliberately limited to a single prior id:
-      // multiple priors are consolidated by recreating, otherwise the extras stay
-      // live in Health with nothing left to reconcile them against.
+      // Priors are matched to targets by CONTENT, so a row carrying a duplicate
+      // (both datapoints holding the row's current interval + notes) settles to
+      // one datapoint per target: the first prior is claimed and kept, the
+      // extra is deleted, and nothing is recreated. Recreating instead would
+      // churn the resource name on every pass for no gain.
       const startMs = Date.UTC(2026, 0, 15, 17, 0, 0);
       const endMs = Date.UTC(2026, 0, 15, 17, 30, 0);
       const priorNotes = buildNotes(endMs - startMs, [
@@ -1589,13 +1591,10 @@ function runSyncTestsBody_(H) {
       );
       eq(
         calls,
-        [["delete", [first]], ["delete", [second]], ["create"]],
-        "both priors deleted despite matching content, one datapoint left",
+        [["delete", [second]]],
+        "the duplicate is deleted, the matching prior kept, nothing created",
       );
-      eq(
-        cell("Created Health IDs"),
-        JSON.stringify(["users/me/dataTypes/exercise/dataPoints/E3"]),
-      );
+      eq(cell("Created Health IDs"), JSON.stringify([first]));
     },
   );
 
@@ -1898,8 +1897,234 @@ function runSyncTestsBody_(H) {
       );
       eq(
         cell("Matched Health Session"),
-        "foreign/A",
+        JSON.stringify(["foreign/A"]),
         "match recorded for the next pass",
+      );
+    },
+  );
+
+  // The scenario this split exists for: two workouts started and stopped in the
+  // Google Health app on one day, each with its own exercise typed into the
+  // sheet during it. Both workouts are ONE sheet row (findRowDateViolation_
+  // forbids two rows sharing a date), so before the split both exercises landed
+  // on a single datapoint aligned to whichever session overlapped most, and the
+  // second workout carried no notes at all.
+  const TWO_WORKOUT_HEADERS = [
+    "Date",
+    "Weight",
+    "Bench",
+    "Press",
+    "Exercise Synced At",
+    "Weight Synced At",
+    "Created Health IDs",
+    "Exercise First Edited At",
+    "Exercises Last Edited At",
+    "Weight Edited At",
+    "Matched Health Session",
+    "Exercise Edit Times",
+  ];
+  const TWO_COL = {};
+  TWO_WORKOUT_HEADERS.forEach((h, i) => {
+    TWO_COL[h] = i + 1;
+  });
+  // 13:02-13:54 and 13:58-14:23 EST.
+  const W1 = {
+    endUtcMs: Date.UTC(2026, 0, 15, 18, 54, 0),
+    endUtcOffsetSeconds: -5 * 3600,
+    name: "foreign/W1",
+    startUtcMs: Date.UTC(2026, 0, 15, 18, 2, 0),
+    startUtcOffsetSeconds: -5 * 3600,
+  };
+  const W2 = {
+    endUtcMs: Date.UTC(2026, 0, 15, 19, 23, 0),
+    endUtcOffsetSeconds: -5 * 3600,
+    name: "foreign/W2",
+    startUtcMs: Date.UTC(2026, 0, 15, 18, 58, 0),
+    startUtcOffsetSeconds: -5 * 3600,
+  };
+  const BENCH_PARSED = [
+    {
+      entries: [{ assisted: false, reps: 6, sets: 6, weight: 175 }],
+      name: "Bench",
+    },
+  ];
+  const PRESS_PARSED = [
+    {
+      entries: [{ assisted: false, reps: 6, sets: 5, weight: 35 }],
+      name: "Press",
+    },
+  ];
+  // Bench first typed at 13:09 (inside W1), Press at 14:00 (inside W2).
+  const twoWorkoutRow = (healthIds, matched) => [
+    JAN15_NOON_EST,
+    "",
+    "175x6x6",
+    "35x6x5",
+    "",
+    "SYNC",
+    healthIds,
+    new Date(Date.UTC(2026, 0, 15, 18, 9, 0)),
+    new Date(Date.UTC(2026, 0, 15, 19, 9, 0)),
+    "",
+    matched,
+    JSON.stringify({
+      Bench: { first: "2026-01-15T18:09:00.000Z" },
+      Press: { first: "2026-01-15T19:00:00.000Z" },
+    }),
+  ];
+
+  t(
+    "syncDirtyRows writes one datapoint per app workout with only that workout's exercises",
+    () => {
+      resetGrid([TWO_WORKOUT_HEADERS, twoWorkoutRow("", "")]);
+      const created = [];
+      const r = withStubs(
+        {
+          createExerciseAt: (startUtcMs, startOff, endUtcMs, endOff, notes) => {
+            created.push({ endUtcMs, notes, startUtcMs });
+            return `users/me/dataTypes/exercise/dataPoints/E${created.length}`;
+          },
+          listStrengthOnDate: () => [W2, W1],
+        },
+        () => syncDirtyRows(0),
+      );
+      eq(r.ok, 1, "row synced");
+      eq(created.length, 2, "one datapoint per workout, not one for the row");
+      eq(
+        created[0],
+        {
+          endUtcMs: W1.endUtcMs,
+          notes: buildNotes(W1.endUtcMs - W1.startUtcMs, BENCH_PARSED),
+          startUtcMs: W1.startUtcMs,
+        },
+        "workout 1 gets its interval and only the exercise logged during it",
+      );
+      eq(
+        created[1],
+        {
+          endUtcMs: W2.endUtcMs,
+          notes: buildNotes(W2.endUtcMs - W2.startUtcMs, PRESS_PARSED),
+          startUtcMs: W2.startUtcMs,
+        },
+        "workout 2 gets its own interval and its own exercise",
+      );
+      eq(
+        SHEET.getRange(2, TWO_COL["Matched Health Session"]).getValue(),
+        JSON.stringify(["foreign/W1", "foreign/W2"]),
+        "both sessions recorded so neither is offered to another row",
+      );
+      eq(
+        SHEET.getRange(2, TWO_COL["Created Health IDs"]).getValue(),
+        JSON.stringify([
+          "users/me/dataTypes/exercise/dataPoints/E1",
+          "users/me/dataTypes/exercise/dataPoints/E2",
+        ]),
+        "both datapoints tracked, so neither is reclaimed as an orphan",
+      );
+    },
+  );
+
+  // Idempotency has to survive the split, or the backstop's re-dirty would
+  // delete and recreate both workouts every cycle.
+  t("syncDirtyRows re-syncs a two-workout row without touching Health", () => {
+    const e1 = "users/me/dataTypes/exercise/dataPoints/E1";
+    const e2 = "users/me/dataTypes/exercise/dataPoints/E2";
+    const priorFor = (session, parsed) => ({
+      exercise: {
+        interval: {
+          endTime: new Date(session.endUtcMs).toISOString(),
+          startTime: new Date(session.startUtcMs).toISOString(),
+        },
+        notes: buildNotes(session.endUtcMs - session.startUtcMs, parsed),
+      },
+    });
+    resetGrid([
+      TWO_WORKOUT_HEADERS,
+      twoWorkoutRow(
+        JSON.stringify([e1, e2]),
+        JSON.stringify(["foreign/W1", "foreign/W2"]),
+      ),
+    ]);
+    const calls = [];
+    const r = withStubs(
+      {
+        createExerciseAt: () => {
+          calls.push("create");
+          return "users/me/dataTypes/exercise/dataPoints/E9";
+        },
+        deleteDataPointsByName: (names) => {
+          calls.push(`delete:${names.join(",")}`);
+        },
+        getDataPoint: (name) =>
+          name === e1 ? priorFor(W1, BENCH_PARSED) : priorFor(W2, PRESS_PARSED),
+        listStrengthOnDate: () => [W1, W2],
+      },
+      () => syncDirtyRows(0),
+    );
+    eq(r.ok, 1, "row synced");
+    eq(calls, [], "no delete and no create when both workouts are unchanged");
+    eq(
+      SHEET.getRange(2, TWO_COL["Created Health IDs"]).getValue(),
+      JSON.stringify([e1, e2]),
+      "both resource names preserved",
+    );
+  });
+
+  // POSTing a second exercise datapoint with the same (client, recordingMethod,
+  // exerciseType, interval) as one that exists returns the EXISTING datapoint
+  // and silently discards the request body, so a second group resolving to an
+  // interval already taken would lose its notes rather than write them. Drop it
+  // instead of issuing a POST that reads as success and changes nothing.
+  t(
+    "syncDirtyRows drops a second exercise group that duplicates an interval",
+    () => {
+      // Edit window 13:00-13:30 EST, and the app session covers exactly that, so
+      // the unattributed group's edit-derived interval collides with it. Press is
+      // first typed at 09:00 EST, well outside the session's slack.
+      const dup = {
+        endUtcMs: Date.UTC(2026, 0, 15, 18, 30, 0),
+        endUtcOffsetSeconds: -5 * 3600,
+        name: "foreign/DUP",
+        startUtcMs: Date.UTC(2026, 0, 15, 18, 0, 0),
+        startUtcOffsetSeconds: -5 * 3600,
+      };
+      resetGrid([
+        TWO_WORKOUT_HEADERS,
+        [
+          JAN15_NOON_EST,
+          "",
+          "175x6x6",
+          "35x6x5",
+          "",
+          "SYNC",
+          "",
+          new Date(dup.startUtcMs),
+          new Date(dup.endUtcMs),
+          "",
+          "",
+          JSON.stringify({
+            Bench: { first: "2026-01-15T18:05:00.000Z" },
+            Press: { first: "2026-01-15T14:00:00.000Z" },
+          }),
+        ],
+      ]);
+      const created = [];
+      const r = withStubs(
+        {
+          createExerciseAt: (startUtcMs, startOff, endUtcMs, endOff, notes) => {
+            created.push({ endUtcMs, notes, startUtcMs });
+            return "users/me/dataTypes/exercise/dataPoints/E1";
+          },
+          listStrengthOnDate: () => [dup],
+        },
+        () => syncDirtyRows(0),
+      );
+      eq(r.ok, 1, "row synced");
+      eq(created.length, 1, "the colliding second group is not POSTed");
+      eq(
+        created[0].notes,
+        buildNotes(dup.endUtcMs - dup.startUtcMs, BENCH_PARSED),
+        "the group that claimed the interval keeps it",
       );
     },
   );
