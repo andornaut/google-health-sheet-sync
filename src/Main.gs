@@ -1073,8 +1073,12 @@ function resolveForeignMatches_(allHealthIds, allMatchedSessions, readyRows) {
     readyRowNums[r.rowNum] = true;
   });
 
-  const excluded = {};
+  const tracked = {};
   splitHealthIdsByType_(allHealthIds).exercise.forEach((name) => {
+    tracked[name] = true;
+  });
+  const excluded = {};
+  Object.keys(tracked).forEach((name) => {
     excluded[name] = true;
   });
   allMatchedSessions.forEach((m) => {
@@ -1118,7 +1122,17 @@ function resolveForeignMatches_(allHealthIds, allMatchedSessions, readyRows) {
     probeDates[ymd(start)] = start;
     probeDates[ymd(end)] = end;
   });
+  // Our own client's datapoints are never candidates, tracked or not. The
+  // `excluded` names cover what the sheet tracks, but an orphan leaked by the
+  // accepted create windows is untracked, was created FROM a row's edit
+  // window, and so often overlaps that window better than the real device
+  // session: the row would borrow its own leak's interval until orphan
+  // reconciliation removes it. Ownership is derived the way
+  // selectOrphanDataPointNames_ derives it: the googleWebClientId carried by
+  // any listed candidate the sheet tracks is ours (foreign device/first-party
+  // sessions carry null and are unaffected).
   const byName = {};
+  const ourClientIds = {};
   Object.keys(probeDates).forEach((key) => {
     let list;
     try {
@@ -1128,13 +1142,18 @@ function resolveForeignMatches_(allHealthIds, allMatchedSessions, readyRows) {
       return;
     }
     list.forEach((c) => {
+      if (tracked[c.name] && c.googleWebClientId) {
+        ourClientIds[c.googleWebClientId] = true;
+      }
       if (excluded[c.name]) {
         return;
       }
       byName[c.name] = c;
     });
   });
-  const candidates = Object.values(byName);
+  const candidates = Object.values(byName).filter(
+    (c) => !(c.googleWebClientId && ourClientIds[c.googleWebClientId]),
+  );
   if (candidates.length === 0) {
     return plan;
   }

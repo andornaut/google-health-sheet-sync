@@ -404,10 +404,11 @@ const MUTATIONS = [
     file: "Main.gs",
     name: "sync-created datapoints are no longer excluded as foreign candidates",
     find:
-      "  splitHealthIdsByType_(allHealthIds).exercise.forEach((name) => {\n" +
+      "  const excluded = {};\n" +
+      "  Object.keys(tracked).forEach((name) => {\n" +
       "    excluded[name] = true;\n" +
       "  });",
-    replace: "  void allHealthIds;",
+    replace: "  const excluded = {};",
   },
   {
     file: "Main.gs",
@@ -1050,6 +1051,15 @@ const MUTATIONS = [
     name: "a non-object Exercise Edit Times cell is carried forward instead of dropped",
     find: '  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {',
     replace: "  if (false) {",
+  },
+  {
+    file: "Main.gs",
+    name: "an untracked datapoint from our own client is claimable as a foreign session",
+    find:
+      "  const candidates = Object.values(byName).filter(\n" +
+      "    (c) => !(c.googleWebClientId && ourClientIds[c.googleWebClientId]),\n" +
+      "  );",
+    replace: "  const candidates = Object.values(byName);",
   },
   // ---- Splitting a row across the day's app workouts ----------------------
   {
