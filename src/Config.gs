@@ -17,6 +17,17 @@ const EXERCISE_FIRST_EDITED_AT_COLUMN_HEADER = "Exercise First Edited At";
 // Weight-only edits do NOT advance it: otherwise a bodyweight change
 // would drag the exercise endTime forward.
 const EXERCISES_LAST_EDITED_AT_COLUMN_HEADER = "Exercises Last Edited At";
+// Per-exercise-column edit timestamps for the row, as a JSON object keyed by
+// exercise column header: {"Bench press":{"first":"<ISO>","last":"<ISO>"}}.
+// The row-level Exercise First/Last Edited At columns say when the row was
+// touched; this says when each individual exercise was, which is what lets a
+// row's exercises be attributed to the separate app-recorded workout sessions
+// they were logged during. `first` is sticky per exercise (a later correction
+// does not move that exercise to a different session), `last` advances on every
+// edit to that column. Keys are column headers, so renaming an exercise column
+// strands its entry; the exercise then falls through to the unattributed group
+// rather than being misattributed.
+const EXERCISE_EDIT_TIMES_COLUMN_HEADER = "Exercise Edit Times";
 // Last edit time for the Weight column. Drives the weight sample time and
 // the weight phase's concurrent-edit guard. Advances on every weight edit
 // so weight re-edits update the sample time accordingly.
@@ -34,6 +45,7 @@ const MANAGED_COLUMN_HEADERS = [
   EXERCISES_LAST_EDITED_AT_COLUMN_HEADER,
   WEIGHT_EDITED_AT_COLUMN_HEADER,
   MATCHED_HEALTH_SESSION_COLUMN_HEADER,
+  EXERCISE_EDIT_TIMES_COLUMN_HEADER,
 ];
 
 // How often the polling trigger (flushPending) fires. onEdit syncs the edited

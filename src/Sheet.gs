@@ -106,6 +106,7 @@ function readRows() {
   const weightEditedAtCol = map[WEIGHT_EDITED_AT_COLUMN_HEADER] || null;
   const matchedHealthSessionCol =
     map[MATCHED_HEALTH_SESSION_COLUMN_HEADER] || null;
+  const exerciseEditTimesCol = map[EXERCISE_EDIT_TIMES_COLUMN_HEADER] || null;
   const dateCol = map[DATE_COLUMN_HEADER];
   const weightCol = map[WEIGHT_COLUMN_HEADER];
 
@@ -144,6 +145,7 @@ function readRows() {
     return {
       allHealthIds: [],
       allMatchedSessions: [],
+      exerciseEditTimesCol,
       exerciseFirstEditedAtCol,
       exerciseSyncedAtCol,
       exercisesLastEditedAtCol,
@@ -240,9 +242,15 @@ function readRows() {
     const matchedHealthSession = matchedHealthSessionCol
       ? String(row[matchedHealthSessionCol - 1] || "").trim()
       : "";
+    const exerciseEditTimes = exerciseEditTimesCol
+      ? exerciseEditTimesToDates_(
+          parseExerciseEditTimes_(row[exerciseEditTimesCol - 1]),
+        )
+      : {};
     rows.push({
       bodyweight,
       date,
+      exerciseEditTimes,
       exerciseFirstEditedAt,
       exerciseSyncedAt: exerciseSyncedAt ? String(exerciseSyncedAt).trim() : "",
       exercises,
@@ -270,6 +278,7 @@ function readRows() {
   return {
     allHealthIds,
     allMatchedSessions,
+    exerciseEditTimesCol,
     exerciseFirstEditedAtCol,
     exerciseSyncedAtCol,
     exercisesLastEditedAtCol,
@@ -304,6 +313,78 @@ function parseHealthIds_(raw) {
     console.warn(`parseHealthIds_: could not parse "${text}": ${err}`);
     return [];
   }
+}
+
+// Parse the Exercise Edit Times cell into `{ <exercise column header>:
+// { first: <ISO string>, last: <ISO string> } }`. Unparseable or
+// wrong-shaped content yields {} rather than throwing: the column is an
+// optimization for attributing exercises to app sessions, and a row that
+// loses it must still sync (falling back to the row-level timestamps), not
+// abort the pass.
+function parseExerciseEditTimes_(raw) {
+  const text = String(raw || "").trim();
+  if (!text) {
+    return {};
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    console.warn(`parseExerciseEditTimes_: could not parse "${text}": ${err}`);
+    return {};
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {};
+  }
+  const out = {};
+  Object.keys(parsed).forEach((name) => {
+    const v = parsed[name];
+    if (!v || typeof v !== "object") {
+      return;
+    }
+    const entry = {};
+    if (typeof v.first === "string" && v.first) {
+      entry.first = v.first;
+    }
+    if (typeof v.last === "string" && v.last) {
+      entry.last = v.last;
+    }
+    if (entry.first || entry.last) {
+      out[name] = entry;
+    }
+  });
+  return out;
+}
+
+// Merge one edit into a parsed Exercise Edit Times map: for every exercise
+// column header in `names`, `first` is seeded only when absent (sticky, so a
+// later correction keeps the exercise attributed to the session it was
+// originally logged in) and `last` is overwritten. Entries for columns this
+// edit did not touch are carried through untouched. Pure: returns a new map.
+function mergeExerciseEditTimes_(prior, names, nowIso) {
+  const out = {};
+  Object.keys(prior || {}).forEach((name) => {
+    out[name] = { first: prior[name].first, last: prior[name].last };
+  });
+  names.forEach((name) => {
+    const entry = out[name] || {};
+    out[name] = { first: entry.first || nowIso, last: nowIso };
+  });
+  return out;
+}
+
+// Convert a parsed Exercise Edit Times map to Date objects for consumption,
+// dropping entries whose timestamps are unreadable.
+function exerciseEditTimesToDates_(parsed) {
+  const out = {};
+  Object.keys(parsed).forEach((name) => {
+    const first = parsed[name].first ? toDate_(parsed[name].first) : null;
+    const last = parsed[name].last ? toDate_(parsed[name].last) : null;
+    if (first || last) {
+      out[name] = { first, last };
+    }
+  });
+  return out;
 }
 
 function writeHealthIds(rowNum, healthIdsCol, names) {
@@ -398,6 +479,7 @@ function onEditMarkDirty(e) {
   const exercisesLastEditedAtCol =
     map[EXERCISES_LAST_EDITED_AT_COLUMN_HEADER] || null;
   const weightEditedAtCol = map[WEIGHT_EDITED_AT_COLUMN_HEADER] || null;
+  const exerciseEditTimesCol = map[EXERCISE_EDIT_TIMES_COLUMN_HEADER] || null;
   const dateCol = map[DATE_COLUMN_HEADER] || null;
   const weightCol = map[WEIGHT_COLUMN_HEADER] || null;
 
@@ -445,6 +527,10 @@ function onEditMarkDirty(e) {
   // re-sync. The per-cell walk below already knows which rows had content.
   const exerciseRows = new Set();
   const weightRows = new Set();
+  // Which exercise column headers each row's edit touched, so Exercise Edit
+  // Times can record a per-exercise timestamp rather than only the row-level
+  // one. Keyed the same way readRows keys exerciseCols (trimmed header text).
+  const exerciseNamesByRow = new Map();
   const touched = [];
   for (let i = 0; i < numRows; i++) {
     for (let j = 0; j < newValues[i].length; j++) {
@@ -478,6 +564,9 @@ function onEditMarkDirty(e) {
         c - 1 < headers.length ? String(headers[c - 1]).trim() : "";
       if (headerName) {
         exerciseRows.add(rowNum);
+        const names = exerciseNamesByRow.get(rowNum) || new Set();
+        names.add(headerName);
+        exerciseNamesByRow.set(rowNum, names);
       }
     }
   }
@@ -522,7 +611,9 @@ function onEditMarkDirty(e) {
   // drives the weight sample time and the weight phase's concurrent-edit
   // guard, so it should reflect the latest weight cell change.
   writeEditMarkers_(sheet, {
+    exerciseEditTimesCol,
     exerciseFirstEditedAtCol,
+    exerciseNamesByRow,
     exerciseRows,
     exerciseSyncedAtCol,
     exercisesLastEditedAtCol,
@@ -592,6 +683,33 @@ function seedRows_(sheet, col, rows, value) {
   }
 }
 
+// Merge each row's touched exercise column headers into its Exercise Edit
+// Times cell. One block read/write like stampRows_, and skipped entirely when
+// nothing would change so a re-edit of the same column at the same instant
+// costs no write.
+function mergeEditTimesRows_(sheet, col, namesByRow, nowIso) {
+  const rows = Array.from(namesByRow.keys());
+  const block = rowBlock_(sheet, col, rows);
+  let changed = false;
+  rows.forEach((r) => {
+    const i = r - block.first;
+    const merged = mergeExerciseEditTimes_(
+      parseExerciseEditTimes_(block.values[i][0]),
+      Array.from(namesByRow.get(r)),
+      nowIso,
+    );
+    const text = JSON.stringify(merged);
+    if (block.values[i][0] === text) {
+      return;
+    }
+    block.values[i][0] = text;
+    changed = true;
+  });
+  if (changed) {
+    block.range.setValues(block.values);
+  }
+}
+
 // Apply the dirty markers for one edit. `marks.exerciseRows` / `marks.weightRows`
 // are the row numbers that actually had content in the relevant columns, so each
 // phase touches only its own rows and only its own columns:
@@ -622,6 +740,17 @@ function writeEditMarkers_(sheet, marks) {
         sheet,
         marks.exercisesLastEditedAtCol,
         marks.exerciseRows,
+        nowIso,
+      );
+    }
+    // Per-exercise timestamps: the same instant, recorded against each column
+    // the edit actually touched. Nothing reads this yet; it is what a later
+    // pass uses to attribute each exercise to the app session it was logged in.
+    if (marks.exerciseEditTimesCol) {
+      mergeEditTimesRows_(
+        sheet,
+        marks.exerciseEditTimesCol,
+        marks.exerciseNamesByRow,
         nowIso,
       );
     }
