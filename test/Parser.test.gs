@@ -148,6 +148,15 @@ function runParserTestsBody_() {
       { assisted: false, reps: 5, sets: 3, weight: 135 },
     ]),
   );
+  // An empty x-segment is a typo, not grammar: Number("") is 0, which would
+  // silently turn "135x" into the explicit not-performed form ("135x0") and
+  // "135x5x" into the zero-set start marker ("135x5x0"). Both must be rejected
+  // as unparseable instead of reinterpreted.
+  t('empty x-segments rejected: "135x", "x5", "135x5x"', () => {
+    eq(parseExerciseCell("135x"), []);
+    eq(parseExerciseCell("x5"), []);
+    eq(parseExerciseCell("135x5x"), []);
+  });
   t('semicolon-separated cell "95x5x2;85x5x5"', () =>
     eq(parseExerciseCell("95x5x2;85x5x5"), [
       { assisted: false, reps: 5, sets: 2, weight: 95 },
