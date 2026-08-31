@@ -1,0 +1,279 @@
+// Read-only probes for the "two workouts on one day" investigation.
+// Run `probeRunAllDiagnostics` from the Apps Script editor and copy the whole
+// Executions log. Delete this file (and `npm run deploy`) when done.
+//
+// Every line is redacted on the way out (probeRedact_): the log is written to
+// leave this spreadsheet, so numeric user ids and OAuth client ids are
+// stripped and datapoint ids keep only their last four digits, enough to
+// cross-reference sessions within one log without identifying the account.
+
+// Strip identifiers but keep datapoints distinguishable: two ids are
+// vanishingly unlikely to share their last four digits within one day's log.
+function probeRedact_(text) {
+  return String(text)
+    .replace(/users\/[^/\s"]+\//g, "users/USER/")
+    .replace(/dataPoints\/[^\s",\]}]*([^\s",\]}]{4})/g, "dataPoints/…$1")
+    .replace(/[a-z0-9-]+\.apps\.googleusercontent\.com/g, "CLIENT");
+}
+
+function probeLog_(text) {
+  console.log(probeRedact_(text));
+}
+
+// NaN/blank-safe timestamp formatter shared by every probe, so a datapoint
+// with a missing interval prints "(none)" instead of throwing out of the
+// forEach and losing the rest of the report.
+function probeFmt_(tz, value) {
+  const ms = value instanceof Date ? value.getTime() : value;
+  if (ms === null || ms === undefined || isNaN(ms)) {
+    return "(none)";
+  }
+  return Utilities.formatDate(new Date(ms), tz, "yyyy-MM-dd HH:mm:ss z");
+}
+
+// One sheet read per execution: module-level bindings reset per invocation, so
+// an aggregator run reads the sheet once and every probe reports on the same
+// snapshot rather than each taking its own.
+let probeReadRowsCache_ = null;
+function probeReadRows_() {
+  if (!probeReadRowsCache_) {
+    probeReadRowsCache_ = readRows();
+  }
+  return probeReadRowsCache_;
+}
+
+// The last two rows with exercise text, in sheet (ascending date) order, so a
+// bodyweight-only row logged mid-investigation does not shift the probes off
+// the days under study. No-arg discovery per the editor-runnable convention.
+function probeTargetRows_() {
+  return probeReadRows_()
+    .rows.filter((r) => r.hasExerciseText)
+    .slice(-2);
+}
+
+function probeSheetRows() {
+  const tz = getTz_();
+  probeTargetRows_().forEach((r) => {
+    try {
+      probeLog_(`--- row ${r.rowNum} date=${ymd(r.date)} ---`);
+      probeLog_(`  exerciseSyncedAt: ${r.exerciseSyncedAt || "(blank)"}`);
+      probeLog_(`  weightSyncedAt:   ${r.weightSyncedAt || "(blank)"}`);
+      probeLog_(
+        `  exerciseFirstEditedAt: ${probeFmt_(tz, r.exerciseFirstEditedAt)}`,
+      );
+      probeLog_(
+        `  exercisesLastEditedAt: ${probeFmt_(tz, r.exercisesLastEditedAt)}`,
+      );
+      probeLog_(`  weightEditedAt:        ${probeFmt_(tz, r.weightEditedAt)}`);
+      if (r.exerciseFirstEditedAt && r.exercisesLastEditedAt) {
+        const span =
+          r.exercisesLastEditedAt.getTime() - r.exerciseFirstEditedAt.getTime();
+        probeLog_(
+          `  edit span: ${humanizeMs_(span)} (MAX=${humanizeMs_(
+            MAX_EXERCISE_DURATION_MS,
+          )}, spansWorkout=${exerciseEditSpansWorkout_(r)})`,
+        );
+      }
+      probeLog_(
+        `  matchedHealthSessions: ${JSON.stringify(r.matchedHealthSessions)}`,
+      );
+      probeLog_(`  exerciseEditTimes: ${JSON.stringify(r.exerciseEditTimes)}`);
+      probeLog_(`  healthIds: ${JSON.stringify(r.healthIds)}`);
+      probeLog_(`  bodyweight: ${r.bodyweight}`);
+      probeLog_(`  exercises (parsed): ${JSON.stringify(r.exercises)}`);
+    } catch (err) {
+      probeLog_(`  row ${r.rowNum} FAILED: ${err}`);
+    }
+  });
+}
+
+function probeExercisesOnTargetDates() {
+  const tz = getTz_();
+  const ours = {};
+  probeReadRows_().allHealthIds.forEach((n) => {
+    ours[toMeName_(n)] = true;
+  });
+  probeTargetRows_().forEach((r) => {
+    probeLog_(`=== exercise dataPoints on ${ymd(r.date)} ===`);
+    // Per-date, so a transient listing failure on one day still reports the
+    // other; the sync's own foreign-match listing degrades the same way.
+    let points;
+    try {
+      points = listExercisesOnDate(r.date);
+    } catch (err) {
+      probeLog_(`  list FAILED: ${err}`);
+      return;
+    }
+    probeLog_(`  count: ${points.length}`);
+    points.forEach((p) => {
+      const ex = p.exercise || {};
+      const i = ex.interval || {};
+      const app = (p.dataSource && p.dataSource.application) || null;
+      const startMs = i.startTime ? new Date(i.startTime).getTime() : NaN;
+      const endMs = i.endTime ? new Date(i.endTime).getTime() : NaN;
+      probeLog_(`  - name: ${p.name}`);
+      probeLog_(`    tracked by sheet: ${Boolean(ours[toMeName_(p.name)])}`);
+      probeLog_(`    exerciseType: ${ex.exerciseType}`);
+      probeLog_(
+        `    recordingMethod: ${p.dataSource && p.dataSource.recordingMethod}`,
+      );
+      probeLog_(
+        `    googleWebClientId: ${(app && app.googleWebClientId) || "(null: foreign)"}`,
+      );
+      probeLog_(
+        `    interval: ${probeFmt_(tz, startMs)} .. ${probeFmt_(tz, endMs)}` +
+          `${isNaN(endMs - startMs) ? "" : ` (${humanizeMs_(endMs - startMs)})`}`,
+      );
+      probeLog_(`    activeDuration: ${ex.activeDuration}`);
+      probeLog_(`    metricsSummary: ${JSON.stringify(ex.metricsSummary)}`);
+      probeLog_(`    notes: ${JSON.stringify(ex.notes || null)}`);
+    });
+  });
+}
+
+function probeWeightOnTargetDates() {
+  probeTargetRows_().forEach((r) => {
+    probeLog_(`=== weight dataPoints on ${ymd(r.date)} ===`);
+    let points;
+    try {
+      points = listDataPointsByCivilDate_(
+        "weight",
+        "weight.sample_time.civil_time",
+        r.date,
+      );
+    } catch (err) {
+      probeLog_(`  list FAILED: ${err}`);
+      return;
+    }
+    points.forEach((p) => {
+      const app = (p.dataSource && p.dataSource.application) || null;
+      probeLog_(
+        `  - ${p.name} sampleTime=${JSON.stringify(
+          p.weight && p.weight.sampleTime,
+        )} grams=${p.weight && p.weight.weightGrams} client=${
+          (app && app.googleWebClientId) || "(null: foreign)"
+        }`,
+      );
+    });
+  });
+}
+
+// What an exercise re-sync of the target rows would do right now, without
+// writing: claimed sessions, the per-session split, each group's resolved
+// interval and notes, and the keep / create / delete plan against the row's
+// existing datapoints. Mirrors syncOneRow_'s exercise phase step for step
+// (prior GETs included, so 'prior' timing and the idempotency skip show up as
+// they would in a real pass); the ready set is the currently exercise-dirty
+// rows plus the targets, matching a "Resync selected rows" over the targets.
+function probeForeignMatchPlan() {
+  const { allHealthIds, allMatchedSessions, rows } = probeReadRows_();
+  const targets = probeTargetRows_();
+  const ready = {};
+  const readyRows = [];
+  rows.forEach((r) => {
+    if (!r.exerciseSyncedAt) {
+      ready[r.rowNum] = true;
+      readyRows.push(r);
+    }
+  });
+  targets.forEach((r) => {
+    if (!ready[r.rowNum]) {
+      ready[r.rowNum] = true;
+      readyRows.push(r);
+    }
+  });
+  const plan = resolveForeignMatches_(
+    allHealthIds,
+    allMatchedSessions,
+    readyRows,
+  );
+  const tz = getTz_();
+  const ordinals = buildOrdinalMap_(rows);
+  targets.forEach((r) => {
+    const matches = plan[r.rowNum] || [];
+    probeLog_(`--- row ${r.rowNum} (${ymd(r.date)}) ---`);
+    probeLog_(`  claimed sessions: ${matches.length}`);
+    matches.forEach((m) => {
+      probeLog_(
+        `    ${m.name} ${probeFmt_(tz, m.startUtcMs)} .. ${probeFmt_(tz, m.endUtcMs)}`,
+      );
+    });
+
+    const priorIds = splitHealthIdsByType_(r.healthIds).exercise;
+    const priors = [];
+    priorIds.forEach((name) => {
+      try {
+        priors.push({ dp: getDataPoint(name), name });
+      } catch (err) {
+        probeLog_(`  GET prior ${name} FAILED (sync would recreate): ${err}`);
+      }
+    });
+    const priorExercise = priors.length > 0 ? priors[0].dp : null;
+
+    const groups = partitionExercisesBySession_(
+      matches,
+      r.exerciseEditTimes,
+      r.exerciseFirstEditedAt,
+      r.exercises,
+    );
+    const seenIntervals = {};
+    const claimed = {};
+    probeLog_(`  plan (${groups.length} group(s)):`);
+    groups.forEach((g) => {
+      const timing = resolveRowTiming_(
+        r,
+        ordinals[r.rowNum] || 0,
+        priorExercise,
+        g.session,
+      );
+      const ex = timing.exercise;
+      const key = `${ex.startUtcMs}-${ex.endUtcMs}`;
+      if (seenIntervals[key]) {
+        probeLog_(
+          `    DROPPED (interval already taken; a same-key POST would be ` +
+            `silently discarded): session=${g.session ? g.session.name : "(none)"}`,
+        );
+        return;
+      }
+      seenIntervals[key] = true;
+      const notes = buildNotes(ex.endUtcMs - ex.startUtcMs, g.exercises);
+      const match = priors.filter(
+        (p) =>
+          !claimed[p.name] &&
+          exerciseUnchanged_(p.dp, ex.startUtcMs, ex.endUtcMs, notes),
+      )[0];
+      if (match) {
+        claimed[match.name] = true;
+      }
+      probeLog_(
+        `    [${timing.exerciseSource}] ${probeFmt_(tz, ex.startUtcMs)} .. ` +
+          `${probeFmt_(tz, ex.endUtcMs)} session=${
+            g.session ? g.session.name : "(none)"
+          } -> ${match ? `KEEP ${match.name}` : "CREATE"}`,
+      );
+      probeLog_(`      notes: ${JSON.stringify(notes)}`);
+    });
+    const stale = priorIds.filter((n) => !claimed[n]);
+    if (stale.length > 0) {
+      probeLog_(`  would DELETE: ${JSON.stringify(stale)}`);
+    }
+  });
+}
+
+function probeRunAllDiagnostics() {
+  const probes = [
+    ["probeSheetRows", probeSheetRows],
+    ["probeExercisesOnTargetDates", probeExercisesOnTargetDates],
+    ["probeWeightOnTargetDates", probeWeightOnTargetDates],
+    ["probeForeignMatchPlan", probeForeignMatchPlan],
+  ];
+  probeLog_(`timezone: ${getTz_()}   now: ${new Date().toISOString()}`);
+  probes.forEach(([label, fn]) => {
+    probeLog_(`\n################ ${label} ################`);
+    try {
+      fn();
+    } catch (err) {
+      probeLog_(`  FAILED: ${err && err.stack ? err.stack : err}`);
+    }
+  });
+}
