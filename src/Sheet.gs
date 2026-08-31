@@ -110,33 +110,39 @@ function readRows() {
   const dateCol = map[DATE_COLUMN_HEADER];
   const weightCol = map[WEIGHT_COLUMN_HEADER];
 
+  // Every non-blank header must be unique, not just exercise headers: two
+  // exercise columns sharing a name would silently merge two exercises into
+  // one, and a duplicated Date/Weight/managed header would make getHeaderMap_
+  // resolve to the LAST occurrence, so edits to the first column would be
+  // misclassified (a stray second "Weight" column turns the real one into an
+  // exercise column). Both are sheet misconfigurations to refuse loudly.
   const exerciseCols = [];
-  const seenExerciseNames = {};
-  const duplicateExerciseNames = {};
+  const seenNames = {};
+  const duplicateNames = {};
   headers.forEach((h, i) => {
     const name = String(h).trim();
     if (!name) {
       return;
     }
+    if (seenNames[name]) {
+      duplicateNames[name] = true;
+      return;
+    }
+    seenNames[name] = true;
     if (name === DATE_COLUMN_HEADER || name === WEIGHT_COLUMN_HEADER) {
       return;
     }
     if (MANAGED_COLUMN_HEADERS.indexOf(name) !== -1) {
       return;
     }
-    if (seenExerciseNames[name]) {
-      duplicateExerciseNames[name] = true;
-      return;
-    }
-    seenExerciseNames[name] = true;
     exerciseCols.push({ col: i + 1, name });
   });
-  const duplicates = Object.keys(duplicateExerciseNames);
+  const duplicates = Object.keys(duplicateNames);
   if (duplicates.length > 0) {
     throw new Error(
-      `Duplicate exercise column header(s): ${duplicates
+      `Duplicate column header(s): ${duplicates
         .sort()
-        .join(", ")}. Each exercise column header must be unique.`,
+        .join(", ")}. Each column header must be unique.`,
     );
   }
 
