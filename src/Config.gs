@@ -78,10 +78,8 @@ const PENDING_DIRTY_KEY = "pendingDirty";
 
 // Synthetic timing is the fallback when a row has no Exercise First Edited
 // At / Exercises Last Edited At / Weight Edited At timestamps (e.g. rows
-// imported in bulk). Each row on a given date gets
-// startHour = SYNTHETIC_START_HOUR + ordinal, endHour = startHour +
-// SYNTHETIC_DURATION_HOURS, so the second strength row on the same date
-// starts an hour after the first, and so on.
+// imported in bulk): startHour = SYNTHETIC_START_HOUR, endHour = startHour +
+// SYNTHETIC_DURATION_HOURS, on the row's own date.
 const SYNTHETIC_START_HOUR = 12;
 const SYNTHETIC_DURATION_HOURS = 1;
 

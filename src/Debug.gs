@@ -188,7 +188,6 @@ function probeForeignMatchPlan() {
     readyRows,
   );
   const tz = getTz_();
-  const ordinals = buildOrdinalMap_(rows);
   targets.forEach((r) => {
     const matches = plan[r.rowNum] || [];
     probeLog_(`--- row ${r.rowNum} (${ymd(r.date)}) ---`);
@@ -220,12 +219,7 @@ function probeForeignMatchPlan() {
     const claimed = {};
     probeLog_(`  plan (${groups.length} group(s)):`);
     groups.forEach((g) => {
-      const timing = resolveRowTiming_(
-        r,
-        ordinals[r.rowNum] || 0,
-        priorExercise,
-        g.session,
-      );
+      const timing = resolveRowTiming_(r, priorExercise, g.session);
       const ex = timing.exercise;
       const key = `${ex.startUtcMs}-${ex.endUtcMs}`;
       if (seenIntervals[key]) {
