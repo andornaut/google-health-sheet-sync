@@ -149,6 +149,79 @@ function runSyncTestsBody_(H) {
     },
   );
 
+  // A row inserted or deleted above a not-yet-processed row shifts it to a
+  // different rowNum after the pass's snapshot; structural changes fire
+  // onChange, not onEdit, so no marker or generation sees them. The Date
+  // re-check at each row's turn is what keeps the pass from writing one row's
+  // ids and stamps onto its neighbor. Simulated by having the first
+  // (newest-first) row's create rewrite the second row's Date cell mid-pass.
+  t(
+    "syncDirtyRows defers a row whose Date cell moved since the snapshot",
+    () => {
+      reset([
+        ["", "", "", "", "", "", "", "", "", "", ""],
+        ["", "", "", "", "", "", "", "", "", "", ""],
+      ]);
+      SHEET._setGrid([
+        HEADERS.slice(),
+        [
+          new Date(2026, 0, 14),
+          "",
+          "135x5",
+          "",
+          "SYNC",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+        ],
+        [
+          new Date(2026, 0, 15),
+          "",
+          "145x5",
+          "",
+          "SYNC",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+        ],
+      ]);
+      const created = [];
+      const r = withStubs(
+        Object.assign({}, NO_FOREIGN, {
+          createExerciseAt: () => {
+            created.push(1);
+            if (created.length === 1) {
+              // The shift: while the newer row (3) is being processed, row 2 now
+              // shows a different date than the snapshot captured.
+              SHEET.getRange(3, COL.Date).setValue(new Date(2026, 0, 16));
+              SHEET.getRange(2, COL.Date).setValue(new Date(2026, 0, 13));
+            }
+            return `users/me/dataTypes/exercise/dataPoints/E${created.length}`;
+          },
+        }),
+        () => syncDirtyRows(0),
+      );
+      eq(r.ok, 1, "the row processed before the shift synced");
+      eq(r.errors, 1, "the shifted row deferred as an error");
+      eq(created.length, 1, "no create issued for the shifted row");
+      eq(
+        SHEET.getRange(2, COL["Exercise Synced At"]).getValue(),
+        "",
+        "shifted row not stamped",
+      );
+      ok(
+        PROPS.getProperty("pendingDirty") !== null,
+        "flag kept so the next pass retries with fresh row numbers",
+      );
+    },
+  );
+
   // The generation must advance on BOTH sides of the marker writes: the
   // leading advance covers a throw mid-write (flag already set), the trailing
   // one covers a sync pass that read its start-of-pass generation before this
