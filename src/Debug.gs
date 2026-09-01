@@ -254,6 +254,109 @@ function probeForeignMatchPlan() {
   });
 }
 
+// One-shot repair for 2026-08-30 after a paste overwrote the row with date
+// values at 2026-08-31 23:41 EDT: the exercise and Weight cells, Exercise
+// First Edited At, Created Health IDs, and Matched Health Session were all
+// replaced, and the onEdit sync then stamped the emptied row, leaving the
+// row's two live datapoints (the combined exercise session and the weight
+// sample) untracked, where the next backstop would collect them as orphans.
+//
+// Restores the cell content and edit timestamps from the values recorded in
+// this investigation, re-tracks the datapoints by rediscovering their
+// resource names from the API (ours = non-null googleWebClientId on that
+// date; nothing identifying is hardcoded here), clears the pasted date
+// values from the other exercise columns, then hands off to
+// backfillTwoWorkoutSplit20260830 for the split, sync, and report. MUTATING;
+// safe to re-run.
+function restoreAndSplitRow20260830() {
+  const targetDateKey = "2026-08-30";
+  const violation = validateRowDates_();
+  if (violation) {
+    probeLog_(`ABORT: date validation failed: ${violation}`);
+    return;
+  }
+  const sheet = getSheet_();
+  const { headers, map } = getHeaderMap_(sheet);
+  const need = [
+    DATE_COLUMN_HEADER,
+    WEIGHT_COLUMN_HEADER,
+    "Bench press",
+    "Dumbbell shoulder press",
+    EXERCISE_FIRST_EDITED_AT_COLUMN_HEADER,
+    EXERCISES_LAST_EDITED_AT_COLUMN_HEADER,
+    WEIGHT_EDITED_AT_COLUMN_HEADER,
+    HEALTH_IDS_COLUMN_HEADER,
+    MATCHED_HEALTH_SESSION_COLUMN_HEADER,
+    EXERCISE_SYNCED_AT_COLUMN_HEADER,
+  ];
+  const missingCols = need.filter((h) => !map[h]);
+  if (missingCols.length > 0) {
+    probeLog_(`ABORT: missing column(s): ${missingCols.join(", ")}`);
+    return;
+  }
+  const { rows } = readRows();
+  const row = rows.filter((r) => ymd(r.date) === targetDateKey)[0];
+  if (!row) {
+    probeLog_(`ABORT: no row dated ${targetDateKey}.`);
+    return;
+  }
+
+  // Re-track the row's live datapoints: ours are the ones on that date whose
+  // dataSource carries a web client id (device/first-party sessions carry
+  // null). The exercise list is every strength session; the weight list is
+  // already projected to { name, googleWebClientId }.
+  const date = row.date;
+  const ourIds = [];
+  listWeightOnDate(date).forEach((c) => {
+    if (c.googleWebClientId) {
+      ourIds.push(c.name);
+    }
+  });
+  listStrengthOnDate(date).forEach((c) => {
+    if (c.googleWebClientId) {
+      ourIds.push(c.name);
+    }
+  });
+  if (ourIds.length === 0) {
+    probeLog_(
+      "ABORT: no sync-created datapoints found on the date; nothing to re-track.",
+    );
+    return;
+  }
+  probeLog_(`re-tracking ${ourIds.length} datapoint(s).`);
+
+  // Clear the pasted date values from every non-Date, non-managed column in
+  // the row: a real exercise or Weight cell never legitimately holds a Date.
+  const managedColNums = MANAGED_COLUMN_HEADERS.map((h) => map[h]).filter(
+    (c) => c,
+  );
+  for (let c = 1; c <= headers.length; c++) {
+    if (c === map[DATE_COLUMN_HEADER] || managedColNums.indexOf(c) !== -1) {
+      continue;
+    }
+    const cell = sheet.getRange(row.rowNum, c);
+    if (cell.getValue() instanceof Date) {
+      cell.setValue("");
+    }
+  }
+
+  // The row's content and timestamps as recorded before the paste.
+  const set = (header, value) =>
+    sheet.getRange(row.rowNum, map[header]).setValue(value);
+  set("Bench press", "175x6x6");
+  set("Dumbbell shoulder press", "35x6x5");
+  set(WEIGHT_COLUMN_HEADER, 256);
+  set(EXERCISE_FIRST_EDITED_AT_COLUMN_HEADER, "2026-08-30T17:09:18.000Z");
+  set(EXERCISES_LAST_EDITED_AT_COLUMN_HEADER, "2026-08-30T18:09:38.000Z");
+  set(WEIGHT_EDITED_AT_COLUMN_HEADER, "2026-08-30T17:04:43.000Z");
+  set(HEALTH_IDS_COLUMN_HEADER, JSON.stringify(ourIds));
+  set(MATCHED_HEALTH_SESSION_COLUMN_HEADER, "");
+  SpreadsheetApp.flush();
+  probeLog_(`row ${row.rowNum} restored.`);
+
+  backfillTwoWorkoutSplit20260830();
+}
+
 // One-shot backfill for 2026-08-30, the day two workouts were logged into one
 // row before Exercise Edit Times existed. Writes each exercise's first-edit
 // time (from the row's own recorded timestamps: 13:09:18 EDT falls inside
