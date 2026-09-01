@@ -200,6 +200,23 @@ function buildSyncTestHarness_() {
         getScriptProperties: () => scriptProps,
         getUserProperties: makeFakeStore_,
       },
+      // Not used by the orchestration suite either: no test runs setup() or
+      // installTriggers(). Faked for the same reason as UrlFetchApp below: in
+      // Apps Script the real service is in scope, and a future test reaching
+      // it would delete and recreate the project's real triggers mid-run.
+      ScriptApp: {
+        _syncTestFake: true,
+        getProjectTriggers: () => {
+          throw new Error(
+            "ScriptApp: the orchestration suite must not touch real triggers.",
+          );
+        },
+        newTrigger: () => {
+          throw new Error(
+            "ScriptApp: the orchestration suite must not touch real triggers.",
+          );
+        },
+      },
       SpreadsheetApp: {
         _syncTestFake: true,
         flush: () => {},
@@ -250,7 +267,8 @@ function withSyncTestHarness_(fn) {
       SpreadsheetApp._syncTestFake !== true ||
       PropertiesService._syncTestFake !== true ||
       LockService._syncTestFake !== true ||
-      UrlFetchApp._syncTestFake !== true
+      UrlFetchApp._syncTestFake !== true ||
+      ScriptApp._syncTestFake !== true
     ) {
       throw new Error(
         "withSyncTestHarness_: the Apps Script services did not shadow; " +
