@@ -254,6 +254,77 @@ function probeForeignMatchPlan() {
   });
 }
 
+// One-shot backfill for 2026-08-30, the day two workouts were logged into one
+// row before Exercise Edit Times existed. Writes each exercise's first-edit
+// time (from the row's own recorded timestamps: 13:09:18 EDT falls inside
+// workout 1, 14:09:38 EDT inside workout 2), re-dirties the exercise phase,
+// syncs, then runs the read-only diagnostics. MUTATING, so deliberately not
+// part of probeRunAllDiagnostics; safe to re-run (existing edit-time entries
+// are kept, and an unchanged row re-syncs to a no-op). The sync's own log
+// lines are unredacted; paste from the REDACTED REPORT banner down.
+function backfillTwoWorkoutSplit20260830() {
+  const targetDateKey = "2026-08-30";
+  const backfill = {
+    "Bench press": { first: "2026-08-30T17:09:18.000Z" },
+    "Dumbbell shoulder press": { first: "2026-08-30T18:09:38.000Z" },
+  };
+
+  const violation = validateRowDates_();
+  if (violation) {
+    probeLog_(`ABORT: date validation failed: ${violation}`);
+    return;
+  }
+  const { exerciseEditTimesCol, exerciseSyncedAtCol, rows } = readRows();
+  if (!exerciseEditTimesCol) {
+    probeLog_('ABORT: Exercise Edit Times column missing; run "Run setup".');
+    return;
+  }
+  const row = rows.filter((r) => ymd(r.date) === targetDateKey)[0];
+  if (!row) {
+    probeLog_(`ABORT: no row dated ${targetDateKey}.`);
+    return;
+  }
+  const names = row.exercises.map((e) => e.name);
+  const missing = Object.keys(backfill).filter((n) => names.indexOf(n) === -1);
+  if (missing.length > 0) {
+    probeLog_(
+      `ABORT: row ${row.rowNum} lacks expected exercise(s): ${missing.join(
+        ", ",
+      )} (has: ${names.join(", ")}).`,
+    );
+    return;
+  }
+
+  const sheet = getSheet_();
+  const cell = sheet.getRange(row.rowNum, exerciseEditTimesCol);
+  const current = parseExerciseEditTimes_(cell.getValue());
+  let added = 0;
+  Object.keys(backfill).forEach((name) => {
+    if (!current[name]) {
+      current[name] = backfill[name];
+      added++;
+    }
+  });
+  if (added > 0) {
+    cell.setValue(JSON.stringify(current));
+    probeLog_(`row ${row.rowNum}: wrote ${added} edit-time entr(y/ies).`);
+  } else {
+    probeLog_(`row ${row.rowNum}: edit times already present; not rewritten.`);
+  }
+
+  reDirtyRows_([row.rowNum], { exerciseCol: exerciseSyncedAtCol });
+  const result = syncDirtyRows(LOCK_WAIT_MS);
+  probeLog_(
+    result
+      ? `sync: ok=${result.ok} errors=${result.errors} deferred=${result.deferred}`
+      : "sync: skipped (lock held); run Sync > Run now shortly.",
+  );
+
+  probeReadRowsCache_ = null;
+  probeLog_("\n======== REDACTED REPORT BELOW: paste from here ========");
+  probeRunAllDiagnostics();
+}
+
 function probeRunAllDiagnostics() {
   const probes = [
     ["probeSheetRows", probeSheetRows],
