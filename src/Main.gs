@@ -1260,6 +1260,38 @@ function partitionExercisesBySession_(
   return groups.filter((g) => hasSendableExercises_(g.exercises));
 }
 
+// The edit window that describes ONE group of exercises rather than the whole
+// row: the min first-edit / max last-edit of the group's own entries in
+// Exercise Edit Times, with the row-level timestamps as the fallback for any
+// exercise that has no entry (rows written before the column existed). Because
+// the row-level first edit is never later than any per-exercise first (it was
+// seeded by the earliest exercise edit), a group containing one legacy
+// exercise degrades to the row-level window rather than inventing a narrower
+// one. Used to time the null-session group after the attributed exercises are
+// split away, so an exercise typed between two workouts is recorded at the
+// time it was typed, not across both. Pure.
+function groupEditWindow_(row, exerciseEditTimes, exercises) {
+  let first = null;
+  let last = null;
+  const consider = (candidate, current, pick) => {
+    if (!candidate) {
+      return current;
+    }
+    if (!current) {
+      return candidate;
+    }
+    return pick(candidate.getTime(), current.getTime()) ? candidate : current;
+  };
+  exercises.forEach((ex) => {
+    const times = exerciseEditTimes && exerciseEditTimes[ex.name];
+    const exFirst = (times && times.first) || row.exerciseFirstEditedAt;
+    const exLast = (times && times.last) || row.exercisesLastEditedAt;
+    first = consider(exFirst, first, (a, b) => a < b);
+    last = consider(exLast, last, (a, b) => a > b);
+  });
+  return { first, last };
+}
+
 // Cap an edit-derived exercise duration at MAX_EXERCISE_DURATION_MS (MAX only,
 // no MIN floor). Used by the foreign-match window in resolveForeignMatches_ to
 // keep its upper bound consistent with editDerivedDurationMs_, which the
@@ -1720,9 +1752,26 @@ function syncOneRow_(
     const targets = [];
     const seenIntervals = {};
     groups.forEach((g) => {
-      const groupTiming = g.session
-        ? resolveRowTiming_(row, priorExercise, g.session)
-        : timing;
+      // A session group borrows its session's interval. The null-session group
+      // is timed from ITS OWN exercises' edit window (groupEditWindow_): after
+      // the attributed exercises are split away, the row-level first..last span
+      // covers the app workouts too, and would stretch this group's datapoint
+      // across them. The same resolver rules (on-date gate, span-vs-MAX,
+      // prior fallback, clamps) apply to the narrowed window.
+      let groupTiming;
+      if (g.session) {
+        groupTiming = resolveRowTiming_(row, priorExercise, g.session);
+      } else {
+        const w = groupEditWindow_(row, row.exerciseEditTimes, g.exercises);
+        groupTiming = resolveRowTiming_(
+          Object.assign({}, row, {
+            exerciseFirstEditedAt: w.first,
+            exercisesLastEditedAt: w.last,
+          }),
+          priorExercise,
+          null,
+        );
+      }
       const gex = groupTiming.exercise;
       const key = `${gex.startUtcMs}-${gex.endUtcMs}`;
       if (seenIntervals[key]) {

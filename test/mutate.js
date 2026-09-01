@@ -1061,6 +1061,21 @@ const MUTATIONS = [
       "  );",
     replace: "  const candidates = Object.values(byName);",
   },
+  {
+    file: "Main.gs",
+    name: "the null-session group is timed from the row-level window instead of its own",
+    find:
+      "        const w = groupEditWindow_(row, row.exerciseEditTimes, g.exercises);\n" +
+      "        groupTiming = resolveRowTiming_(\n" +
+      "          Object.assign({}, row, {\n" +
+      "            exerciseFirstEditedAt: w.first,\n" +
+      "            exercisesLastEditedAt: w.last,\n" +
+      "          }),\n" +
+      "          priorExercise,\n" +
+      "          null,\n" +
+      "        );",
+    replace: "        groupTiming = timing;",
+  },
   // ---- Splitting a row across the day's app workouts ----------------------
   {
     file: "Main.gs",
