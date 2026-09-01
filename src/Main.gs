@@ -245,9 +245,9 @@ function flushPending() {
 // keys via ymd, which honors the script time zone).
 function selectBackstopRows_(rows, nowMs, lookbackDays, wantMatched) {
   const recentKeys = new Set();
-  for (let i = 0; i < lookbackDays; i++) {
-    recentKeys.add(ymd(new Date(nowMs - i * 24 * 60 * 60 * 1000)));
-  }
+  recentCivilDates_(nowMs, lookbackDays).forEach((d) => {
+    recentKeys.add(ymd(d));
+  });
   // Order by cost: the free matched-state test, then the ymd date-key lookup
   // (a timezone op), then the nested-loop hasSendableExercises_ last so it runs
   // only on rows that already qualify.
@@ -515,14 +515,13 @@ function reconcileDataPointOrphans_(
   });
 
   const candidates = [];
-  for (let i = 0; i < lookbackDays; i++) {
-    const date = new Date(nowMs - i * 24 * 60 * 60 * 1000);
+  recentCivilDates_(nowMs, lookbackDays).forEach((date) => {
     try {
       listOnDate(date).forEach((c) => candidates.push(c));
     } catch (err) {
       console.warn(`${tag}: list failed for ${ymd(date)}: ${err}`);
     }
-  }
+  });
 
   const orphans = selectOrphanDataPointNames_(candidates, known);
   if (orphans.length === 0) {

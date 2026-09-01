@@ -1041,6 +1041,12 @@ const MUTATIONS = [
       "  });\n" +
       "  return true;",
   },
+  {
+    file: "HealthApi.gs",
+    name: "lookback dates step raw 24h intervals instead of noon-anchored days",
+    find: "  const noonMs = localCivilToUtcMs_(tz, p.year, p.month, p.day, 12, 0).utcMs;",
+    replace: "  const noonMs = nowMs;",
+  },
   // ---- Per-exercise edit times --------------------------------------------
   {
     file: "Sheet.gs",
