@@ -117,7 +117,7 @@ function findRowDateViolation_(datedRows) {
 // other work; only the one column is read, so the per-trigger cost is a
 // single range read and no Health API calls. Deliberately does NOT route
 // through readRows: its structural throws (missing Weight column, duplicate
-// exercise headers) belong to syncDirtyRows' unrecoverable handling, and a
+// column headers) belong to syncDirtyRows' unrecoverable handling, and a
 // missing Date column is likewise left for that path rather than reported as
 // a validation failure here.
 function validateRowDates_() {
@@ -975,7 +975,7 @@ function syncDirtyRows(lockWaitMs) {
     }
   } catch (err) {
     // Unrecoverable: a throw out of the sync body (missing required columns,
-    // duplicate exercise headers, etc.), or the summary throw for rows whose
+    // duplicate column headers, etc.), or the summary throw for rows whose
     // sheet I/O failed unexpectedly. Per-row API failures never reach here,
     // since syncOneRow_ catches them and they retry. Re-throw so the failure
     // propagates uncaught: Apps Script then emails the script owner about the
@@ -1213,10 +1213,11 @@ function resolveForeignMatches_(allHealthIds, allMatchedSessions, readyRows) {
 // row-level timestamp can support.
 //
 // Exercises outside every session's slack, with no fallback either, go into one
-// trailing group with a null session, which the caller times from the row's own
-// edit timestamps exactly as it times a whole row today. Groups with nothing
-// sendable are dropped: an app session that overlapped the window but caught no
-// exercises produces no datapoint.
+// trailing group with a null session, which the caller times from that group's
+// own edit window (groupEditWindow_: min first-edit / max last-edit of its
+// members, row-level fallback) through the usual resolver rules. Groups with
+// nothing sendable are dropped: an app session that overlapped the window but
+// caught no exercises produces no datapoint.
 //
 // With no sessions, or with one that catches everything, the result is a single
 // group and the behavior is identical to the pre-split sync. Pure.
