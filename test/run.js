@@ -130,17 +130,38 @@ quietConsole.log = (...args) => {
   // type error (TS2556) even though the call is valid at runtime.
   origLog.apply(quietConsole, args);
 };
+// A suite that runs ZERO tests must fail the run: exiting green on "0 passed,
+// 0 failed" is how a renamed entry point or a lost results list turns the
+// whole suite off while CI stays green. Counted per suite, so one suite going
+// empty is caught even while the other still passes.
+const countResults = () => {
+  const output = logs.join("\n");
+  return {
+    failed: (output.match(/^FAIL /gm) || []).length,
+    passed: (output.match(/^PASS /gm) || []).length,
+  };
+};
+const suites = [
+  ["runParserTests", "runParserTests();"],
+  ["runSyncTests", "runSyncTests();"],
+];
+let emptySuite = false;
 try {
-  vm.runInContext("runParserTests();", sandbox);
-  vm.runInContext("runSyncTests();", sandbox);
+  for (const [name, call] of suites) {
+    const before = countResults();
+    vm.runInContext(call, sandbox);
+    const after = countResults();
+    if (after.passed + after.failed === before.passed + before.failed) {
+      console.error(`${name} ran no tests`);
+      emptySuite = true;
+    }
+  }
 } finally {
   quietConsole.log = origLog;
 }
 
-const output = logs.join("\n");
-const passed = (output.match(/^PASS /gm) || []).length;
-const failed = (output.match(/^FAIL /gm) || []).length;
+const { failed, passed } = countResults();
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed`);
-if (failed > 0) {
+if (failed > 0 || emptySuite) {
   process.exit(1);
 }
