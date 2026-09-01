@@ -158,11 +158,9 @@ function runSyncTestsBody_(H) {
   t(
     "syncDirtyRows defers a row whose Date cell moved since the snapshot",
     () => {
-      reset([
-        ["", "", "", "", "", "", "", "", "", "", ""],
-        ["", "", "", "", "", "", "", "", "", "", ""],
-      ]);
-      SHEET._setGrid([
+      // resetGrid, not reset: the fixture needs Date objects, and reset's
+      // blank-row detour would be a second grid write for nothing.
+      resetGrid([
         HEADERS.slice(),
         [
           new Date(2026, 0, 14),
