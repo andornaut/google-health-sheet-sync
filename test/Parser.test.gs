@@ -683,6 +683,25 @@ function runParserTestsBody_() {
   // the intended calendar day in EST (UTC-5).
   const JAN_15_NOON_UTC = new Date(Date.UTC(2026, 0, 15, 12, 0, 0));
 
+  // DST fall-back gives Toronto a 25-hour day (2026-11-01): stepping raw 24h
+  // intervals back from that evening lands two steps on the same civil date
+  // and silently drops the oldest day from a lookback. Noon-anchoring is what
+  // keeps the sequence one-per-day.
+  t("recentCivilDates_ spans a DST fall-back without repeating a day", () => {
+    // 2026-11-01 23:30 EST (the fall-back day itself, after the transition).
+    const nowMs = Date.UTC(2026, 10, 2, 4, 30, 0);
+    eq(
+      recentCivilDates_(nowMs, 2).map((d) => ymd(d)),
+      ["2026-11-01", "2026-10-31"],
+    );
+  });
+  t("recentCivilDates_ ordinary days, newest first", () =>
+    eq(
+      recentCivilDates_(Date.UTC(2026, 0, 15, 17, 0, 0), 3).map((d) => ymd(d)),
+      ["2026-01-15", "2026-01-14", "2026-01-13"],
+    ),
+  );
+
   t("syntheticExerciseInterval_ -> noon-1pm EST", () => {
     const r = syntheticExerciseInterval_(JAN_15_NOON_UTC);
     eq(r.startUtcMs, Date.UTC(2026, 0, 15, 17, 0, 0));

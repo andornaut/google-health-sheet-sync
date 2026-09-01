@@ -312,6 +312,23 @@ function syntheticExerciseInterval_(date) {
   };
 }
 
+// The last `days` civil dates in the script time zone, newest first, each as
+// a Date anchored at civil noon. Stepping raw 24h intervals from `now`
+// undercounts across a DST fall-back: the 25-hour day makes two steps land on
+// the same civil date, silently shrinking a lookback by one day. Anchoring at
+// noon first keeps every 24h step inside its intended day (transitions sit
+// around 2am, and no zone shifts noon across midnight).
+function recentCivilDates_(nowMs, days) {
+  const tz = getTz_();
+  const p = civilDateParts_(tz, new Date(nowMs));
+  const noonMs = localCivilToUtcMs_(tz, p.year, p.month, p.day, 12, 0).utcMs;
+  const out = [];
+  for (let i = 0; i < days; i++) {
+    out.push(new Date(noonMs - i * 24 * 60 * 60 * 1000));
+  }
+  return out;
+}
+
 function syntheticWeightSample_(date) {
   const tz = getTz_();
   const p = civilDateParts_(tz, date);
