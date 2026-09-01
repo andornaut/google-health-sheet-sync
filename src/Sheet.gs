@@ -151,6 +151,7 @@ function readRows() {
     return {
       allHealthIds: [],
       allMatchedSessions: [],
+      dateCol,
       exerciseEditTimesCol,
       exerciseFirstEditedAtCol,
       exerciseSyncedAtCol,
@@ -283,6 +284,7 @@ function readRows() {
   return {
     allHealthIds,
     allMatchedSessions,
+    dateCol,
     exerciseEditTimesCol,
     exerciseFirstEditedAtCol,
     exerciseSyncedAtCol,

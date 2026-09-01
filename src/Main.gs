@@ -808,6 +808,7 @@ function syncDirtyRows(lockWaitMs) {
     const {
       allHealthIds,
       allMatchedSessions,
+      dateCol,
       exerciseSyncedAtCol,
       exercisesLastEditedAtCol,
       healthIdsCol,
@@ -876,6 +877,7 @@ function syncDirtyRows(lockWaitMs) {
       exerciseReadyRows,
     );
     const cols = {
+      dateCol,
       exerciseSyncedAtCol,
       exercisesLastEditedAtCol,
       healthIdsCol,
@@ -1574,6 +1576,30 @@ function syncOneRow_(
       foreignMatches.length > 0 ? `, align=${foreignMatches.length}` : ""
     })`,
   );
+
+  // Row numbers are positional: a row inserted or deleted above this one after
+  // the pass's snapshot shifts every row below it, and a write to the captured
+  // rowNum would land on a neighbor, recording this row's datapoint ids and
+  // stamps against another row's content. Structural changes fire onChange,
+  // not onEdit, so neither the generation marker nor the phase guards can see
+  // them; re-reading the Date cell at the row's turn catches the shift
+  // instead (dates are strictly increasing, so a shifted row never shows the
+  // snapshot's date). On a mismatch the row is skipped before any API call or
+  // write; it stays dirty and the next pass snapshots fresh row numbers. A
+  // shift landing within this one row's processing remains unguarded, the
+  // same best-effort window the stamp-time edit guards accept.
+  if (cols.dateCol) {
+    const liveDate = toDate_(
+      getSheet_().getRange(row.rowNum, cols.dateCol).getValue(),
+    );
+    if (!liveDate || liveDate.getTime() !== row.date.getTime()) {
+      console.warn(
+        `${tag}: Date cell changed since the snapshot (row inserted/deleted ` +
+          `above?); deferring this row to the next pass.`,
+      );
+      return false;
+    }
+  }
 
   const split = splitHealthIdsByType_(row.healthIds);
 

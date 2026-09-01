@@ -1034,6 +1034,12 @@ const MUTATIONS = [
     replace: "  lock.tryLock(LOCK_WAIT_MS);",
   },
   {
+    file: "Main.gs",
+    name: "a row whose Date cell moved since the snapshot is written anyway",
+    find: "    if (!liveDate || liveDate.getTime() !== row.date.getTime()) {",
+    replace: "    if (false) {",
+  },
+  {
     file: "Sheet.gs",
     name: "the trailing generation advance after the marker writes is dropped",
     find:
