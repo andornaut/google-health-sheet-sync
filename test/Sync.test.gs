@@ -1651,6 +1651,68 @@ function runSyncTestsBody_(H) {
     );
   });
 
+  // Edit timestamps carry milliseconds (toISOString), but createExerciseAt
+  // serializes whole seconds, so the GET-back of the previous pass's create
+  // can only match a freshly-computed 'edit' target if the resolver floors its
+  // output the same way. Without the floor this row recreates an identical
+  // datapoint on every backstop re-review.
+  t(
+    "syncDirtyRows re-sync is idempotent when edit timestamps carry milliseconds",
+    () => {
+      // 12:00:00.123 - 12:30:00.987 EST; the floored, second-precision
+      // interval is what the prior datapoint (created last pass) carries.
+      const firstEdit = new Date(Date.UTC(2026, 0, 15, 17, 0, 0, 123));
+      const lastEdit = new Date(Date.UTC(2026, 0, 15, 17, 30, 0, 987));
+      const flooredStart = Date.UTC(2026, 0, 15, 17, 0, 0);
+      const flooredEnd = Date.UTC(2026, 0, 15, 17, 30, 0);
+      const priorNotes = buildNotes(flooredEnd - flooredStart, [
+        {
+          entries: [{ assisted: false, reps: 5, sets: 3, weight: 135 }],
+          name: "Bench",
+        },
+      ]);
+      const priorName = "users/me/dataTypes/exercise/dataPoints/E1";
+      reset([
+        [
+          new Date(Date.UTC(2026, 0, 15, 17, 0, 0)),
+          "",
+          "135x5x3",
+          "",
+          "SYNC",
+          JSON.stringify([priorName]),
+          firstEdit,
+          lastEdit,
+          "",
+          "",
+        ],
+      ]);
+      const calls = [];
+      const r = withStubs(
+        Object.assign({}, NO_FOREIGN, {
+          createExerciseAt: () => {
+            calls.push(["create"]);
+            return "users/me/dataTypes/exercise/dataPoints/E2";
+          },
+          deleteDataPointsByName: (names) => {
+            calls.push(["delete", names]);
+          },
+          getDataPoint: () => ({
+            exercise: {
+              interval: {
+                endTime: new Date(flooredEnd).toISOString(),
+                startTime: new Date(flooredStart).toISOString(),
+              },
+              notes: priorNotes,
+            },
+          }),
+        }),
+        () => syncDirtyRows(0),
+      );
+      eq(r.ok, 1, "row counted ok");
+      eq(calls, [], "no churn: sub-second edit times still match the prior");
+    },
+  );
+
   t(
     "syncDirtyRows keeps one matching prior and deletes the redundant duplicate",
     () => {

@@ -1106,6 +1106,14 @@ const MUTATIONS = [
       "        );",
     replace: "        groupTiming = timing;",
   },
+  {
+    file: "Main.gs",
+    name: "resolver intervals keep milliseconds the create serialization drops (idempotency churn)",
+    find:
+      "  exercise.startUtcMs = Math.floor(exercise.startUtcMs / 1000) * 1000;\n" +
+      "  exercise.endUtcMs = Math.floor(exercise.endUtcMs / 1000) * 1000;",
+    replace: "",
+  },
   // ---- Splitting a row across the day's app workouts ----------------------
   {
     file: "Main.gs",

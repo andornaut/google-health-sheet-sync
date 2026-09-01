@@ -1453,6 +1453,15 @@ function resolveRowTiming_(row, priorExercise, foreignInterval) {
     exercise = syntheticExerciseInterval_(row.date);
     exerciseSource = "synthetic";
   }
+  // Whole seconds, matching what createExerciseAt serializes (its RFC3339
+  // format drops milliseconds). Edit timestamps carry milliseconds, and a
+  // foreign interval can, so without the floor a re-sync target never equals
+  // the GET-back of the datapoint the previous pass created from the same
+  // inputs, exerciseUnchanged_ never matches, and every backstop re-review
+  // delete+recreates an identical datapoint: resource-name churn, and the
+  // rapid same-interval recreate pattern the Health card layer punishes.
+  exercise.startUtcMs = Math.floor(exercise.startUtcMs / 1000) * 1000;
+  exercise.endUtcMs = Math.floor(exercise.endUtcMs / 1000) * 1000;
 
   let weight;
   let weightSource;
