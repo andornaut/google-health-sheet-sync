@@ -756,6 +756,13 @@ const MUTATIONS = [
     replace: "      void matchedHealthSessionCol;",
   },
   {
+    // The single-session format written before the cell became a JSON list.
+    file: "Sheet.gs",
+    name: "a legacy bare-name Matched Health Session cell no longer parses",
+    find: '  if (text.charAt(0) !== "[") {\n    return [text];\n  }',
+    replace: "",
+  },
+  {
     file: "Sheet.gs",
     name: "duplicate column headers are accepted silently",
     find: "  if (duplicates.length > 0) {",
