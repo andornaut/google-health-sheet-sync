@@ -2119,13 +2119,14 @@ function runSyncTestsBody_(H) {
   // exerciseType, interval) as one that exists returns the EXISTING datapoint
   // and silently discards the request body, so a second group resolving to an
   // interval already taken would lose its notes rather than write them. Drop it
-  // instead of issuing a POST that reads as success and changes nothing.
+  // instead of issuing a POST that reads as success and changes nothing. Since
+  // the null-session group is timed from its own exercises' window, the
+  // reachable collision is the 'prior' route: an off-date exercise falls back
+  // to the prior datapoint's interval, which the prior sync had aligned to the
+  // same session the session group is borrowing now.
   t(
     "syncDirtyRows drops a second exercise group that duplicates an interval",
     () => {
-      // Edit window 13:00-13:30 EST, and the app session covers exactly that, so
-      // the unattributed group's edit-derived interval collides with it. Press is
-      // first typed at 09:00 EST, well outside the session's slack.
       const dup = {
         endUtcMs: Date.UTC(2026, 0, 15, 18, 30, 0),
         endUtcOffsetSeconds: -5 * 3600,
@@ -2133,6 +2134,7 @@ function runSyncTestsBody_(H) {
         startUtcMs: Date.UTC(2026, 0, 15, 18, 0, 0),
         startUtcOffsetSeconds: -5 * 3600,
       };
+      const e1 = "users/me/dataTypes/exercise/dataPoints/E1";
       resetGrid([
         TWO_WORKOUT_HEADERS,
         [
@@ -2142,14 +2144,21 @@ function runSyncTestsBody_(H) {
           "35x6x5",
           "",
           "SYNC",
-          "",
-          new Date(dup.startUtcMs),
-          new Date(dup.endUtcMs),
+          JSON.stringify([e1]),
+          new Date(dup.startUtcMs + 5 * 60 * 1000),
+          new Date(dup.startUtcMs + 20 * 60 * 1000),
           "",
           "",
           JSON.stringify({
+            // Bench sits inside the session; Press was typed the NEXT day, so it
+            // is unattributable AND its group's window is off-date, which sends
+            // it to 'prior' timing: the prior interval below, i.e. the same
+            // interval the session group is borrowing.
             Bench: { first: "2026-01-15T18:05:00.000Z" },
-            Press: { first: "2026-01-15T14:00:00.000Z" },
+            Press: {
+              first: "2026-01-16T14:00:00.000Z",
+              last: "2026-01-16T14:00:00.000Z",
+            },
           }),
         ],
       ]);
@@ -2158,8 +2167,18 @@ function runSyncTestsBody_(H) {
         {
           createExerciseAt: (startUtcMs, startOff, endUtcMs, endOff, notes) => {
             created.push({ endUtcMs, notes, startUtcMs });
-            return "users/me/dataTypes/exercise/dataPoints/E1";
+            return "users/me/dataTypes/exercise/dataPoints/E9";
           },
+          deleteDataPointsByName: () => {},
+          getDataPoint: () => ({
+            exercise: {
+              interval: {
+                endTime: new Date(dup.endUtcMs).toISOString(),
+                startTime: new Date(dup.startUtcMs).toISOString(),
+              },
+              notes: "stale notes from the pre-split sync",
+            },
+          }),
           listStrengthOnDate: () => [dup],
         },
         () => syncDirtyRows(0),
@@ -2173,6 +2192,65 @@ function runSyncTestsBody_(H) {
       );
     },
   );
+
+  // After the attributed exercises are split away, the row-level first..last
+  // window spans the app workouts too; the null-session group must be timed
+  // from ITS OWN exercises' edit window instead, so an exercise typed between
+  // two workouts is recorded when it was typed, not across both.
+  t("syncDirtyRows times the unattributed group from its own exercises", () => {
+    const headers = TWO_WORKOUT_HEADERS.slice();
+    headers.splice(4, 0, "Curls");
+    // Curls typed once at 15:30 EST (20:30Z), well past both sessions and
+    // their 10-min slack, so it lands in the null-session group.
+    resetGrid([
+      headers,
+      [
+        JAN15_NOON_EST,
+        "",
+        "175x6x6",
+        "35x6x5",
+        "95x8x3",
+        "",
+        "SYNC",
+        "",
+        new Date(Date.UTC(2026, 0, 15, 18, 9, 0)),
+        new Date(Date.UTC(2026, 0, 15, 20, 30, 0)),
+        "",
+        "",
+        JSON.stringify({
+          Bench: { first: "2026-01-15T18:09:00.000Z" },
+          Curls: {
+            first: "2026-01-15T20:30:00.000Z",
+            last: "2026-01-15T20:30:00.000Z",
+          },
+          Press: { first: "2026-01-15T19:00:00.000Z" },
+        }),
+      ],
+    ]);
+    const created = [];
+    const r = withStubs(
+      {
+        createExerciseAt: (startUtcMs, startOff, endUtcMs, endOff, notes) => {
+          created.push({ endUtcMs, notes, startUtcMs });
+          return `users/me/dataTypes/exercise/dataPoints/E${created.length}`;
+        },
+        listStrengthOnDate: () => [W2, W1],
+      },
+      () => syncDirtyRows(0),
+    );
+    eq(r.ok, 1, "row synced");
+    eq(created.length, 3, "two session datapoints plus the unattributed one");
+    eq(
+      created[2].startUtcMs,
+      Date.UTC(2026, 0, 15, 20, 30, 0),
+      "unattributed group starts at its own first edit, not the row's",
+    );
+    eq(
+      created[2].endUtcMs - created[2].startUtcMs,
+      10 * 60 * 1000,
+      "single edit takes the start-only MIN default",
+    );
+  });
 
   // The clear is what stops a stale name from shielding a session forever: the
   // aligned-elsewhere exclusion list is built from this column.
