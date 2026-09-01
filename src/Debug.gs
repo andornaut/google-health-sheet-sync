@@ -345,6 +345,12 @@ function restoreAndSplitRow20260830() {
     sheet.getRange(row.rowNum, map[header]).setValue(value);
   set("Bench press", "175x6x6");
   set("Dumbbell shoulder press", "35x6x5");
+  // The paste left the Weight cell date-formatted, so a numeric write renders
+  // as a 1900-era date and reads back as a Date, which parseBodyweight
+  // rejects. Reset the format before writing the value.
+  sheet
+    .getRange(row.rowNum, map[WEIGHT_COLUMN_HEADER])
+    .setNumberFormat("0.###");
   set(WEIGHT_COLUMN_HEADER, 256);
   set(EXERCISE_FIRST_EDITED_AT_COLUMN_HEADER, "2026-08-30T17:09:18.000Z");
   set(EXERCISES_LAST_EDITED_AT_COLUMN_HEADER, "2026-08-30T18:09:38.000Z");
