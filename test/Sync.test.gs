@@ -2385,30 +2385,28 @@ function runSyncTestsBody_(H) {
     );
   });
 
-  // The original two-workout day as it unfolds in time, against a stateful
-  // fake server: (A) first exercise typed mid-workout-1 before any app session
-  // exists, (B) workout 1's session appears and the backstop re-reviews, (C)
-  // the second exercise is typed while workout 2 is still running, (D) workout
-  // 2's session appears, (E) a further re-review. Asserts each pass's
-  // create/delete counts and that the end state is exactly two datapoints,
-  // one per workout, with pass E a zero-write no-op: the churn bound the
+  // A two-workout day as it unfolds in time, against a stateful fake server:
+  // (A) first exercise typed mid-workout-1 before any app session exists, (B)
+  // workout 1's session appears and the backstop re-reviews, (C) the second
+  // exercise is typed while workout 2 is still running, (D) workout 2's
+  // session appears, (E) a further re-review. Asserts each pass's outcome and
+  // create/delete counts, the end-state server and Created Health IDs
+  // contents, and that pass E is a zero-write no-op: the churn bound the
   // idempotency machinery exists to guarantee.
   t("syncDirtyRows converges over the passes of a two-workout day", () => {
-    const fl = (ms) => Math.floor(ms / 1000) * 1000;
-    const LW1 = {
-      endUtcMs: Date.UTC(2026, 0, 15, 18, 54, 49, 250),
-      endUtcOffsetSeconds: -5 * 3600,
+    // W1/W2 with sub-second fractions added: the fractions are the only
+    // intended difference, probing the resolver's whole-second floor, so the
+    // floored intervals equal W1/W2 exactly.
+    const LW1 = Object.assign({}, W1, {
+      endUtcMs: W1.endUtcMs + 250,
       name: "foreign/LW1",
-      startUtcMs: Date.UTC(2026, 0, 15, 18, 2, 8, 750),
-      startUtcOffsetSeconds: -5 * 3600,
-    };
-    const LW2 = {
-      endUtcMs: Date.UTC(2026, 0, 15, 19, 23, 13, 600),
-      endUtcOffsetSeconds: -5 * 3600,
+      startUtcMs: W1.startUtcMs + 500,
+    });
+    const LW2 = Object.assign({}, W2, {
+      endUtcMs: W2.endUtcMs + 600,
       name: "foreign/LW2",
-      startUtcMs: Date.UTC(2026, 0, 15, 18, 58, 51, 300),
-      startUtcOffsetSeconds: -5 * 3600,
-    };
+      startUtcMs: W2.startUtcMs + 300,
+    });
     const benchFirst = new Date(Date.UTC(2026, 0, 15, 18, 9, 18, 500));
     const pressFirst = new Date(Date.UTC(2026, 0, 15, 19, 0, 10, 900));
     const pressLast = new Date(Date.UTC(2026, 0, 15, 19, 9, 38, 200));
@@ -2417,14 +2415,12 @@ function runSyncTestsBody_(H) {
     // and the idempotency check see what earlier passes wrote.
     const server = {};
     let seq = 0;
-    let creates = 0;
     let deletes = 0;
     const sessions = [];
     const stubs = {
       createExerciseAt: (startUtcMs, so, endUtcMs, eo, notes) => {
         const name = `users/me/dataTypes/exercise/dataPoints/L${++seq}`;
         server[name] = { endUtcMs, notes, startUtcMs };
-        creates++;
         return name;
       },
       deleteDataPointsByName: (names) => {
@@ -2452,42 +2448,37 @@ function runSyncTestsBody_(H) {
       },
       listStrengthOnDate: () => sessions.slice(),
     };
-    const run = () => withStubs(stubs, () => syncDirtyRows(0));
-    const pass = (label, expectCreates, expectDeletes, fn) => {
-      const c0 = creates;
+    const pass = (label, expectCreates, expectDeletes) => {
+      const c0 = seq;
       const d0 = deletes;
-      fn();
-      eq(creates - c0, expectCreates, `${label}: creates`);
+      const r = withStubs(stubs, () => syncDirtyRows(0));
+      eq(r.ok, 1, `${label}: row ok`);
+      eq(r.errors, 0, `${label}: no errors`);
+      eq(seq - c0, expectCreates, `${label}: creates`);
       eq(deletes - d0, expectDeletes, `${label}: deletes`);
     };
     const set = (col, v) => SHEET.getRange(2, col).setValue(v);
     const reDirty = () => set(TWO_COL["Exercise Synced At"], "");
 
-    resetGrid([
-      TWO_WORKOUT_HEADERS,
-      [
-        new Date(Date.UTC(2026, 0, 15, 17, 0, 0)),
-        "",
-        "175x6x6",
-        "",
-        "",
-        "SYNC",
-        "",
-        benchFirst,
-        benchFirst,
-        "",
-        "",
-        JSON.stringify({ Bench: { first: benchFirst.toISOString() } }),
-      ],
-    ]);
+    // The standard two-workout fixture row, with Press not yet typed and the
+    // edit state as of the first Bench edit. Mutated by column name so a new
+    // column in TWO_WORKOUT_HEADERS cannot silently misalign it.
+    const row = twoWorkoutRow("", "");
+    row[TWO_COL.Press - 1] = "";
+    row[TWO_COL["Exercise First Edited At"] - 1] = benchFirst;
+    row[TWO_COL["Exercises Last Edited At"] - 1] = benchFirst;
+    row[TWO_COL["Exercise Edit Times"] - 1] = JSON.stringify({
+      Bench: { first: benchFirst.toISOString() },
+    });
+    resetGrid([TWO_WORKOUT_HEADERS, row]);
 
     // A: mid-workout-1, no app session yet: one edit-timed datapoint.
-    pass("A first edit, no session", 1, 0, run);
+    pass("A first edit, no session", 1, 0);
 
     // B: workout 1's session lands; backstop re-review aligns to it.
     sessions.push(LW1);
     reDirty();
-    pass("B align to workout 1", 1, 1, run);
+    pass("B align to workout 1", 1, 1);
 
     // C: second exercise typed while workout 2 runs, its session not yet in
     // Health. The typing moment sits within FOREIGN_MATCH_BUFFER_MS of
@@ -2508,27 +2499,31 @@ function runSyncTestsBody_(H) {
       }),
     );
     reDirty();
-    pass("C second exercise, session pending", 1, 1, run);
+    pass("C second exercise, session pending", 1, 1);
 
     // D: workout 2's session lands: the combined interim datapoint is
     // replaced by the final pair, one per workout.
     sessions.push(LW2);
     reDirty();
-    pass("D split across both workouts", 2, 1, run);
+    pass("D split across both workouts", 2, 1);
 
     // E: steady state: a further re-review writes nothing.
     reDirty();
-    pass("E steady state", 0, 0, run);
+    pass("E steady state", 0, 0);
+    ok(
+      SHEET.getRange(2, TWO_COL["Exercise Synced At"]).getValue() !== "",
+      "row stamped synced after the steady-state pass",
+    );
 
-    const finalNames = Object.keys(server);
+    const finalNames = Object.keys(server).sort(
+      (a, b) => server[a].startUtcMs - server[b].startUtcMs,
+    );
     eq(finalNames.length, 2, "exactly one datapoint per workout survives");
-    const byStart = finalNames
-      .map((n) => server[n])
-      .sort((a, b) => a.startUtcMs - b.startUtcMs);
-    eq(byStart[0].startUtcMs, fl(LW1.startUtcMs), "workout 1 interval");
-    eq(byStart[0].endUtcMs, fl(LW1.endUtcMs));
-    eq(byStart[1].startUtcMs, fl(LW2.startUtcMs), "workout 2 interval");
-    eq(byStart[1].endUtcMs, fl(LW2.endUtcMs));
+    const byStart = finalNames.map((n) => server[n]);
+    eq(byStart[0].startUtcMs, W1.startUtcMs, "workout 1 start (floored)");
+    eq(byStart[0].endUtcMs, W1.endUtcMs, "workout 1 end (floored)");
+    eq(byStart[1].startUtcMs, W2.startUtcMs, "workout 2 start (floored)");
+    eq(byStart[1].endUtcMs, W2.endUtcMs, "workout 2 end (floored)");
     ok(
       byStart[0].notes.indexOf("Bench") === 0 &&
         byStart[0].notes.indexOf("Press") === -1,
@@ -2538,6 +2533,11 @@ function runSyncTestsBody_(H) {
       byStart[1].notes.indexOf("Press") === 0 &&
         byStart[1].notes.indexOf("Bench") === -1,
       "workout 2 carries only Press",
+    );
+    eq(
+      SHEET.getRange(2, TWO_COL["Created Health IDs"]).getValue(),
+      JSON.stringify(finalNames),
+      "exactly the surviving names tracked, in workout order",
     );
     eq(
       SHEET.getRange(2, TWO_COL["Matched Health Session"]).getValue(),
