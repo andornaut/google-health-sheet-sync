@@ -132,6 +132,13 @@ function runParserTestsBody_() {
       { assisted: false, reps: null, sets: null, weight: 22.5 },
     ]),
   );
+  // The integer rule is deliberately asymmetric: reps and sets are counts,
+  // weight is a measurement, and 2.5 lb plate/dumbbell increments are real.
+  t('decimal weight accepted "137.5x5"', () =>
+    eq(parseExerciseCell("137.5x5"), [
+      { assisted: false, reps: 5, sets: null, weight: 137.5 },
+    ]),
+  );
   t('decimal reps rejected "135x5.5"', () =>
     eq(parseExerciseCell("135x5.5"), []),
   );

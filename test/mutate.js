@@ -71,6 +71,17 @@ const MUTATIONS = [
     replace: "  if (sets !== null && false) {",
   },
   {
+    // The asymmetry is the decision: counts are integers, weight is not.
+    file: "Parser.gs",
+    name: "a fractional weight is rejected like a fractional count",
+    find: "  const weight = nums[0];",
+    replace:
+      "  const weight = nums[0];\n" +
+      "  if (!Number.isInteger(weight)) {\n" +
+      "    return null;\n" +
+      "  }",
+  },
+  {
     file: "Parser.gs",
     name: "a fractional rep count is accepted",
     find: "  if (reps !== null && !Number.isInteger(reps)) {",
