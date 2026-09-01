@@ -2385,6 +2385,167 @@ function runSyncTestsBody_(H) {
     );
   });
 
+  // The original two-workout day as it unfolds in time, against a stateful
+  // fake server: (A) first exercise typed mid-workout-1 before any app session
+  // exists, (B) workout 1's session appears and the backstop re-reviews, (C)
+  // the second exercise is typed while workout 2 is still running, (D) workout
+  // 2's session appears, (E) a further re-review. Asserts each pass's
+  // create/delete counts and that the end state is exactly two datapoints,
+  // one per workout, with pass E a zero-write no-op: the churn bound the
+  // idempotency machinery exists to guarantee.
+  t("syncDirtyRows converges over the passes of a two-workout day", () => {
+    const fl = (ms) => Math.floor(ms / 1000) * 1000;
+    const LW1 = {
+      endUtcMs: Date.UTC(2026, 0, 15, 18, 54, 49, 250),
+      endUtcOffsetSeconds: -5 * 3600,
+      name: "foreign/LW1",
+      startUtcMs: Date.UTC(2026, 0, 15, 18, 2, 8, 750),
+      startUtcOffsetSeconds: -5 * 3600,
+    };
+    const LW2 = {
+      endUtcMs: Date.UTC(2026, 0, 15, 19, 23, 13, 600),
+      endUtcOffsetSeconds: -5 * 3600,
+      name: "foreign/LW2",
+      startUtcMs: Date.UTC(2026, 0, 15, 18, 58, 51, 300),
+      startUtcOffsetSeconds: -5 * 3600,
+    };
+    const benchFirst = new Date(Date.UTC(2026, 0, 15, 18, 9, 18, 500));
+    const pressFirst = new Date(Date.UTC(2026, 0, 15, 19, 0, 10, 900));
+    const pressLast = new Date(Date.UTC(2026, 0, 15, 19, 9, 38, 200));
+
+    // Stateful fake server: creates are stored so later passes' prior GETs
+    // and the idempotency check see what earlier passes wrote.
+    const server = {};
+    let seq = 0;
+    let creates = 0;
+    let deletes = 0;
+    const sessions = [];
+    const stubs = {
+      createExerciseAt: (startUtcMs, so, endUtcMs, eo, notes) => {
+        const name = `users/me/dataTypes/exercise/dataPoints/L${++seq}`;
+        server[name] = { endUtcMs, notes, startUtcMs };
+        creates++;
+        return name;
+      },
+      deleteDataPointsByName: (names) => {
+        names.forEach((n) => {
+          delete server[n];
+          deletes++;
+        });
+      },
+      getDataPoint: (name) => {
+        const d = server[name];
+        if (!d) {
+          const err = new Error("404");
+          err.statusCode = 404;
+          throw err;
+        }
+        return {
+          exercise: {
+            interval: {
+              endTime: new Date(d.endUtcMs).toISOString(),
+              startTime: new Date(d.startUtcMs).toISOString(),
+            },
+            notes: d.notes,
+          },
+        };
+      },
+      listStrengthOnDate: () => sessions.slice(),
+    };
+    const run = () => withStubs(stubs, () => syncDirtyRows(0));
+    const pass = (label, expectCreates, expectDeletes, fn) => {
+      const c0 = creates;
+      const d0 = deletes;
+      fn();
+      eq(creates - c0, expectCreates, `${label}: creates`);
+      eq(deletes - d0, expectDeletes, `${label}: deletes`);
+    };
+    const set = (col, v) => SHEET.getRange(2, col).setValue(v);
+    const reDirty = () => set(TWO_COL["Exercise Synced At"], "");
+
+    resetGrid([
+      TWO_WORKOUT_HEADERS,
+      [
+        new Date(Date.UTC(2026, 0, 15, 17, 0, 0)),
+        "",
+        "175x6x6",
+        "",
+        "",
+        "SYNC",
+        "",
+        benchFirst,
+        benchFirst,
+        "",
+        "",
+        JSON.stringify({ Bench: { first: benchFirst.toISOString() } }),
+      ],
+    ]);
+
+    // A: mid-workout-1, no app session yet: one edit-timed datapoint.
+    pass("A first edit, no session", 1, 0, run);
+
+    // B: workout 1's session lands; backstop re-review aligns to it.
+    sessions.push(LW1);
+    reDirty();
+    pass("B align to workout 1", 1, 1, run);
+
+    // C: second exercise typed while workout 2 runs, its session not yet in
+    // Health. The typing moment sits within FOREIGN_MATCH_BUFFER_MS of
+    // workout 1's end, so with no better candidate visible the exercise is
+    // TRANSIENTLY attributed to workout 1's tail and that datapoint is
+    // rewritten to carry both exercises. Pass D corrects it: inside-the-
+    // session beats within-slack once workout 2's session exists.
+    set(TWO_COL.Press, "35x6x5");
+    set(TWO_COL["Exercises Last Edited At"], pressLast);
+    set(
+      TWO_COL["Exercise Edit Times"],
+      JSON.stringify({
+        Bench: { first: benchFirst.toISOString() },
+        Press: {
+          first: pressFirst.toISOString(),
+          last: pressLast.toISOString(),
+        },
+      }),
+    );
+    reDirty();
+    pass("C second exercise, session pending", 1, 1, run);
+
+    // D: workout 2's session lands: the combined interim datapoint is
+    // replaced by the final pair, one per workout.
+    sessions.push(LW2);
+    reDirty();
+    pass("D split across both workouts", 2, 1, run);
+
+    // E: steady state: a further re-review writes nothing.
+    reDirty();
+    pass("E steady state", 0, 0, run);
+
+    const finalNames = Object.keys(server);
+    eq(finalNames.length, 2, "exactly one datapoint per workout survives");
+    const byStart = finalNames
+      .map((n) => server[n])
+      .sort((a, b) => a.startUtcMs - b.startUtcMs);
+    eq(byStart[0].startUtcMs, fl(LW1.startUtcMs), "workout 1 interval");
+    eq(byStart[0].endUtcMs, fl(LW1.endUtcMs));
+    eq(byStart[1].startUtcMs, fl(LW2.startUtcMs), "workout 2 interval");
+    eq(byStart[1].endUtcMs, fl(LW2.endUtcMs));
+    ok(
+      byStart[0].notes.indexOf("Bench") === 0 &&
+        byStart[0].notes.indexOf("Press") === -1,
+      "workout 1 carries only Bench",
+    );
+    ok(
+      byStart[1].notes.indexOf("Press") === 0 &&
+        byStart[1].notes.indexOf("Bench") === -1,
+      "workout 2 carries only Press",
+    );
+    eq(
+      SHEET.getRange(2, TWO_COL["Matched Health Session"]).getValue(),
+      JSON.stringify(["foreign/LW1", "foreign/LW2"]),
+      "both sessions recorded",
+    );
+  });
+
   // The clear is what stops a stale name from shielding a session forever: the
   // aligned-elsewhere exclusion list is built from this column.
   t(
