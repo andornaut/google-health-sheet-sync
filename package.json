@@ -21,7 +21,7 @@
     "@eslint/js": "^10.0.1",
     "@google/clasp": "^3.4.1",
     "@types/google-apps-script": "^2.0.13",
-    "@types/node": "^26.4.0",
+    "@types/node": "^26.5.1",
     "eslint": "^10.10.0",
     "eslint-plugin-simple-import-sort": "^14.0.0",
     "eslint-plugin-sort-destructure-keys": "^3.0.0",
