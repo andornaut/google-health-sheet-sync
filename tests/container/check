@@ -19,10 +19,10 @@ case "$task" in
         done
         ;;
     lint)
-        bash -n tests/container/run tests/container/staged tests/container/staged-git
+        bash -n tests/container/run
         sh -n tests/container/check
-        shellcheck -x -P SCRIPTDIR tests/container/run tests/container/staged tests/container/staged-git tests/container/check
-        npm run lint:internal
+        shellcheck -x -P SCRIPTDIR tests/container/run tests/container/check
+        npm run lint
         markdownlint-cli2
         ;;
     test)
@@ -32,14 +32,14 @@ case "$task" in
         fi
         case "${1:-}" in
             "")
-                npm run test:internal
-                npm run mutate:internal
+                npm test
+                npm run mutate
                 ;;
             --unit)
-                npm run test:internal
+                npm test
                 ;;
             --mutation)
-                npm run mutate:internal
+                npm run mutate
                 ;;
             *)
                 printf '%s\n' 'Use TEST_ARGS=--unit or TEST_ARGS=--mutation to select part of the test gate.' >&2
