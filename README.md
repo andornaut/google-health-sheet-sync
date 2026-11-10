@@ -192,6 +192,12 @@ package operation with writable project files and protected Git metadata.
 The full test gate includes both unit suites and the mutation checks. `npm test`
 runs the unit suites; `npm run mutate` runs mutation checks only.
 
+`make staged` retains host lint-staged for stash and staging operations. Prettier and
+ESLint fixes run inside containers. Hooks require host Node.js and the project's
+local lint-staged dependency; prepare dependencies with
+`make exec COMMAND='npm ci'` without a host package installation. Git rollback and stash cleanup stop when a
+container writer remains unresolved, preserving the working files and backup.
+
 ---
 
 ## Troubleshooting
