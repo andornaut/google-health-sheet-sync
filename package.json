@@ -37,5 +37,11 @@
     "markdownlint-cli2": "0.24.0",
     "prettier": "^3.9.10",
     "typescript": "^7.0.2"
+  },
+  "overrides": {
+    "markdownlint-cli2@0.24.0": {
+      "markdownlint": "0.42.1",
+      "katex": "0.19.1"
+    }
   }
 }
