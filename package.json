@@ -12,10 +12,16 @@
     "deploy": "clasp push",
     "pull": "clasp pull",
     "open": "clasp open-script",
-    "test": "node test/run.js",
-    "lint": "prettier --check . && eslint --max-warnings 0 . && tsc --noEmit -p jsconfig.json",
-    "format": "prettier --write . && eslint --fix .",
-    "mutate": "node test/mutate.js"
+    "test": "make test TEST_ARGS=--unit",
+    "lint": "make lint",
+    "format": "make exec COMMAND='npm run format:internal'",
+    "mutate": "make test TEST_ARGS=--mutation",
+    "lint:internal": "prettier --check . && eslint --max-warnings 0 . && tsc --noEmit -p jsconfig.json",
+    "format:internal": "prettier --write . && eslint --fix .",
+    "test:internal": "node test/run.js",
+    "mutate:internal": "node test/mutate.js",
+    "check": "make check",
+    "build": "make build"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

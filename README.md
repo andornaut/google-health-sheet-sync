@@ -166,12 +166,31 @@ Run **Sync ▸ Run setup** after editing timing constants.
 
 ## Developing
 
-- **Run tests locally**: `npm test` (Node.js runner simulating Apps Script globals).
+- **Run tests locally**: `npm test` (both Node.js suites in a container, simulating Apps Script globals).
 - **Run tests in Apps Script**: **Sync ▸ Run tests**, which runs both suites and reports one summary. Run a suite on its own (`runParserTests` / `runSyncTests` from the editor) for its full PASS list.
 - **Lint**: `npm run lint` (Prettier, ESLint, and the TypeScript check). `npm run format` applies the Prettier and ESLint fixes.
-- **Lint markdown style**: `npx markdownlint-cli2`, which reads its file list from `.markdownlint-cli2.yaml`. CI runs the same check; `npm run lint` does not.
+- **Lint markdown style**: included in `make lint` and `npm run lint`, using `.markdownlint-cli2.yaml`.
 - **Mutation-check the suite**: `npm run mutate` (each catalogued mutation must make `npm test` fail).
 - **Deploy / pull**: `npm run deploy` (clasp push) / `npm run pull`.
+
+## Container checks
+
+Docker and Make run verification without a host Node.js installation:
+
+```bash
+make check
+make check-info
+```
+
+`make check` runs every declared lint, test and build check in an isolated
+container. `npm run check` is the native alias. `make lint`, `make test` and
+`make build` run individual categories; an undeclared category fails explicitly.
+The checkout is read-only during checks, and caches and generated files stay in
+container scratch storage. `make exec COMMAND='npm update'` runs an intentional
+package operation with writable project files and protected Git metadata.
+
+The full test gate includes both unit suites and the mutation checks. `npm test`
+runs the unit suites; `npm run mutate` runs mutation checks only.
 
 ---
 
