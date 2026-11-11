@@ -1,32 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 checkout=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd -P)
-stock_entrypoint_path=${BASH_SOURCE[0]}
-stock_entrypoint_hash=$(sha256sum "${stock_entrypoint_path}" | cut -d ' ' -f1)
 # shellcheck source=tests/container/stock
 source "${checkout}/tests/container/stock"
 action=${1:-check}
-case "${action}" in check|lint|test|build) ;; *) printf 'Unknown stock check: %s\n' "${action}" >&2; exit 2 ;; esac
-if (( $# > 1 )); then printf '%s\n' 'Stock checks do not accept extra arguments.' >&2; exit 2; fi
+case "${action}" in check|lint|test|build) ;; *) exit 2 ;; esac
+if (( $# > 1 )); then exit 2; fi
 if [[ ${action} == build ]]; then printf '%s\n' 'No build check is declared.' >&2; exit 2; fi
 native_arguments=("${action}")
 if [[ ${action} == test && -n ${TEST_ARGS:-} ]]; then
-    case "${TEST_ARGS}" in --unit|--mutation) native_arguments+=("${TEST_ARGS}") ;; *) printf '%s\n' 'Use TEST_ARGS=--unit or TEST_ARGS=--mutation.' >&2; exit 2 ;; esac
+    case "${TEST_ARGS}" in --unit|--mutation) native_arguments+=("${TEST_ARGS}") ;; *) exit 2 ;; esac
 fi
-: "${NODE_IMAGE:?The Makefile declares NODE_IMAGE}"
-: "${SHELLCHECK_IMAGE:?The Makefile declares SHELLCHECK_IMAGE}"
 stock_begin "${checkout}"
-STOCK_OUTPUT_DIR=
-node_image=
-shellcheck_image=
-stock_image node_image "${NODE_IMAGE}"
+stock_image node_image "${NODE_IMAGE:?}"
 if [[ ${action} == check || ${action} == lint ]]; then
     STOCK_NETWORK=bridge stock_run "${node_image}" -- sh -ec "sh tests/container/node \"\$@\"; sh tests/container/markdown" sh "${native_arguments[@]}"
     shell_files=(tests/container/stock tests/container/check-stock tests/container/node tests/container/markdown)
     while IFS= read -r -d '' file; do
         if [[ ${file} == *.sh ]]; then shell_files+=("${file}"); fi
     done < "${scratch}/source.list"
-    stock_image shellcheck_image "${SHELLCHECK_IMAGE}"
+    stock_image shellcheck_image "${SHELLCHECK_IMAGE:?}"
     stock_readonly "${shellcheck_image}" /bin/shellcheck -x -P SCRIPTDIR "${shell_files[@]}"
 else
     STOCK_NETWORK=bridge stock_run "${node_image}" -- sh tests/container/node "${native_arguments[@]}"
