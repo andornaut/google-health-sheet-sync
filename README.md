@@ -176,8 +176,8 @@ Run **Sync ▸ Run setup** after editing timing constants.
 ## Container checks
 
 Run `make check` for lint, unit tests and mutation checks in isolated stock containers.
-Docker, Make and Python 3 are required. Locked dependencies are prepared once
-and reused by the native and Markdown phases. Shell tooling runs separately.
+Docker and Make are required. Each native and Markdown phase installs its locked
+dependencies in a disposable container. Shell tooling runs separately.
 
 Native commands such as `npm run lint`, `npm test` and `npm run mutate` run on
 the host with the project's Node.js version and installed dependencies. The

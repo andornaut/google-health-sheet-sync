@@ -16,15 +16,13 @@ fi
 : "${NODE_IMAGE:?The Makefile declares NODE_IMAGE}"
 : "${SHELLCHECK_IMAGE:?The Makefile declares SHELLCHECK_IMAGE}"
 stock_begin "${checkout}"
+STOCK_OUTPUT_DIR=
 node_image=
 shellcheck_image=
 stock_image node_image "${NODE_IMAGE}"
-stock_prepare "${node_image}" node -- sh tests/container/node prepare
-stock_run "${node_image}" node -- sh tests/container/node "${native_arguments[@]}"
+STOCK_NETWORK=bridge stock_run "${node_image}" -- sh tests/container/node "${native_arguments[@]}"
 if [[ ${action} == check || ${action} == lint ]]; then
-    stock_run "${node_image}" node -- sh tests/container/markdown
-    stock_run "${node_image}" '' -- bash -ec "for script in tests/container/stock tests/container/check-stock; do bash -n \"\$script\"; done"
-    stock_run "${node_image}" '' -- sh -ec "for script in tests/container/node tests/container/markdown; do sh -n \"\$script\"; done"
+    STOCK_NETWORK=bridge stock_run "${node_image}" -- sh tests/container/markdown
     shell_files=(tests/container/stock tests/container/check-stock tests/container/node tests/container/markdown)
     while IFS= read -r -d '' file; do
         if [[ ${file} == *.sh ]]; then shell_files+=("${file}"); fi

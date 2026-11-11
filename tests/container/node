@@ -1,16 +1,12 @@
 #!/bin/sh
 set -eu
-if [ "${1:-}" = prepare ]; then
-    mkdir -p /scratch/node
-    cp package.json package-lock.json /scratch/node/
-    git config --global url.https://github.com/.insteadOf ssh://git@github.com/
-    git config --global --add url.https://github.com/.insteadOf git@github.com:
-    cd /scratch/node
-    HUSKY=0 npm ci --maxsockets=1 --no-audit --no-fund >&2
-    exec tar --create --file - --directory / scratch/node
-fi
-if [ ! -e node_modules ]; then ln -s /scratch/node/node_modules node_modules; fi
+action=${1:-check}
+git config --global url.https://github.com/.insteadOf ssh://git@github.com/
+git config --global --add url.https://github.com/.insteadOf git@github.com:
+HUSKY=0 npm ci --maxsockets=1 --no-audit --no-fund >&2
 lint() {
+    for script in tests/container/stock tests/container/check-stock; do bash -n "$script"; done
+    for script in tests/container/node tests/container/markdown; do sh -n "$script"; done
     npm run lint
 }
 test_suite() {
