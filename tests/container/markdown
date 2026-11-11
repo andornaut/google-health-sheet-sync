@@ -1,6 +1,3 @@
 #!/bin/sh
 set -eu
-git config --global url.https://github.com/.insteadOf ssh://git@github.com/
-git config --global --add url.https://github.com/.insteadOf git@github.com:
-HUSKY=0 npm ci --maxsockets=1 --no-audit --no-fund >&2
 exec ./node_modules/.bin/markdownlint-cli2
