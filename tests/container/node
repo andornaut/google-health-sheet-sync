@@ -1,0 +1,40 @@
+#!/bin/sh
+set -eu
+if [ "${1:-}" = prepare ]; then
+    mkdir -p /scratch/node
+    cp package.json package-lock.json /scratch/node/
+    git config --global url.https://github.com/.insteadOf ssh://git@github.com/
+    git config --global --add url.https://github.com/.insteadOf git@github.com:
+    cd /scratch/node
+    HUSKY=0 npm ci --maxsockets=1 --no-audit --no-fund >&2
+    exec tar --create --file - --directory / scratch/node
+fi
+if [ ! -e node_modules ]; then ln -s /scratch/node/node_modules node_modules; fi
+lint() {
+    npm run lint
+}
+test_suite() {
+    case "${1:-}" in
+        "") npm test; npm run mutate ;;
+        --unit) npm test ;;
+        --mutation) npm run mutate ;;
+        *) printf '%s\n' 'Use --unit or --mutation for focused tests.' >&2; return 2 ;;
+    esac
+}
+build() {
+    printf '%s\n' 'No build check is declared.' >&2
+    return 2
+}
+case "${1:-check}" in
+    check)
+        lint
+        test_suite
+        ;;
+    lint) lint ;;
+    test)
+        if [ "$#" -gt 2 ]; then exit 2; fi
+        test_suite "${2:-}"
+        ;;
+    build) build ;;
+    *) exit 2 ;;
+esac

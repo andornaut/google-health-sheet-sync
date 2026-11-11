@@ -175,9 +175,9 @@ Run **Sync ▸ Run setup** after editing timing constants.
 
 ## Container checks
 
-Run `make check` for lint, unit tests and mutation checks in the project test container.
-Docker and Make are required; dependencies are installed in the image.
-The container gate also checks Markdown and shell helpers.
+Run `make check` for lint, unit tests and mutation checks in isolated stock containers.
+Docker, Make and Python 3 are required. Locked dependencies are prepared once
+and reused by the native and Markdown phases. Shell tooling runs separately.
 
 Native commands such as `npm run lint`, `npm test` and `npm run mutate` run on
 the host with the project's Node.js version and installed dependencies. The
