@@ -12,6 +12,8 @@ if [[ ${action} == test && -n ${TEST_ARGS:-} ]]; then
     case "${TEST_ARGS}" in --unit|--mutation) native_arguments+=("${TEST_ARGS}") ;; *) exit 2 ;; esac
 fi
 stock_begin "${checkout}"
+node_image=
+shellcheck_image=
 stock_image node_image "${NODE_IMAGE:?}"
 if [[ ${action} == check || ${action} == lint ]]; then
     STOCK_NETWORK=bridge stock_run "${node_image}" -- sh -ec "sh tests/container/node \"\$@\"; sh tests/container/markdown" sh "${native_arguments[@]}"
