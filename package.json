@@ -29,7 +29,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^17.6.0",
     "markdownlint-cli2": "0.24.1",
-    "prettier": "^3.9.10",
+    "prettier": "^3.10.1",
     "typescript": "^7.0.2"
   },
   "overrides": {
